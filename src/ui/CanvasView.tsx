@@ -10,7 +10,16 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
-import { fromRect, height as bboxHeight, isEmpty, width as bboxWidth } from "../core/geometry/bbox";
+import { produce } from "immer";
+import {
+  center as bboxCenter,
+  fromRect,
+  height as bboxHeight,
+  isEmpty,
+  width as bboxWidth,
+  type BBox,
+} from "../core/geometry/bbox";
+import { compose, IDENTITY, invert, rotation, scaling, translate, type Matrix } from "../core/geometry/matrix";
 import type { Vec2 } from "../core/geometry/vector";
 import { corner, createEllipse, createPath, createRect, createText } from "../core/model/factory";
 import { hitTest } from "../core/model/hittest";
@@ -18,7 +27,8 @@ import { selectionBounds } from "../core/model/bounds";
 import type { Anchor, Document, NodeId, SceneNode, TextNode } from "../core/model/types";
 import { renderDocument } from "../render/canvasRenderer";
 import { nodesInRect } from "../state/selectors";
-import { editorStore, useEditorStore, type EditorViewport } from "../state/store";
+import { pushHistory } from "../state/history";
+import { editorStore, useEditorStore, type EditorStore, type EditorViewport } from "../state/store";
 import "./CanvasView.css";
 
 interface Size {
@@ -26,8 +36,10 @@ interface Size {
   height: number;
 }
 
-interface DragState {
-  mode: "move" | "pan" | "create-rect" | "create-ellipse" | "marquee";
+type ResizeHandleId = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+interface BaseDragState {
+  mode: "move" | "pan" | "create-rect" | "create-ellipse" | "marquee" | "scale" | "rotate";
   pointerId: number;
   startScreen: Vec2;
   lastScreen: Vec2;
@@ -35,6 +47,33 @@ interface DragState {
   additive: boolean;
   moved: boolean;
 }
+
+interface SimpleDragState extends BaseDragState {
+  mode: "move" | "pan" | "create-rect" | "create-ellipse" | "marquee";
+}
+
+interface TransformDragBase extends BaseDragState {
+  additive: false;
+  changed: boolean;
+  originalDoc: Document;
+  originalTransforms: Partial<Record<NodeId, Matrix>>;
+  selectedIds: NodeId[];
+}
+
+interface ScaleDragState extends TransformDragBase {
+  mode: "scale";
+  anchorWorld: Vec2;
+  handleId: ResizeHandleId;
+  handleStartWorld: Vec2;
+}
+
+interface RotateDragState extends TransformDragBase {
+  mode: "rotate";
+  centerWorld: Vec2;
+  startAngle: number;
+}
+
+type DragState = SimpleDragState | ScaleDragState | RotateDragState;
 
 interface PenDraft {
   anchors: Anchor[];
@@ -50,9 +89,53 @@ interface InlineTextEdit {
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 64;
 const HANDLE_SIZE = 7;
+const HANDLE_HIT_SIZE = 12;
+const ROTATION_HANDLE_OFFSET = 28;
+const ROTATION_HANDLE_RADIUS = 5;
+const ROTATION_HANDLE_HIT_RADIUS = 10;
 const PEN_CLOSE_THRESHOLD = 6;
 const PEN_ANCHOR_SIZE = 6;
 const DRAG_MOVE_THRESHOLD = 2;
+const MATRIX_EPSILON = 1e-9;
+const SCALE_EPSILON = 1e-6;
+const SNAP_ROTATION_RADIANS = Math.PI / 12;
+
+const RESIZE_HANDLE_DIRECTIONS: Record<ResizeHandleId, { x: -1 | 0 | 1; y: -1 | 0 | 1 }> = {
+  nw: { x: -1, y: -1 },
+  n: { x: 0, y: -1 },
+  ne: { x: 1, y: -1 },
+  e: { x: 1, y: 0 },
+  se: { x: 1, y: 1 },
+  s: { x: 0, y: 1 },
+  sw: { x: -1, y: 1 },
+  w: { x: -1, y: 0 },
+};
+
+const OPPOSITE_RESIZE_HANDLES: Record<ResizeHandleId, ResizeHandleId> = {
+  nw: "se",
+  n: "s",
+  ne: "sw",
+  e: "w",
+  se: "nw",
+  s: "n",
+  sw: "ne",
+  w: "e",
+};
+
+interface SelectionOverlayGeometry {
+  bounds: BBox;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  resizeHandles: Array<{ id: ResizeHandleId; point: Vec2 }>;
+  rotationHandle: Vec2;
+  topMidpoint: Vec2;
+}
+
+type SelectionHandleHit =
+  | { type: "scale"; handleId: ResizeHandleId }
+  | { type: "rotate" };
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
@@ -74,6 +157,14 @@ const distance = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
 const hasDragMoved = (start: Vec2, current: Vec2): boolean =>
   Math.abs(current.x - start.x) > DRAG_MOVE_THRESHOLD ||
   Math.abs(current.y - start.y) > DRAG_MOVE_THRESHOLD;
+
+const matrixNearlyEqual = (a: Matrix, b: Matrix): boolean =>
+  Math.abs(a.a - b.a) < MATRIX_EPSILON &&
+  Math.abs(a.b - b.b) < MATRIX_EPSILON &&
+  Math.abs(a.c - b.c) < MATRIX_EPSILON &&
+  Math.abs(a.d - b.d) < MATRIX_EPSILON &&
+  Math.abs(a.e - b.e) < MATRIX_EPSILON &&
+  Math.abs(a.f - b.f) < MATRIX_EPSILON;
 
 const eventPoint = (
   event:
@@ -107,22 +198,44 @@ const createShapeFromDrag = (tool: "rect" | "ellipse", start: Vec2, current: Vec
   return createEllipse(x + width / 2, y + height / 2, width / 2, height / 2);
 };
 
-const drawSelectionOverlay = (
-  ctx: CanvasRenderingContext2D,
+const getResizeHandlePoint = (bounds: BBox, id: ResizeHandleId): Vec2 => {
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+
+  switch (id) {
+    case "nw":
+      return { x: bounds.minX, y: bounds.minY };
+    case "n":
+      return { x: centerX, y: bounds.minY };
+    case "ne":
+      return { x: bounds.maxX, y: bounds.minY };
+    case "e":
+      return { x: bounds.maxX, y: centerY };
+    case "se":
+      return { x: bounds.maxX, y: bounds.maxY };
+    case "s":
+      return { x: centerX, y: bounds.maxY };
+    case "sw":
+      return { x: bounds.minX, y: bounds.maxY };
+    case "w":
+      return { x: bounds.minX, y: centerY };
+  }
+};
+
+const getSelectionOverlayGeometry = (
   doc: Document,
-  selection: NodeId[],
+  selection: readonly NodeId[],
   viewport: EditorViewport,
-  dpr: number,
-): void => {
+): SelectionOverlayGeometry | null => {
   if (selection.length === 0) {
-    return;
+    return null;
   }
 
   const bounds = selectionBounds(doc, selection);
   const boundsWidth = bboxWidth(bounds);
   const boundsHeight = bboxHeight(bounds);
   if (isEmpty(bounds) || boundsWidth <= 0 || boundsHeight <= 0) {
-    return;
+    return null;
   }
 
   const topLeft = worldToScreen({ x: bounds.minX, y: bounds.minY }, viewport);
@@ -134,29 +247,301 @@ const drawSelectionOverlay = (
   const y = Math.min(topLeft.y, bottomRight.y);
   const width = Math.abs(bottomRight.x - topLeft.x);
   const height = Math.abs(bottomRight.y - topLeft.y);
+  const centerX = x + width / 2;
+  const resizeHandles: Array<{ id: ResizeHandleId; point: Vec2 }> = [
+    { id: "nw", point: { x, y } },
+    { id: "n", point: { x: centerX, y } },
+    { id: "ne", point: { x: x + width, y } },
+    { id: "e", point: { x: x + width, y: y + height / 2 } },
+    { id: "se", point: { x: x + width, y: y + height } },
+    { id: "s", point: { x: centerX, y: y + height } },
+    { id: "sw", point: { x, y: y + height } },
+    { id: "w", point: { x, y: y + height / 2 } },
+  ];
+  const topMidpoint = { x: centerX, y };
+
+  return {
+    bounds,
+    x,
+    y,
+    width,
+    height,
+    resizeHandles,
+    rotationHandle: { x: centerX, y: y - ROTATION_HANDLE_OFFSET },
+    topMidpoint,
+  };
+};
+
+const hitSelectionHandle = (
+  doc: Document,
+  selection: readonly NodeId[],
+  viewport: EditorViewport,
+  point: Vec2,
+): SelectionHandleHit | null => {
+  const geometry = getSelectionOverlayGeometry(doc, selection, viewport);
+  if (geometry === null) {
+    return null;
+  }
+
+  if (distance(point, geometry.rotationHandle) <= ROTATION_HANDLE_HIT_RADIUS) {
+    return { type: "rotate" };
+  }
+
+  const hitHalfSize = HANDLE_HIT_SIZE / 2;
+  for (const handle of geometry.resizeHandles) {
+    if (
+      Math.abs(point.x - handle.point.x) <= hitHalfSize &&
+      Math.abs(point.y - handle.point.y) <= hitHalfSize
+    ) {
+      return { type: "scale", handleId: handle.id };
+    }
+  }
+
+  return null;
+};
+
+const drawSelectionOverlay = (
+  ctx: CanvasRenderingContext2D,
+  doc: Document,
+  selection: NodeId[],
+  viewport: EditorViewport,
+  dpr: number,
+  showHandles: boolean,
+): void => {
+  const geometry = getSelectionOverlayGeometry(doc, selection, viewport);
+  if (geometry === null) {
+    return;
+  }
+
   const handle = HANDLE_SIZE;
   const halfHandle = handle / 2;
-  const handles: Vec2[] = [
-    { x, y },
-    { x: x + width, y },
-    { x: x + width, y: y + height },
-    { x, y: y + height },
-  ];
 
   ctx.save();
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.strokeStyle = "#2d8cf0";
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 3]);
-  ctx.strokeRect(x + 0.5, y + 0.5, width, height);
+  ctx.strokeRect(geometry.x + 0.5, geometry.y + 0.5, geometry.width, geometry.height);
   ctx.setLineDash([]);
+
+  // Scale / rotate handles are interactive only with the Select tool, so only
+  // draw them in that mode; the dashed bounding box always indicates selection.
+  if (!showHandles) {
+    ctx.restore();
+    return;
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(geometry.topMidpoint.x, geometry.topMidpoint.y);
+  ctx.lineTo(geometry.rotationHandle.x, geometry.rotationHandle.y);
+  ctx.stroke();
+
   ctx.fillStyle = "#ffffff";
   ctx.strokeStyle = "#2d8cf0";
-  for (const point of handles) {
+  for (const { point } of geometry.resizeHandles) {
     ctx.fillRect(point.x - halfHandle, point.y - halfHandle, handle, handle);
     ctx.strokeRect(point.x - halfHandle + 0.5, point.y - halfHandle + 0.5, handle, handle);
   }
+
+  ctx.beginPath();
+  ctx.arc(
+    geometry.rotationHandle.x,
+    geometry.rotationHandle.y,
+    ROTATION_HANDLE_RADIUS,
+    0,
+    Math.PI * 2,
+  );
+  ctx.fill();
+  ctx.stroke();
   ctx.restore();
+};
+
+const transformableSelection = (doc: Document, selection: readonly NodeId[]): NodeId[] =>
+  selection.filter((id) => {
+    const node = doc.nodes[id];
+    return Boolean(node && node.visible && !node.locked);
+  });
+
+const captureOriginalTransforms = (
+  doc: Document,
+  ids: readonly NodeId[],
+): Partial<Record<NodeId, Matrix>> => {
+  const transforms: Partial<Record<NodeId, Matrix>> = {};
+  for (const id of ids) {
+    const node = doc.nodes[id];
+    if (node) {
+      transforms[id] = { ...node.transform };
+    }
+  }
+  return transforms;
+};
+
+const pathToNode = (doc: Document, id: NodeId): SceneNode[] | null => {
+  const visit = (nodeId: NodeId, path: SceneNode[]): SceneNode[] | null => {
+    const node = doc.nodes[nodeId];
+    if (!node) {
+      return null;
+    }
+
+    const nextPath = [...path, node];
+    if (node.id === id) {
+      return nextPath;
+    }
+
+    if (node.type === "layer" || node.type === "group") {
+      for (const childId of node.children) {
+        const childPath = visit(childId, nextPath);
+        if (childPath) {
+          return childPath;
+        }
+      }
+    }
+
+    return null;
+  };
+
+  for (const layerId of doc.layerOrder) {
+    const path = visit(layerId, []);
+    if (path) {
+      return path;
+    }
+  }
+
+  return null;
+};
+
+const parentWorldTransform = (doc: Document, id: NodeId): Matrix => {
+  const path = pathToNode(doc, id);
+  if (path === null) {
+    return IDENTITY;
+  }
+
+  return path.slice(0, -1).reduce((acc, node) => compose(acc, node.transform), IDENTITY);
+};
+
+const composeAboutPoint = (point: Vec2, transform: Matrix): Matrix =>
+  compose(
+    translate(point.x, point.y),
+    compose(transform, compose(translate(-point.x, -point.y), IDENTITY)),
+  );
+
+const axisScale = (
+  currentWorld: Vec2,
+  anchorWorld: Vec2,
+  handleStartWorld: Vec2,
+  axis: "x" | "y",
+): number => {
+  const denominator = handleStartWorld[axis] - anchorWorld[axis];
+  if (Math.abs(denominator) < SCALE_EPSILON) {
+    return 1;
+  }
+
+  return (currentWorld[axis] - anchorWorld[axis]) / denominator;
+};
+
+const uniformScale = (
+  currentWorld: Vec2,
+  anchorWorld: Vec2,
+  handleStartWorld: Vec2,
+  direction: { x: -1 | 0 | 1; y: -1 | 0 | 1 },
+): number => {
+  const startX = direction.x === 0 ? 0 : handleStartWorld.x - anchorWorld.x;
+  const startY = direction.y === 0 ? 0 : handleStartWorld.y - anchorWorld.y;
+  const currentX = direction.x === 0 ? 0 : currentWorld.x - anchorWorld.x;
+  const currentY = direction.y === 0 ? 0 : currentWorld.y - anchorWorld.y;
+  const lengthSquared = startX * startX + startY * startY;
+
+  if (lengthSquared < SCALE_EPSILON) {
+    return 1;
+  }
+
+  return (currentX * startX + currentY * startY) / lengthSquared;
+};
+
+const scaleGestureMatrix = (
+  drag: ScaleDragState,
+  currentWorld: Vec2,
+  constrained: boolean,
+): Matrix => {
+  const direction = RESIZE_HANDLE_DIRECTIONS[drag.handleId];
+  let sx = direction.x === 0
+    ? 1
+    : axisScale(currentWorld, drag.anchorWorld, drag.handleStartWorld, "x");
+  let sy = direction.y === 0
+    ? 1
+    : axisScale(currentWorld, drag.anchorWorld, drag.handleStartWorld, "y");
+
+  if (constrained) {
+    const scale = uniformScale(currentWorld, drag.anchorWorld, drag.handleStartWorld, direction);
+    sx = scale;
+    sy = scale;
+  }
+
+  return composeAboutPoint(drag.anchorWorld, scaling(sx, sy));
+};
+
+const rotateGestureMatrix = (
+  drag: RotateDragState,
+  currentWorld: Vec2,
+  constrained: boolean,
+): Matrix => {
+  const currentAngle = Math.atan2(
+    currentWorld.y - drag.centerWorld.y,
+    currentWorld.x - drag.centerWorld.x,
+  );
+  const rawAngle = currentAngle - drag.startAngle;
+  const angle = constrained
+    ? Math.round(rawAngle / SNAP_ROTATION_RADIANS) * SNAP_ROTATION_RADIANS
+    : rawAngle;
+
+  return composeAboutPoint(drag.centerWorld, rotation(angle));
+};
+
+const applyTransformGesture = (
+  drag: ScaleDragState | RotateDragState,
+  currentWorld: Vec2,
+  constrained: boolean,
+): boolean => {
+  const gestureMatrix = drag.mode === "scale"
+    ? scaleGestureMatrix(drag, currentWorld, constrained)
+    : rotateGestureMatrix(drag, currentWorld, constrained);
+  let changed = false;
+
+  editorStore.setState(
+    produce((state: EditorStore) => {
+      for (const id of drag.selectedIds) {
+        const node = state.doc.nodes[id];
+        const originalTransform = drag.originalTransforms[id];
+        if (!node || node.locked || !node.visible || originalTransform === undefined) {
+          continue;
+        }
+
+        const parentWorld = parentWorldTransform(drag.originalDoc, id);
+        const invertedParentWorld = invert(parentWorld);
+        const worldGestureTransform = compose(
+          gestureMatrix,
+          compose(parentWorld, originalTransform),
+        );
+        const nextTransform = invertedParentWorld === null
+          ? compose(gestureMatrix, originalTransform)
+          : compose(invertedParentWorld, worldGestureTransform);
+        if (matrixNearlyEqual(node.transform, nextTransform)) {
+          continue;
+        }
+
+        node.transform = nextTransform;
+        changed = true;
+      }
+    }),
+  );
+
+  return changed;
+};
+
+const commitTransformGesture = (drag: ScaleDragState | RotateDragState): void => {
+  editorStore.setState((state) => ({
+    history: pushHistory(state.history, drag.originalDoc),
+  }));
 };
 
 const drawShapePreview = (
@@ -400,7 +785,7 @@ export default function CanvasView() {
         };
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         renderDocument(ctx, doc, renderViewport);
-        drawSelectionOverlay(ctx, doc, selection, viewport, dpr);
+        drawSelectionOverlay(ctx, doc, selection, viewport, dpr, editorStore.getState().activeTool === "select");
         drawShapePreview(ctx, dragRef.current, viewport, dpr);
         drawMarqueePreview(ctx, dragRef.current, dpr);
         drawPenPreview(ctx, penDraftRef.current, viewport, dpr);
@@ -610,6 +995,59 @@ export default function CanvasView() {
     }
 
     event.preventDefault();
+    const handleHit = hitSelectionHandle(state.doc, state.selection, state.viewport, point);
+    if (handleHit !== null) {
+      const selectedIds = transformableSelection(state.doc, state.selection);
+      const geometry = getSelectionOverlayGeometry(state.doc, state.selection, state.viewport);
+      if (selectedIds.length === 0 || geometry === null) {
+        return;
+      }
+
+      const originalDoc = structuredClone(state.doc) as Document;
+      const originalTransforms = captureOriginalTransforms(state.doc, selectedIds);
+      canvas.setPointerCapture(event.pointerId);
+
+      if (handleHit.type === "scale") {
+        const anchorId = OPPOSITE_RESIZE_HANDLES[handleHit.handleId];
+        dragRef.current = {
+          mode: "scale",
+          pointerId: event.pointerId,
+          startScreen: point,
+          lastScreen: point,
+          startWorld: worldPoint,
+          additive: false,
+          moved: false,
+          changed: false,
+          originalDoc,
+          originalTransforms,
+          selectedIds,
+          anchorWorld: getResizeHandlePoint(geometry.bounds, anchorId),
+          handleId: handleHit.handleId,
+          handleStartWorld: getResizeHandlePoint(geometry.bounds, handleHit.handleId),
+        };
+      } else {
+        const centerWorld = bboxCenter(geometry.bounds);
+        dragRef.current = {
+          mode: "rotate",
+          pointerId: event.pointerId,
+          startScreen: point,
+          lastScreen: point,
+          startWorld: worldPoint,
+          additive: false,
+          moved: false,
+          changed: false,
+          originalDoc,
+          originalTransforms,
+          selectedIds,
+          centerWorld,
+          startAngle: Math.atan2(worldPoint.y - centerWorld.y, worldPoint.x - centerWorld.x),
+        };
+      }
+
+      scheduleInteractiveDraw();
+      return;
+    }
+
     const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
     if (hit === null) {
       canvas.setPointerCapture(event.pointerId);
@@ -669,6 +1107,20 @@ export default function CanvasView() {
     }
 
     event.preventDefault();
+    const moved = drag.moved || hasDragMoved(drag.startScreen, point);
+
+    if (drag.mode === "scale" || drag.mode === "rotate") {
+      const currentWorld = screenToWorld(point, state.viewport);
+      const changed = applyTransformGesture(drag, currentWorld, event.shiftKey);
+      dragRef.current = {
+        ...drag,
+        lastScreen: point,
+        moved,
+        changed: drag.changed || changed,
+      };
+      return;
+    }
+
     const screenDx = point.x - drag.lastScreen.x;
     const screenDy = point.y - drag.lastScreen.y;
 
@@ -686,7 +1138,7 @@ export default function CanvasView() {
     dragRef.current = {
       ...drag,
       lastScreen: point,
-      moved: drag.moved || hasDragMoved(drag.startScreen, point),
+      moved,
     };
   };
 
@@ -703,7 +1155,12 @@ export default function CanvasView() {
     const currentWorld = screenToWorld(point, state.viewport);
     const moved = drag.moved || hasDragMoved(drag.startScreen, point);
 
-    if (drag.mode === "create-rect") {
+    if (drag.mode === "scale" || drag.mode === "rotate") {
+      const changed = applyTransformGesture(drag, currentWorld, event.shiftKey);
+      if (drag.changed || changed) {
+        commitTransformGesture(drag);
+      }
+    } else if (drag.mode === "create-rect") {
       commitShape("rect", drag.startWorld, currentWorld);
     } else if (drag.mode === "create-ellipse") {
       commitShape("ellipse", drag.startWorld, currentWorld);
