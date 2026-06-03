@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import type { ToolId } from "./state/store";
 import { useEditorStore } from "./state/store";
 import CanvasView from "./ui/CanvasView";
+import { RightPanel } from "./ui/RightPanel";
 import Toolbar from "./ui/Toolbar";
 
 const KEY_TO_TOOL: Record<string, ToolId> = {
@@ -86,7 +87,9 @@ export default function App() {
       <main className="app__workspace">
         <Toolbar />
         <CanvasView />
-        <aside className="app__right-panel">Properties</aside>
+        <aside className="app__right-panel">
+          <RightPanel />
+        </aside>
       </main>
     </div>
   );

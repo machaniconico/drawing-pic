@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { height as bboxHeight, isEmpty, width as bboxWidth } from "../core/geometry/bbox";
 import type { Vec2 } from "../core/geometry/vector";
-import { createEllipse, createRect } from "../core/model/factory";
+import { corner, createEllipse, createPath, createRect } from "../core/model/factory";
 import { hitTest } from "../core/model/hittest";
 import { selectionBounds } from "../core/model/bounds";
-import type { Document, NodeId, SceneNode } from "../core/model/types";
+import type { Anchor, Document, NodeId, SceneNode } from "../core/model/types";
 import { renderDocument } from "../render/canvasRenderer";
 import { editorStore, useEditorStore, type EditorViewport } from "../state/store";
 import "./CanvasView.css";
@@ -24,9 +24,16 @@ interface DragState {
   moved: boolean;
 }
 
+interface PenDraft {
+  anchors: Anchor[];
+  cursorWorld: Vec2 | null;
+}
+
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 64;
 const HANDLE_SIZE = 7;
+const PEN_CLOSE_THRESHOLD = 6;
+const PEN_ANCHOR_SIZE = 6;
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
@@ -42,6 +49,8 @@ const worldToScreen = (point: Vec2, viewport: EditorViewport): Vec2 => ({
   x: point.x * viewport.zoom + viewport.pan.x,
   y: point.y * viewport.zoom + viewport.pan.y,
 });
+
+const distance = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
 
 const eventPoint = (
   event: PointerEvent | ReactPointerEvent<HTMLCanvasElement> | ReactWheelEvent<HTMLCanvasElement>,
@@ -176,14 +185,68 @@ const drawShapePreview = (
   ctx.restore();
 };
 
+const drawPenPreview = (
+  ctx: CanvasRenderingContext2D,
+  draft: PenDraft,
+  viewport: EditorViewport,
+  dpr: number,
+): void => {
+  if (draft.anchors.length === 0) {
+    return;
+  }
+
+  const points = draft.anchors.map((anchor) => worldToScreen(anchor.point, viewport));
+  const cursorPoint = draft.cursorWorld === null ? null : worldToScreen(draft.cursorWorld, viewport);
+  const halfDot = PEN_ANCHOR_SIZE / 2;
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.strokeStyle = "#2d8cf0";
+  ctx.fillStyle = "#ffffff";
+  ctx.lineWidth = 1.25;
+  ctx.setLineDash([]);
+
+  if (points.length > 1 || cursorPoint !== null) {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (const point of points.slice(1)) {
+      ctx.lineTo(point.x, point.y);
+    }
+    if (cursorPoint !== null) {
+      ctx.lineTo(cursorPoint.x, cursorPoint.y);
+    }
+    ctx.stroke();
+  }
+
+  for (const point of points) {
+    ctx.fillRect(point.x - halfDot, point.y - halfDot, PEN_ANCHOR_SIZE, PEN_ANCHOR_SIZE);
+    ctx.strokeRect(
+      point.x - halfDot + 0.5,
+      point.y - halfDot + 0.5,
+      PEN_ANCHOR_SIZE,
+      PEN_ANCHOR_SIZE,
+    );
+  }
+
+  ctx.restore();
+};
+
+const createEmptyPenDraft = (): PenDraft => ({
+  anchors: [],
+  cursorWorld: null,
+});
+
 export default function CanvasView() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const spaceHeldRef = useRef(false);
   const frameRef = useRef<number | null>(null);
+  const [penDraft, setPenDraftState] = useState<PenDraft>(createEmptyPenDraft);
+  const penDraftRef = useRef<PenDraft>(penDraft);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const activeTool = useEditorStore((state) => state.activeTool);
+  const previousToolRef = useRef(activeTool);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -249,6 +312,7 @@ export default function CanvasView() {
         renderDocument(ctx, doc, renderViewport);
         drawSelectionOverlay(ctx, doc, selection, viewport, dpr);
         drawShapePreview(ctx, dragRef.current, viewport, dpr);
+        drawPenPreview(ctx, penDraftRef.current, viewport, dpr);
       });
     };
 
@@ -300,6 +364,51 @@ export default function CanvasView() {
     state.setPan({ ...state.viewport.pan });
   };
 
+  const setPenDraft = useCallback((draft: PenDraft | ((current: PenDraft) => PenDraft)): void => {
+    const next = typeof draft === "function" ? draft(penDraftRef.current) : draft;
+    penDraftRef.current = next;
+    setPenDraftState(next);
+  }, []);
+
+  const finalizePenPath = useCallback((closed: boolean): void => {
+    const draft = penDraftRef.current;
+    if (draft.anchors.length >= 2) {
+      const path = createPath([{ anchors: draft.anchors, closed }]);
+      const state = editorStore.getState();
+      state.addNode(path);
+      state.setSelection([path.id]);
+    }
+
+    setPenDraft(createEmptyPenDraft());
+    scheduleInteractiveDraw();
+  }, [setPenDraft]);
+
+  useEffect(() => {
+    if (previousToolRef.current === "pen" && activeTool !== "pen") {
+      finalizePenPath(false);
+    }
+    previousToolRef.current = activeTool;
+  }, [activeTool, finalizePenPath]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (editorStore.getState().activeTool !== "pen") {
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        finalizePenPath(true);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        finalizePenPath(false);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [finalizePenPath]);
+
   const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
     const canvas = canvasRef.current;
     if (canvas === null) {
@@ -343,6 +452,36 @@ export default function CanvasView() {
       return;
     }
 
+    if (state.activeTool === "pen") {
+      event.preventDefault();
+      const firstAnchor = penDraftRef.current.anchors[0];
+      if (
+        firstAnchor !== undefined &&
+        penDraftRef.current.anchors.length >= 2 &&
+        distance(point, worldToScreen(firstAnchor.point, state.viewport)) <= PEN_CLOSE_THRESHOLD
+      ) {
+        finalizePenPath(true);
+        return;
+      }
+
+      if (event.detail >= 2) {
+        finalizePenPath(false);
+        return;
+      }
+
+      const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+      if (hit !== null) {
+        return;
+      }
+
+      setPenDraft((current) => ({
+        anchors: [...current.anchors, corner(worldPoint)],
+        cursorWorld: worldPoint,
+      }));
+      scheduleInteractiveDraw();
+      return;
+    }
+
     if (state.activeTool !== "select") {
       return;
     }
@@ -376,13 +515,27 @@ export default function CanvasView() {
   const onPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
     const canvas = canvasRef.current;
     const drag = dragRef.current;
-    if (canvas === null || drag === null || drag.pointerId !== event.pointerId) {
+    if (canvas === null) {
+      return;
+    }
+
+    const state = editorStore.getState();
+    const point = eventPoint(event, canvas);
+
+    if (state.activeTool === "pen" && drag === null && penDraftRef.current.anchors.length > 0) {
+      setPenDraft((current) => ({
+        ...current,
+        cursorWorld: screenToWorld(point, state.viewport),
+      }));
+      scheduleInteractiveDraw();
+      return;
+    }
+
+    if (drag === null || drag.pointerId !== event.pointerId) {
       return;
     }
 
     event.preventDefault();
-    const state = editorStore.getState();
-    const point = eventPoint(event, canvas);
     const screenDx = point.x - drag.lastScreen.x;
     const screenDy = point.y - drag.lastScreen.y;
 
@@ -429,6 +582,12 @@ export default function CanvasView() {
     scheduleInteractiveDraw();
   };
 
+  const onDoubleClick = (): void => {
+    if (editorStore.getState().activeTool === "pen") {
+      finalizePenPath(false);
+    }
+  };
+
   const onWheel = (event: ReactWheelEvent<HTMLCanvasElement>): void => {
     event.preventDefault();
     const canvas = canvasRef.current;
@@ -473,6 +632,7 @@ export default function CanvasView() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={finishDrag}
+        onDoubleClick={onDoubleClick}
         onWheel={onWheel}
         ref={canvasRef}
         tabIndex={0}
