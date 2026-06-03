@@ -6,6 +6,21 @@ import { createDocument } from "../core/model/factory";
 import type { Document, NodeId, SceneNode } from "../core/model/types";
 import { isContainer } from "../core/model/types";
 import {
+  alignNodes as computeAlignNodes,
+  bringForward as computeBringForward,
+  bringToFront as computeBringToFront,
+  cloneSubtree,
+  distributeNodes as computeDistributeNodes,
+  findNodeParent,
+  sendBackward as computeSendBackward,
+  sendToBack as computeSendToBack,
+  topLevelNodeIds,
+  type AlignEdge,
+  type DistributeAxis,
+  type TransformPatchMap,
+  type ZOrderPatch,
+} from "./operations";
+import {
   canRedo,
   canUndo,
   createHistory,
@@ -28,6 +43,7 @@ export interface EditorState {
   activeTool: ToolId;
   viewport: EditorViewport;
   history: History<Document>;
+  clipboard: SceneNode[];
 }
 
 export interface EditorActions {
@@ -35,6 +51,15 @@ export interface EditorActions {
   removeNodes: (ids: NodeId[]) => void;
   updateNode: (id: NodeId, patch: Partial<SceneNode>) => void;
   moveSelection: (dx: number, dy: number) => void;
+  alignNodes: (edge: AlignEdge) => void;
+  distributeNodes: (axis: DistributeAxis) => void;
+  bringToFront: () => void;
+  sendToBack: () => void;
+  bringForward: () => void;
+  sendBackward: () => void;
+  copySelection: () => void;
+  paste: () => void;
+  duplicateSelection: () => void;
   setSelection: (ids: NodeId[]) => void;
   addToSelection: (id: NodeId) => void;
   clearSelection: () => void;
@@ -56,6 +81,7 @@ const initialState = (): EditorState => ({
     zoom: 1,
   },
   history: createHistory<Document>(),
+  clipboard: [],
 });
 
 const dedupeIds = (ids: NodeId[]): NodeId[] => [...new Set(ids)];
@@ -85,6 +111,106 @@ const collectDescendants = (doc: Document, id: NodeId, result: Set<NodeId>): voi
   for (const childId of node.children) {
     collectDescendants(doc, childId, result);
   }
+};
+
+const addNodeToParent = (doc: Document, node: SceneNode, parentId: NodeId): boolean => {
+  const parent = doc.nodes[parentId];
+  if (!parent || !isContainer(parent)) {
+    return false;
+  }
+
+  removeFromParent(doc, node.id);
+  doc.nodes[node.id] = node;
+  parent.children.push(node.id);
+  return true;
+};
+
+const applyTransformPatches = (doc: Document, patches: TransformPatchMap): boolean => {
+  let changed = false;
+
+  for (const [id, patch] of Object.entries(patches)) {
+    const node = doc.nodes[id];
+    if (!node) {
+      continue;
+    }
+
+    if (node.transform.e === patch.e && node.transform.f === patch.f) {
+      continue;
+    }
+
+    node.transform = {
+      ...node.transform,
+      e: patch.e,
+      f: patch.f,
+    };
+    changed = true;
+  }
+
+  return changed;
+};
+
+const applyZOrderPatches = (doc: Document, patches: readonly ZOrderPatch[]): boolean => {
+  let changed = false;
+
+  for (const patch of patches) {
+    if (patch.parentId === null) {
+      doc.layerOrder = [...patch.order];
+      changed = true;
+      continue;
+    }
+
+    const parent = doc.nodes[patch.parentId];
+    if (parent && isContainer(parent)) {
+      parent.children = [...patch.order];
+      changed = true;
+    }
+  }
+
+  return changed;
+};
+
+const clipboardRootIds = (clipboard: readonly SceneNode[]): NodeId[] => {
+  const clipboardIds = new Set(clipboard.map((node) => node.id));
+  const childIds = new Set<NodeId>();
+
+  for (const node of clipboard) {
+    if (!isContainer(node)) {
+      continue;
+    }
+
+    for (const childId of node.children) {
+      if (clipboardIds.has(childId)) {
+        childIds.add(childId);
+      }
+    }
+  }
+
+  return clipboard.filter((node) => !childIds.has(node.id)).map((node) => node.id);
+};
+
+const clipboardDocument = (clipboard: readonly SceneNode[]): Document => ({
+  id: "clipboard",
+  name: "Clipboard",
+  width: 0,
+  height: 0,
+  layerOrder: clipboardRootIds(clipboard),
+  nodes: Object.fromEntries(clipboard.map((node) => [node.id, node])) as Record<NodeId, SceneNode>,
+});
+
+const insertRootAfter = (doc: Document, parentId: NodeId | null, sourceId: NodeId, cloneId: NodeId): void => {
+  if (parentId === null) {
+    const index = doc.layerOrder.indexOf(sourceId);
+    doc.layerOrder.splice(index < 0 ? doc.layerOrder.length : index + 1, 0, cloneId);
+    return;
+  }
+
+  const parent = doc.nodes[parentId];
+  if (!parent || !isContainer(parent)) {
+    return;
+  }
+
+  const index = parent.children.indexOf(sourceId);
+  parent.children.splice(index < 0 ? parent.children.length : index + 1, 0, cloneId);
 };
 
 const withDocHistory = (
@@ -117,15 +243,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
         return false;
       }
 
-      const parent = state.doc.nodes[targetParentId];
-      if (!parent || !isContainer(parent)) {
-        return false;
-      }
-
-      removeFromParent(state.doc, node.id);
-      state.doc.nodes[node.id] = node;
-      parent.children.push(node.id);
-      return true;
+      return addNodeToParent(state.doc, node, targetParentId);
     });
   },
 
@@ -183,6 +301,124 @@ export const editorStore = createStore<EditorStore>()((set) => ({
         moved = true;
       }
       return moved;
+    });
+  },
+
+  alignNodes: (edge) => {
+    withDocHistory(set, (state) => applyTransformPatches(state.doc, computeAlignNodes(state.doc, state.selection, edge)));
+  },
+
+  distributeNodes: (axis) => {
+    withDocHistory(set, (state) =>
+      applyTransformPatches(state.doc, computeDistributeNodes(state.doc, state.selection, axis)),
+    );
+  },
+
+  bringToFront: () => {
+    withDocHistory(set, (state) => applyZOrderPatches(state.doc, computeBringToFront(state.doc, state.selection)));
+  },
+
+  sendToBack: () => {
+    withDocHistory(set, (state) => applyZOrderPatches(state.doc, computeSendToBack(state.doc, state.selection)));
+  },
+
+  bringForward: () => {
+    withDocHistory(set, (state) => applyZOrderPatches(state.doc, computeBringForward(state.doc, state.selection)));
+  },
+
+  sendBackward: () => {
+    withDocHistory(set, (state) => applyZOrderPatches(state.doc, computeSendBackward(state.doc, state.selection)));
+  },
+
+  copySelection: () => {
+    set(
+      produce((state: EditorStore) => {
+        const sourceDoc = original(state.doc) ?? state.doc;
+        const copiedIds = new Set<NodeId>();
+
+        for (const id of topLevelNodeIds(sourceDoc, state.selection)) {
+          collectDescendants(sourceDoc, id, copiedIds);
+        }
+
+        state.clipboard = [...copiedIds]
+          .map((id) => sourceDoc.nodes[id])
+          .filter((node): node is SceneNode => Boolean(node))
+          .map((node) => structuredClone(node) as SceneNode);
+      }),
+    );
+  },
+
+  paste: () => {
+    withDocHistory(set, (state) => {
+      const targetParentId = getDefaultParentId(state.doc);
+      const clipboard = original(state.clipboard) ?? state.clipboard;
+      if (!targetParentId || clipboard.length === 0) {
+        return false;
+      }
+
+      const targetParent = state.doc.nodes[targetParentId];
+      if (!targetParent || !isContainer(targetParent)) {
+        return false;
+      }
+
+      const sourceDoc = clipboardDocument(clipboard);
+      const pastedRootIds: NodeId[] = [];
+
+      for (const rootId of clipboardRootIds(clipboard)) {
+        const clone = cloneSubtree(sourceDoc, rootId, undefined, Object.keys(state.doc.nodes));
+        Object.assign(sourceDoc.nodes, clone.nodes);
+        for (const node of Object.values(clone.nodes)) {
+          state.doc.nodes[node.id] = node;
+        }
+
+        const root = state.doc.nodes[clone.rootId];
+        if (root) {
+          root.transform = { ...root.transform, e: root.transform.e + 12, f: root.transform.f + 12 };
+        }
+
+        targetParent.children.push(clone.rootId);
+        pastedRootIds.push(clone.rootId);
+      }
+
+      state.selection = pastedRootIds;
+      return pastedRootIds.length > 0;
+    });
+  },
+
+  duplicateSelection: () => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const sourceIds = topLevelNodeIds(sourceDoc, state.selection);
+      if (sourceIds.length === 0) {
+        return false;
+      }
+
+      const cloneSourceDoc = structuredClone(sourceDoc) as Document;
+      const duplicatedRootIds: NodeId[] = [];
+
+      for (const sourceId of sourceIds) {
+        const parent = findNodeParent(sourceDoc, sourceId);
+        if (!parent) {
+          continue;
+        }
+
+        const clone = cloneSubtree(cloneSourceDoc, sourceId, undefined, Object.keys(state.doc.nodes));
+        Object.assign(cloneSourceDoc.nodes, clone.nodes);
+        for (const node of Object.values(clone.nodes)) {
+          state.doc.nodes[node.id] = node;
+        }
+
+        const root = state.doc.nodes[clone.rootId];
+        if (root) {
+          root.transform = { ...root.transform, e: root.transform.e + 12, f: root.transform.f + 12 };
+        }
+
+        insertRootAfter(state.doc, parent.parentId, sourceId, clone.rootId);
+        duplicatedRootIds.push(clone.rootId);
+      }
+
+      state.selection = duplicatedRootIds;
+      return duplicatedRootIds.length > 0;
     });
   },
 

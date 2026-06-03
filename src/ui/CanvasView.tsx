@@ -1,10 +1,21 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+} from "react";
 import { height as bboxHeight, isEmpty, width as bboxWidth } from "../core/geometry/bbox";
 import type { Vec2 } from "../core/geometry/vector";
-import { corner, createEllipse, createPath, createRect } from "../core/model/factory";
+import { corner, createEllipse, createPath, createRect, createText } from "../core/model/factory";
 import { hitTest } from "../core/model/hittest";
 import { selectionBounds } from "../core/model/bounds";
-import type { Anchor, Document, NodeId, SceneNode } from "../core/model/types";
+import type { Anchor, Document, NodeId, SceneNode, TextNode } from "../core/model/types";
 import { renderDocument } from "../render/canvasRenderer";
 import { editorStore, useEditorStore, type EditorViewport } from "../state/store";
 import "./CanvasView.css";
@@ -27,6 +38,12 @@ interface DragState {
 interface PenDraft {
   anchors: Anchor[];
   cursorWorld: Vec2 | null;
+}
+
+interface InlineTextEdit {
+  id: NodeId;
+  value: string;
+  createdEmpty: boolean;
 }
 
 const MIN_ZOOM = 0.05;
@@ -53,7 +70,11 @@ const worldToScreen = (point: Vec2, viewport: EditorViewport): Vec2 => ({
 const distance = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
 
 const eventPoint = (
-  event: PointerEvent | ReactPointerEvent<HTMLCanvasElement> | ReactWheelEvent<HTMLCanvasElement>,
+  event:
+    | PointerEvent
+    | ReactMouseEvent<HTMLCanvasElement>
+    | ReactPointerEvent<HTMLCanvasElement>
+    | ReactWheelEvent<HTMLCanvasElement>,
   canvas: HTMLCanvasElement,
 ): Vec2 => {
   const rect = canvas.getBoundingClientRect();
@@ -239,14 +260,52 @@ const createEmptyPenDraft = (): PenDraft => ({
 export default function CanvasView() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const spaceHeldRef = useRef(false);
   const frameRef = useRef<number | null>(null);
+  const inlineTextEditRef = useRef<InlineTextEdit | null>(null);
   const [penDraft, setPenDraftState] = useState<PenDraft>(createEmptyPenDraft);
   const penDraftRef = useRef<PenDraft>(penDraft);
+  const [inlineTextEdit, setInlineTextEditState] = useState<InlineTextEdit | null>(null);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const activeTool = useEditorStore((state) => state.activeTool);
+  const doc = useEditorStore((state) => state.doc);
+  const viewport = useEditorStore((state) => state.viewport);
   const previousToolRef = useRef(activeTool);
+
+  const setInlineTextEdit = (edit: InlineTextEdit | null): void => {
+    inlineTextEditRef.current = edit;
+    setInlineTextEditState(edit);
+  };
+
+  const beginInlineTextEdit = (node: TextNode, createdEmpty: boolean): void => {
+    setInlineTextEdit({
+      id: node.id,
+      value: node.text,
+      createdEmpty,
+    });
+  };
+
+  const finishInlineTextEdit = (mode: "commit" | "cancel"): void => {
+    const edit = inlineTextEditRef.current;
+    if (edit === null) {
+      return;
+    }
+
+    inlineTextEditRef.current = null;
+    setInlineTextEditState(null);
+
+    const state = editorStore.getState();
+    if (mode === "commit") {
+      const patch: Partial<TextNode> = { text: edit.value };
+      state.updateNode(edit.id, patch);
+    } else if (edit.createdEmpty) {
+      state.removeNodes([edit.id]);
+    }
+
+    canvasRef.current?.focus();
+  };
 
   useEffect(() => {
     const container = containerRef.current;
@@ -409,6 +468,24 @@ export default function CanvasView() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [finalizePenPath]);
 
+  useEffect(() => {
+    if (inlineTextEdit === null) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const textArea = textAreaRef.current;
+      if (textArea === null) {
+        return;
+      }
+
+      textArea.focus();
+      textArea.setSelectionRange(textArea.value.length, textArea.value.length);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [inlineTextEdit?.id]);
+
   const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
     const canvas = canvasRef.current;
     if (canvas === null) {
@@ -479,6 +556,20 @@ export default function CanvasView() {
         cursorWorld: worldPoint,
       }));
       scheduleInteractiveDraw();
+      return;
+    }
+
+    if (state.activeTool === "text") {
+      event.preventDefault();
+      const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+      if (hit !== null) {
+        return;
+      }
+
+      const textNode = createText("", worldPoint);
+      state.addNode(textNode);
+      state.setSelection([textNode.id]);
+      beginInlineTextEdit(textNode, true);
       return;
     }
 
@@ -582,9 +673,56 @@ export default function CanvasView() {
     scheduleInteractiveDraw();
   };
 
-  const onDoubleClick = (): void => {
-    if (editorStore.getState().activeTool === "pen") {
+  const onDoubleClick = (event: ReactMouseEvent<HTMLCanvasElement>): void => {
+    const state = editorStore.getState();
+    if (state.activeTool === "pen") {
       finalizePenPath(false);
+      return;
+    }
+
+    if (state.activeTool !== "select" && state.activeTool !== "text") {
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    if (canvas === null) {
+      return;
+    }
+
+    event.preventDefault();
+    const point = eventPoint(event, canvas);
+    const worldPoint = screenToWorld(point, state.viewport);
+    const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+    if (hit === null) {
+      return;
+    }
+
+    const node = state.doc.nodes[hit];
+    if (node?.type === "text") {
+      state.setSelection([node.id]);
+      beginInlineTextEdit(node, false);
+    }
+  };
+
+  const onInlineTextInput = (event: ChangeEvent<HTMLTextAreaElement>): void => {
+    const edit = inlineTextEditRef.current;
+    if (edit === null) {
+      return;
+    }
+
+    setInlineTextEdit({
+      ...edit,
+      value: event.currentTarget.value,
+    });
+  };
+
+  const onInlineTextKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      finishInlineTextEdit("commit");
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      finishInlineTextEdit("cancel");
     }
   };
 
@@ -622,6 +760,36 @@ export default function CanvasView() {
       : activeTool === "select"
         ? "canvas-view__canvas--select"
         : "canvas-view__canvas--crosshair";
+  const editingNode = inlineTextEdit === null ? null : doc.nodes[inlineTextEdit.id];
+  const inlineTextStyle = (() => {
+    if (inlineTextEdit === null || editingNode?.type !== "text") {
+      return null;
+    }
+
+    const screenPoint = worldToScreen(
+      { x: editingNode.transform.e, y: editingNode.transform.f },
+      viewport,
+    );
+    const fontSize = editingNode.fontSize * viewport.zoom;
+    const lines = inlineTextEdit.value.split("\n");
+    const longestLineLength = Math.max(1, ...lines.map((line) => line.length));
+    const lineHeight = fontSize * editingNode.lineHeight;
+    const width = Math.max(160, longestLineLength * fontSize * 0.62 + 24);
+    const height = Math.max(36, lines.length * lineHeight + 16);
+
+    return {
+      left: `${screenPoint.x}px`,
+      top: `${screenPoint.y}px`,
+      width: `${width}px`,
+      height: `${height}px`,
+      fontFamily: editingNode.fontFamily,
+      fontSize: `${fontSize}px`,
+      fontStyle: editingNode.fontStyle,
+      fontWeight: editingNode.fontWeight,
+      lineHeight: String(editingNode.lineHeight),
+      textAlign: editingNode.textAlign,
+    } satisfies CSSProperties;
+  })();
 
   return (
     <section className="canvas-view" ref={containerRef}>
@@ -637,6 +805,19 @@ export default function CanvasView() {
         ref={canvasRef}
         tabIndex={0}
       />
+      {inlineTextEdit !== null && inlineTextStyle !== null ? (
+        <textarea
+          aria-label="Edit text"
+          className="canvas-view__text-editor"
+          onBlur={() => finishInlineTextEdit("commit")}
+          onChange={onInlineTextInput}
+          onKeyDown={onInlineTextKeyDown}
+          ref={textAreaRef}
+          spellCheck={false}
+          style={inlineTextStyle}
+          value={inlineTextEdit.value}
+        />
+      ) : null}
     </section>
   );
 }

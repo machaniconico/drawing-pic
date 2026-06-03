@@ -30,3 +30,20 @@
 .canvas-view__canvas--hand:active {
   cursor: grabbing;
 }
+
+.canvas-view__text-editor {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 4px 6px;
+  overflow: hidden;
+  resize: none;
+  color: #111827;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #2d8cf0;
+  border-radius: 2px;
+  outline: none;
+  box-shadow: 0 0 0 1px rgba(45, 140, 240, 0.2);
+  white-space: pre-wrap;
+}
