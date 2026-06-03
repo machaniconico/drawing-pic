@@ -1,0 +1,193 @@
+import type { Matrix } from "../geometry/matrix";
+import type { Vec2 } from "../geometry/vector";
+
+export type NodeId = string;
+
+// ─────────────────────────────────────────────
+// 色・塗り
+// ─────────────────────────────────────────────
+
+/** 0–255 の RGB と 0–1 のアルファ */
+export interface RGBA {
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+}
+
+export interface GradientStop {
+  offset: number; // 0–1
+  color: RGBA;
+}
+
+export interface LinearGradient {
+  type: "linear";
+  stops: GradientStop[];
+  /** ローカル座標での開始/終了点 */
+  start: Vec2;
+  end: Vec2;
+}
+
+export interface RadialGradient {
+  type: "radial";
+  stops: GradientStop[];
+  center: Vec2;
+  radius: number;
+}
+
+export type Paint =
+  | { type: "none" }
+  | { type: "solid"; color: RGBA }
+  | LinearGradient
+  | RadialGradient;
+
+export type LineCap = "butt" | "round" | "square";
+export type LineJoin = "miter" | "round" | "bevel";
+
+export interface Stroke {
+  paint: Paint;
+  width: number;
+  cap: LineCap;
+  join: LineJoin;
+  miterLimit: number;
+  /** 破線パターン（空配列で実線） */
+  dash: number[];
+  dashOffset: number;
+  /** ストロークの位置。Illustrator準拠: center / inside / outside */
+  align: "center" | "inside" | "outside";
+}
+
+// ─────────────────────────────────────────────
+// パスジオメトリ
+// ─────────────────────────────────────────────
+
+/**
+ * パスのアンカーポイント。
+ * handleIn / handleOut はアンカーからの相対オフセット（ローカル座標）。
+ * null の場合はコーナーポイント（ハンドルなし）。
+ */
+export interface Anchor {
+  point: Vec2;
+  handleIn: Vec2 | null;
+  handleOut: Vec2 | null;
+}
+
+export interface SubPath {
+  anchors: Anchor[];
+  closed: boolean;
+}
+
+// ─────────────────────────────────────────────
+// ノード階層
+// ─────────────────────────────────────────────
+
+interface NodeBase {
+  id: NodeId;
+  name: string;
+  /** ローカル変換（親座標系へのマッピング） */
+  transform: Matrix;
+  opacity: number; // 0–1
+  visible: boolean;
+  locked: boolean;
+}
+
+/** 塗り・線を持つ図形ノードの共通プロパティ */
+interface ShapeBase extends NodeBase {
+  fill: Paint;
+  stroke: Stroke | null;
+  /** ブレンドモード（CSS/Canvas互換の文字列） */
+  blendMode: GlobalCompositeOperation;
+}
+
+export interface PathNode extends ShapeBase {
+  type: "path";
+  subpaths: SubPath[];
+}
+
+export interface RectNode extends ShapeBase {
+  type: "rect";
+  /** ローカル原点からのサイズ */
+  width: number;
+  height: number;
+  /** 角丸半径（x, y 個別） */
+  rx: number;
+  ry: number;
+}
+
+export interface EllipseNode extends ShapeBase {
+  type: "ellipse";
+  /** 中心はローカル原点。半径で表現 */
+  rx: number;
+  ry: number;
+}
+
+export interface TextNode extends ShapeBase {
+  type: "text";
+  text: string;
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: number;
+  fontStyle: "normal" | "italic";
+  letterSpacing: number;
+  lineHeight: number;
+  textAlign: "left" | "center" | "right";
+}
+
+export interface ImageNode extends NodeBase {
+  type: "image";
+  /** 画像ソース（data URL or asset id） */
+  src: string;
+  width: number;
+  height: number;
+}
+
+export interface GroupNode extends NodeBase {
+  type: "group";
+  children: NodeId[];
+  /** クリッピンググループか（先頭子をマスクに使う） */
+  clip: boolean;
+}
+
+export interface LayerNode extends NodeBase {
+  type: "layer";
+  children: NodeId[];
+}
+
+export type ShapeNode = PathNode | RectNode | EllipseNode | TextNode | ImageNode;
+export type ContainerNode = LayerNode | GroupNode;
+export type SceneNode = ShapeNode | ContainerNode;
+
+export type NodeType = SceneNode["type"];
+
+// ─────────────────────────────────────────────
+// ドキュメント
+// ─────────────────────────────────────────────
+
+/**
+ * ドキュメント全体。ノードは id→node のフラットマップで保持し（正規化）、
+ * 階層は children 配列で表現する。これにより参照・更新・Undoが扱いやすい。
+ */
+export interface Document {
+  id: NodeId;
+  name: string;
+  /** アートボードサイズ（px） */
+  width: number;
+  height: number;
+  /** ルート直下のレイヤー（描画は配列順 = 下→上） */
+  layerOrder: NodeId[];
+  nodes: Record<NodeId, SceneNode>;
+}
+
+/** 型ガード群 */
+export const isContainer = (n: SceneNode): n is ContainerNode =>
+  n.type === "layer" || n.type === "group";
+
+export const isShape = (n: SceneNode): n is ShapeNode =>
+  n.type === "path" ||
+  n.type === "rect" ||
+  n.type === "ellipse" ||
+  n.type === "text" ||
+  n.type === "image";
+
+export const hasStyle = (n: SceneNode): n is PathNode | RectNode | EllipseNode | TextNode =>
+  n.type === "path" || n.type === "rect" || n.type === "ellipse" || n.type === "text";
