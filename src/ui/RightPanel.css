@@ -20,6 +20,10 @@
   flex: 0 0 auto;
 }
 
+.right-panel__section--align {
+  flex: 0 0 auto;
+}
+
 .right-panel__section--layers {
   flex: 1 1 auto;
   min-height: 0;
@@ -56,6 +60,10 @@
   flex: 0 0 auto;
 }
 
+.right-panel__content--align {
+  flex: 0 0 auto;
+}
+
 .right-panel__content--layers {
   display: flex;
   flex: 1 1 auto;
@@ -63,6 +71,7 @@
 }
 
 .right-panel .properties-panel,
+.right-panel .align-panel,
 .right-panel .layers-panel {
   width: 100%;
   min-width: 0;
@@ -72,6 +81,11 @@
 }
 
 .right-panel .properties-panel {
+  height: auto;
+  padding: 0;
+}
+
+.right-panel .align-panel {
   height: auto;
   padding: 0;
 }

@@ -1,5 +1,6 @@
 import { LayersPanel } from "./LayersPanel";
 import { PropertiesPanel } from "./PropertiesPanel";
+import { AlignPanel } from "./AlignPanel";
 import "./RightPanel.css";
 
 export function RightPanel() {
@@ -14,6 +15,20 @@ export function RightPanel() {
         </header>
         <div className="right-panel__content right-panel__content--properties">
           <PropertiesPanel />
+        </div>
+      </section>
+
+      <div className="right-panel__divider" role="presentation" />
+
+      <section
+        aria-labelledby="right-panel-align-heading"
+        className="right-panel__section right-panel__section--align"
+      >
+        <header className="right-panel__header">
+          <h2 id="right-panel-align-heading">Align</h2>
+        </header>
+        <div className="right-panel__content right-panel__content--align">
+          <AlignPanel />
         </div>
       </section>
 

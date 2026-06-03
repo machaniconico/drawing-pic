@@ -10,13 +10,14 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
-import { height as bboxHeight, isEmpty, width as bboxWidth } from "../core/geometry/bbox";
+import { fromRect, height as bboxHeight, isEmpty, width as bboxWidth } from "../core/geometry/bbox";
 import type { Vec2 } from "../core/geometry/vector";
 import { corner, createEllipse, createPath, createRect, createText } from "../core/model/factory";
 import { hitTest } from "../core/model/hittest";
 import { selectionBounds } from "../core/model/bounds";
 import type { Anchor, Document, NodeId, SceneNode, TextNode } from "../core/model/types";
 import { renderDocument } from "../render/canvasRenderer";
+import { nodesInRect } from "../state/selectors";
 import { editorStore, useEditorStore, type EditorViewport } from "../state/store";
 import "./CanvasView.css";
 
@@ -26,7 +27,7 @@ interface Size {
 }
 
 interface DragState {
-  mode: "move" | "pan" | "create-rect" | "create-ellipse";
+  mode: "move" | "pan" | "create-rect" | "create-ellipse" | "marquee";
   pointerId: number;
   startScreen: Vec2;
   lastScreen: Vec2;
@@ -51,6 +52,7 @@ const MAX_ZOOM = 64;
 const HANDLE_SIZE = 7;
 const PEN_CLOSE_THRESHOLD = 6;
 const PEN_ANCHOR_SIZE = 6;
+const DRAG_MOVE_THRESHOLD = 2;
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
@@ -68,6 +70,10 @@ const worldToScreen = (point: Vec2, viewport: EditorViewport): Vec2 => ({
 });
 
 const distance = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
+
+const hasDragMoved = (start: Vec2, current: Vec2): boolean =>
+  Math.abs(current.x - start.x) > DRAG_MOVE_THRESHOLD ||
+  Math.abs(current.y - start.y) > DRAG_MOVE_THRESHOLD;
 
 const eventPoint = (
   event:
@@ -203,6 +209,31 @@ const drawShapePreview = (
   }
   ctx.fill();
   ctx.stroke();
+  ctx.restore();
+};
+
+const drawMarqueePreview = (
+  ctx: CanvasRenderingContext2D,
+  drag: DragState | null,
+  dpr: number,
+): void => {
+  if (drag === null || drag.mode !== "marquee" || !drag.moved) {
+    return;
+  }
+
+  const x = Math.min(drag.startScreen.x, drag.lastScreen.x);
+  const y = Math.min(drag.startScreen.y, drag.lastScreen.y);
+  const width = Math.abs(drag.lastScreen.x - drag.startScreen.x);
+  const height = Math.abs(drag.lastScreen.y - drag.startScreen.y);
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.strokeStyle = "#2d8cf0";
+  ctx.fillStyle = "rgba(45, 140, 240, 0.1)";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([6, 4]);
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeRect(x + 0.5, y + 0.5, width, height);
   ctx.restore();
 };
 
@@ -371,6 +402,7 @@ export default function CanvasView() {
         renderDocument(ctx, doc, renderViewport);
         drawSelectionOverlay(ctx, doc, selection, viewport, dpr);
         drawShapePreview(ctx, dragRef.current, viewport, dpr);
+        drawMarqueePreview(ctx, dragRef.current, dpr);
         drawPenPreview(ctx, penDraftRef.current, viewport, dpr);
       });
     };
@@ -580,7 +612,17 @@ export default function CanvasView() {
     event.preventDefault();
     const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
     if (hit === null) {
-      state.clearSelection();
+      canvas.setPointerCapture(event.pointerId);
+      dragRef.current = {
+        mode: "marquee",
+        pointerId: event.pointerId,
+        startScreen: point,
+        lastScreen: point,
+        startWorld: worldPoint,
+        additive: event.shiftKey,
+        moved: false,
+      };
+      scheduleInteractiveDraw();
       return;
     }
 
@@ -637,14 +679,14 @@ export default function CanvasView() {
       });
     } else if (drag.mode === "move") {
       state.moveSelection(screenDx / state.viewport.zoom, screenDy / state.viewport.zoom);
-    } else {
+    } else if (drag.mode === "create-rect" || drag.mode === "create-ellipse" || drag.mode === "marquee") {
       scheduleInteractiveDraw();
     }
 
     dragRef.current = {
       ...drag,
       lastScreen: point,
-      moved: drag.moved || Math.abs(point.x - drag.startScreen.x) > 2 || Math.abs(point.y - drag.startScreen.y) > 2,
+      moved: drag.moved || hasDragMoved(drag.startScreen, point),
     };
   };
 
@@ -659,11 +701,31 @@ export default function CanvasView() {
     const point = eventPoint(event, canvas);
     const state = editorStore.getState();
     const currentWorld = screenToWorld(point, state.viewport);
+    const moved = drag.moved || hasDragMoved(drag.startScreen, point);
 
     if (drag.mode === "create-rect") {
       commitShape("rect", drag.startWorld, currentWorld);
     } else if (drag.mode === "create-ellipse") {
       commitShape("ellipse", drag.startWorld, currentWorld);
+    } else if (drag.mode === "marquee") {
+      if (!moved) {
+        state.clearSelection();
+      } else {
+        const rect = fromRect(
+          drag.startWorld.x,
+          drag.startWorld.y,
+          currentWorld.x - drag.startWorld.x,
+          currentWorld.y - drag.startWorld.y,
+        );
+        const hits = nodesInRect(state, rect);
+        if (event.shiftKey) {
+          for (const id of hits) {
+            state.addToSelection(id);
+          }
+        } else {
+          state.setSelection(hits);
+        }
+      }
     }
 
     if (canvas.hasPointerCapture(event.pointerId)) {

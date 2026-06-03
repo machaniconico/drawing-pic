@@ -31,6 +31,13 @@ export default function App() {
   const removeNodes = useEditorStore((state) => state.removeNodes);
   const undo = useEditorStore((state) => state.undo);
   const redo = useEditorStore((state) => state.redo);
+  const copySelection = useEditorStore((state) => state.copySelection);
+  const paste = useEditorStore((state) => state.paste);
+  const duplicateSelection = useEditorStore((state) => state.duplicateSelection);
+  const bringToFront = useEditorStore((state) => state.bringToFront);
+  const sendToBack = useEditorStore((state) => state.sendToBack);
+  const bringForward = useEditorStore((state) => state.bringForward);
+  const sendBackward = useEditorStore((state) => state.sendBackward);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -47,6 +54,44 @@ export default function App() {
           redo();
         } else {
           undo();
+        }
+        return;
+      }
+
+      if (hasCommandModifier && key === "c") {
+        event.preventDefault();
+        copySelection();
+        return;
+      }
+
+      if (hasCommandModifier && key === "v") {
+        event.preventDefault();
+        paste();
+        return;
+      }
+
+      if (hasCommandModifier && key === "d") {
+        event.preventDefault();
+        duplicateSelection();
+        return;
+      }
+
+      if (hasCommandModifier && (key === "]" || key === "}")) {
+        event.preventDefault();
+        if (event.shiftKey) {
+          bringToFront();
+        } else {
+          bringForward();
+        }
+        return;
+      }
+
+      if (hasCommandModifier && (key === "[" || key === "{")) {
+        event.preventDefault();
+        if (event.shiftKey) {
+          sendToBack();
+        } else {
+          sendBackward();
         }
         return;
       }
@@ -74,7 +119,20 @@ export default function App() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [redo, removeNodes, selection, setActiveTool, undo]);
+  }, [
+    bringForward,
+    bringToFront,
+    copySelection,
+    duplicateSelection,
+    paste,
+    redo,
+    removeNodes,
+    selection,
+    sendBackward,
+    sendToBack,
+    setActiveTool,
+    undo,
+  ]);
 
   return (
     <div className="app">
