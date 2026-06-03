@@ -1,0 +1,42 @@
+.toolbar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 44px;
+  flex: 0 0 44px;
+  padding: 8px 4px;
+  background: #252526;
+  border-right: 1px solid #3c3c3c;
+}
+
+.toolbar__button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: #dedede;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.toolbar__button:hover {
+  background: #303033;
+  border-color: #3c3c3c;
+}
+
+.toolbar__button--active {
+  color: #ffffff;
+  background: rgba(45, 140, 240, 0.22);
+  border-color: #2d8cf0;
+}
+
+.toolbar__icon {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+}
