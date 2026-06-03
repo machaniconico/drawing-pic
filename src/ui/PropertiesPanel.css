@@ -108,6 +108,17 @@
   cursor: pointer;
 }
 
+.properties-panel__select {
+  width: 132px;
+  min-height: 26px;
+  padding: 3px 24px 3px 6px;
+  color: #f0f0f0;
+  background: #1f1f21;
+  border: 1px solid #454545;
+  border-radius: 4px;
+  font: inherit;
+}
+
 .properties-panel__color:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -140,7 +151,9 @@
 }
 
 .properties-panel__number:focus,
-.properties-panel__color:focus {
+.properties-panel__color:focus,
+.properties-panel__select:focus,
+.properties-panel__button:focus {
   border-color: #2d8cf0;
   outline: 1px solid rgba(45, 140, 240, 0.55);
 }
@@ -176,4 +189,75 @@
   background: #202022;
   border: 1px solid #363636;
   border-radius: 4px;
+}
+
+.properties-panel__gradient-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  background: #202022;
+  border: 1px solid #363636;
+  border-radius: 6px;
+}
+
+.properties-panel__subhead {
+  color: #bdbdbd;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.properties-panel__stop {
+  display: grid;
+  grid-template-columns: 14px minmax(34px, 1fr) 48px 28px 48px 24px;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.properties-panel__stop .properties-panel__number--compact {
+  width: 48px;
+}
+
+.properties-panel__stop-index {
+  color: #8f8f8f;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.properties-panel__button {
+  min-height: 26px;
+  padding: 3px 8px;
+  color: #f0f0f0;
+  background: #2b2b2d;
+  border: 1px solid #454545;
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.properties-panel__button:hover:not(:disabled) {
+  background: #333337;
+  border-color: #5a5a5a;
+}
+
+.properties-panel__button:disabled {
+  color: #7f7f7f;
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.properties-panel__button--icon {
+  width: 24px;
+  padding: 0;
+}
+
+.properties-panel__gradient-geometry {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #363636;
 }

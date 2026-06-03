@@ -1,0 +1,33 @@
+.export-menu {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  min-width: 0;
+}
+
+.export-menu__button {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  color: #f2f2f2;
+  background: #303033;
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.export-menu__button:hover {
+  border-color: #6f6f72;
+  background: #3a3a3d;
+}
+
+.export-menu__button:focus-visible {
+  outline: 2px solid #8ab4f8;
+  outline-offset: 2px;
+}
+
+.export-menu__button:active {
+  background: #262629;
+}

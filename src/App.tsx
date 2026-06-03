@@ -38,6 +38,8 @@ export default function App() {
   const sendToBack = useEditorStore((state) => state.sendToBack);
   const bringForward = useEditorStore((state) => state.bringForward);
   const sendBackward = useEditorStore((state) => state.sendBackward);
+  const groupSelection = useEditorStore((state) => state.groupSelection);
+  const ungroupSelection = useEditorStore((state) => state.ungroupSelection);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -73,6 +75,16 @@ export default function App() {
       if (hasCommandModifier && key === "d") {
         event.preventDefault();
         duplicateSelection();
+        return;
+      }
+
+      if (hasCommandModifier && key === "g") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          ungroupSelection();
+        } else {
+          groupSelection();
+        }
         return;
       }
 
@@ -124,6 +136,7 @@ export default function App() {
     bringToFront,
     copySelection,
     duplicateSelection,
+    groupSelection,
     paste,
     redo,
     removeNodes,
@@ -131,6 +144,7 @@ export default function App() {
     sendBackward,
     sendToBack,
     setActiveTool,
+    ungroupSelection,
     undo,
   ]);
 

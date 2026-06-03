@@ -1,7 +1,7 @@
 import { center, isEmpty, unionAll, type BBox } from "../core/geometry/bbox";
-import { newId as createNodeId } from "../core/model/factory";
+import { createGroup, newId as createNodeId } from "../core/model/factory";
 import { worldBounds } from "../core/model/bounds";
-import type { Document, NodeId, SceneNode } from "../core/model/types";
+import type { Document, GroupNode, NodeId, SceneNode } from "../core/model/types";
 import { isContainer } from "../core/model/types";
 
 export type AlignEdge = "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom";
@@ -28,6 +28,20 @@ export interface CloneSubtreeResult {
 export interface NodeParentRef {
   parentId: NodeId | null;
   order: readonly NodeId[];
+}
+
+export interface GroupSelectionResult {
+  parentId: NodeId | null;
+  group: GroupNode;
+  order: NodeId[];
+  groupedIds: NodeId[];
+}
+
+export interface UngroupSelectionResult {
+  parentId: NodeId | null;
+  groupIds: NodeId[];
+  order: NodeId[];
+  liftedIds: NodeId[];
 }
 
 const uniqueIds = (ids: readonly NodeId[]): NodeId[] => [...new Set(ids)];
@@ -279,6 +293,95 @@ export const bringForward = (doc: Document, ids: readonly NodeId[]): ZOrderPatch
 
 export const sendBackward = (doc: Document, ids: readonly NodeId[]): ZOrderPatch[] =>
   zOrderNodes(doc, ids, "sendBackward");
+
+export const groupSelection = (doc: Document, ids: readonly NodeId[]): GroupSelectionResult | null => {
+  const topLevelIds = topLevelNodeIds(doc, ids);
+  const firstParent = topLevelIds.length > 0 ? findNodeParent(doc, topLevelIds[0]!) : null;
+  if (!firstParent) {
+    return null;
+  }
+
+  const selected = new Set(topLevelIds);
+  const groupedIds = firstParent.order.filter((id) => selected.has(id));
+  if (groupedIds.length < 2) {
+    return null;
+  }
+
+  const frontmostIndex = Math.max(...groupedIds.map((id) => firstParent.order.indexOf(id)));
+  const group = createGroup("Group", groupedIds);
+  const order: NodeId[] = [];
+  let inserted = false;
+
+  for (let index = 0; index < firstParent.order.length; index += 1) {
+    const id = firstParent.order[index]!;
+    if (!selected.has(id)) {
+      order.push(id);
+    }
+
+    if (index === frontmostIndex) {
+      order.push(group.id);
+      inserted = true;
+    }
+  }
+
+  if (!inserted) {
+    order.push(group.id);
+  }
+
+  return {
+    parentId: firstParent.parentId,
+    group,
+    order,
+    groupedIds,
+  };
+};
+
+export const ungroupSelection = (doc: Document, ids: readonly NodeId[]): UngroupSelectionResult[] => {
+  const groupsByParent = new Map<NodeId | null, Map<NodeId, GroupNode>>();
+
+  for (const id of topLevelNodeIds(doc, ids)) {
+    const node = doc.nodes[id];
+    if (!node || node.type !== "group") {
+      continue;
+    }
+
+    const parent = findNodeParent(doc, id);
+    if (!parent) {
+      continue;
+    }
+
+    const groups = groupsByParent.get(parent.parentId);
+    if (groups) {
+      groups.set(id, node);
+    } else {
+      groupsByParent.set(parent.parentId, new Map([[id, node]]));
+    }
+  }
+
+  return [...groupsByParent].map(([parentId, groups]) => {
+    const parent = parentId ? doc.nodes[parentId] : null;
+    const order = parentId
+      ? parent && isContainer(parent)
+        ? parent.children
+        : []
+      : doc.layerOrder;
+    const liftedIds: NodeId[] = [];
+
+    return {
+      parentId,
+      groupIds: [...groups.keys()],
+      order: order.flatMap((childId) => {
+        const group = groups.get(childId);
+        if (!group) {
+          return [childId];
+        }
+        liftedIds.push(...group.children);
+        return group.children;
+      }),
+      liftedIds,
+    };
+  });
+};
 
 export const cloneSubtree = (
   doc: Document,

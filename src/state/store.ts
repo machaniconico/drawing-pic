@@ -12,12 +12,16 @@ import {
   cloneSubtree,
   distributeNodes as computeDistributeNodes,
   findNodeParent,
+  groupSelection as computeGroupSelection,
   sendBackward as computeSendBackward,
   sendToBack as computeSendToBack,
   topLevelNodeIds,
+  ungroupSelection as computeUngroupSelection,
   type AlignEdge,
   type DistributeAxis,
+  type GroupSelectionResult,
   type TransformPatchMap,
+  type UngroupSelectionResult,
   type ZOrderPatch,
 } from "./operations";
 import {
@@ -57,6 +61,8 @@ export interface EditorActions {
   sendToBack: () => void;
   bringForward: () => void;
   sendBackward: () => void;
+  groupSelection: () => void;
+  ungroupSelection: () => void;
   copySelection: () => void;
   paste: () => void;
   duplicateSelection: () => void;
@@ -167,6 +173,42 @@ const applyZOrderPatches = (doc: Document, patches: readonly ZOrderPatch[]): boo
   }
 
   return changed;
+};
+
+const applyGroupSelectionResult = (doc: Document, result: GroupSelectionResult): void => {
+  doc.nodes[result.group.id] = result.group;
+  // The new group keeps an identity transform in the same parent, so child transforms remain visually unchanged.
+  if (result.parentId === null) {
+    doc.layerOrder = [...result.order];
+    return;
+  }
+
+  const parent = doc.nodes[result.parentId];
+  if (parent && isContainer(parent)) {
+    parent.children = [...result.order];
+  }
+};
+
+const applyUngroupSelectionResults = (doc: Document, results: readonly UngroupSelectionResult[]): NodeId[] => {
+  const liftedIds: NodeId[] = [];
+
+  for (const result of results) {
+    if (result.parentId === null) {
+      doc.layerOrder = [...result.order];
+    } else {
+      const parent = doc.nodes[result.parentId];
+      if (parent && isContainer(parent)) {
+        parent.children = [...result.order];
+      }
+    }
+
+    for (const groupId of result.groupIds) {
+      delete doc.nodes[groupId];
+    }
+    liftedIds.push(...result.liftedIds);
+  }
+
+  return liftedIds;
 };
 
 const clipboardRootIds = (clipboard: readonly SceneNode[]): NodeId[] => {
@@ -328,6 +370,31 @@ export const editorStore = createStore<EditorStore>()((set) => ({
 
   sendBackward: () => {
     withDocHistory(set, (state) => applyZOrderPatches(state.doc, computeSendBackward(state.doc, state.selection)));
+  },
+
+  groupSelection: () => {
+    withDocHistory(set, (state) => {
+      const result = computeGroupSelection(state.doc, state.selection);
+      if (!result) {
+        return false;
+      }
+
+      applyGroupSelectionResult(state.doc, result);
+      state.selection = [result.group.id];
+      return true;
+    });
+  },
+
+  ungroupSelection: () => {
+    withDocHistory(set, (state) => {
+      const results = computeUngroupSelection(state.doc, state.selection);
+      if (results.length === 0) {
+        return false;
+      }
+
+      state.selection = applyUngroupSelectionResults(state.doc, results);
+      return true;
+    });
   },
 
   copySelection: () => {

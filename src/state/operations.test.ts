@@ -9,7 +9,9 @@ import {
   bringToFront,
   cloneSubtree,
   distributeNodes,
+  groupSelection,
   sendBackward,
+  ungroupSelection,
 } from "./operations";
 import { createEditorStateForTest, editorStore } from "./store";
 
@@ -152,6 +154,74 @@ describe("selection operations", () => {
     expect(patches).toEqual([{ parentId: firstLayerId(doc), order: [back.id, front.id, middle.id] }]);
   });
 
+  it("groups two siblings into a new group in sibling order and removes them from the parent order", () => {
+    const doc = createDocument();
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(20, 0, 10, 10);
+    const outside = createRect(40, 0, 10, 10);
+    addToFirstLayer(doc, [left, right, outside]);
+
+    const result = groupSelection(doc, [left.id, right.id]);
+
+    expect(result).not.toBeNull();
+    expect(result?.parentId).toBe(firstLayerId(doc));
+    expect(result?.group.type).toBe("group");
+    expect(result?.group.children).toEqual([left.id, right.id]);
+    expect(result?.groupedIds).toEqual([left.id, right.id]);
+    expect(result?.order).toEqual([result?.group.id, outside.id]);
+  });
+
+  it("inserts the group at the frontmost selected sibling position", () => {
+    const doc = createDocument();
+    const back = createRect(0, 0, 10, 10);
+    const middle = createRect(20, 0, 10, 10);
+    const front = createRect(40, 0, 10, 10);
+    const top = createRect(60, 0, 10, 10);
+    addToFirstLayer(doc, [back, middle, front, top]);
+
+    const result = groupSelection(doc, [back.id, front.id]);
+
+    expect(result).not.toBeNull();
+    expect(result?.group.children).toEqual([back.id, front.id]);
+    expect(result?.order).toEqual([middle.id, result?.group.id, top.id]);
+  });
+
+  it("ungroups selected groups by lifting children into the group position in order", () => {
+    const doc = createDocument();
+    const before = createRect(0, 0, 10, 10);
+    const firstChild = createRect(20, 0, 10, 10);
+    const secondChild = createRect(40, 0, 10, 10);
+    const group = createGroup("Group", [firstChild.id, secondChild.id]);
+    const after = createRect(60, 0, 10, 10);
+    addToFirstLayer(doc, [before, group, after]);
+    doc.nodes[firstChild.id] = firstChild;
+    doc.nodes[secondChild.id] = secondChild;
+
+    const result = ungroupSelection(doc, [group.id]);
+
+    expect(result).toEqual([
+      {
+        parentId: firstLayerId(doc),
+        groupIds: [group.id],
+        order: [before.id, firstChild.id, secondChild.id, after.id],
+        liftedIds: [firstChild.id, secondChild.id],
+      },
+    ]);
+  });
+
+  it("does not group when fewer than two nodes are eligible under the first selected parent", () => {
+    const doc = createDocument();
+    const layerChild = createRect(0, 0, 10, 10);
+    const groupChild = createRect(20, 0, 10, 10);
+    const group = createGroup("Group", [groupChild.id]);
+    addToFirstLayer(doc, [layerChild, group]);
+    doc.nodes[groupChild.id] = groupChild;
+
+    const result = groupSelection(doc, [layerChild.id, groupChild.id]);
+
+    expect(result).toBeNull();
+  });
+
   it("cloneSubtree assigns fresh ids and repoints child references", () => {
     const doc = createDocument();
     const child = createRect(5, 6, 7, 8);
@@ -262,5 +332,74 @@ describe("editorStore selection operation actions", () => {
 
     editorStore.getState().undo();
     expect(editorStore.getState().doc.nodes[duplicatedId]).toBeUndefined();
+  });
+
+  it("groups the current selection as one undoable document step and selects the group", () => {
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(20, 0, 10, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+    editorStore.getState().setSelection([left.id, right.id]);
+    const historyDepth = editorStore.getState().history.past.length;
+
+    editorStore.getState().groupSelection();
+
+    const state = editorStore.getState();
+    const groupId = state.selection[0]!;
+    const group = state.doc.nodes[groupId];
+    expect(state.history.past).toHaveLength(historyDepth + 1);
+    expect(group?.type).toBe("group");
+    expect(group && isContainer(group) ? group.children : []).toEqual([left.id, right.id]);
+    expect(firstLayerChildren(state.doc)).toEqual([groupId]);
+
+    editorStore.getState().undo();
+    expect(editorStore.getState().doc.nodes[groupId]).toBeUndefined();
+    expect(firstLayerChildren(editorStore.getState().doc)).toEqual([left.id, right.id]);
+  });
+
+  it("ungroups the current selection as one undoable document step and selects lifted children", () => {
+    const firstChild = createRect(0, 0, 10, 10);
+    const secondChild = createRect(20, 0, 10, 10);
+    const group = createGroup("Group", [firstChild.id, secondChild.id]);
+    editorStore.getState().addNode(group);
+    editorStore.setState((state) => ({
+      doc: {
+        ...state.doc,
+        nodes: {
+          ...state.doc.nodes,
+          [firstChild.id]: firstChild,
+          [secondChild.id]: secondChild,
+        },
+      },
+    }));
+    editorStore.getState().setSelection([group.id]);
+    const historyDepth = editorStore.getState().history.past.length;
+
+    editorStore.getState().ungroupSelection();
+
+    const state = editorStore.getState();
+    expect(state.history.past).toHaveLength(historyDepth + 1);
+    expect(state.selection).toEqual([firstChild.id, secondChild.id]);
+    expect(firstLayerChildren(state.doc)).toEqual([firstChild.id, secondChild.id]);
+    expect(state.doc.nodes[group.id]).toBeUndefined();
+  });
+
+  it("ungroups an empty group as one undoable document step", () => {
+    const group = createGroup("Group", []);
+    editorStore.getState().addNode(group);
+    editorStore.getState().setSelection([group.id]);
+    const historyDepth = editorStore.getState().history.past.length;
+
+    editorStore.getState().ungroupSelection();
+
+    expect(editorStore.getState().history.past).toHaveLength(historyDepth + 1);
+    expect(editorStore.getState().selection).toEqual([]);
+    expect(editorStore.getState().doc.nodes[group.id]).toBeUndefined();
+    expect(firstLayerChildren(editorStore.getState().doc)).toEqual([]);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc.nodes[group.id]).toEqual(group);
+    expect(firstLayerChildren(editorStore.getState().doc)).toEqual([group.id]);
   });
 });
