@@ -6,6 +6,7 @@ import type { Document, NodeId, SceneNode } from "../core/model/types";
 import { isContainer } from "../core/model/types";
 import {
   alignNodes,
+  booleanSelection,
   bringToFront,
   cloneSubtree,
   distributeNodes,
@@ -32,6 +33,16 @@ const addToFirstLayer = (doc: Document, nodes: SceneNode[]): void => {
 const firstLayerChildren = (doc: Document): NodeId[] => {
   const layer = doc.nodes[firstLayerId(doc)];
   return layer && isContainer(layer) ? layer.children : [];
+};
+
+const ringArea = (points: readonly { x: number; y: number }[]): number => {
+  let area = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const a = points[index]!;
+    const b = points[(index + 1) % points.length]!;
+    area += a.x * b.y - b.x * a.y;
+  }
+  return area / 2;
 };
 
 const resetStore = (): void => {
@@ -240,6 +251,44 @@ describe("selection operations", () => {
     expect(clone.nodes[group.id]).toBeUndefined();
     expect(clone.nodes[child.id]).toBeUndefined();
   });
+
+  it("builds one closed corner-anchor path for boolean selection", () => {
+    const doc = createDocument();
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(5, 0, 10, 10);
+    addToFirstLayer(doc, [left, right]);
+
+    const result = booleanSelection(doc, [left.id, right.id], "intersect");
+
+    expect(result).not.toBeNull();
+    expect(result?.removeIds).toEqual([left.id, right.id]);
+    expect(result?.node.type).toBe("path");
+    expect(result?.node.subpaths).toHaveLength(1);
+    expect(result?.node.subpaths[0]?.closed).toBe(true);
+    expect(result?.node.subpaths[0]?.anchors.every((anchor) => anchor.handleIn === null && anchor.handleOut === null)).toBe(true);
+    expect(ringArea(result?.node.subpaths[0]?.anchors.map((anchor) => anchor.point) ?? [])).toBeCloseTo(50, 10);
+  });
+
+  it("returns null for boolean selection with fewer than two eligible shapes", () => {
+    const doc = createDocument();
+    const rect = createRect(0, 0, 10, 10);
+    addToFirstLayer(doc, [rect]);
+
+    expect(booleanSelection(doc, [rect.id], "union")).toBeNull();
+  });
+
+  it("returns an empty result path when two shapes subtract to nothing", () => {
+    const doc = createDocument();
+    const first = createRect(0, 0, 10, 10);
+    const second = createRect(0, 0, 10, 10);
+    addToFirstLayer(doc, [first, second]);
+
+    const result = booleanSelection(doc, [first.id, second.id], "subtract");
+
+    expect(result).not.toBeNull();
+    expect(result?.removeIds).toEqual([first.id, second.id]);
+    expect(result?.node.subpaths).toEqual([]);
+  });
 });
 
 describe("editorStore selection operation actions", () => {
@@ -401,5 +450,43 @@ describe("editorStore selection operation actions", () => {
 
     expect(editorStore.getState().doc.nodes[group.id]).toEqual(group);
     expect(firstLayerChildren(editorStore.getState().doc)).toEqual([group.id]);
+  });
+
+  it("runs boolean selection as one undoable replacement step and selects the result", () => {
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(5, 0, 10, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+    editorStore.getState().setSelection([left.id, right.id]);
+    const historyDepth = editorStore.getState().history.past.length;
+
+    editorStore.getState().booleanOp("union");
+
+    const state = editorStore.getState();
+    const resultId = state.selection[0]!;
+    expect(state.history.past).toHaveLength(historyDepth + 1);
+    expect(state.doc.nodes[left.id]).toBeUndefined();
+    expect(state.doc.nodes[right.id]).toBeUndefined();
+    expect(state.doc.nodes[resultId]?.type).toBe("path");
+    expect(firstLayerChildren(state.doc)).toEqual([resultId]);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc.nodes[left.id]).toEqual(left);
+    expect(editorStore.getState().doc.nodes[right.id]).toEqual(right);
+    expect(firstLayerChildren(editorStore.getState().doc)).toEqual([left.id, right.id]);
+  });
+
+  it("does not push history when boolean selection has fewer than two eligible shapes", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    const historyDepth = editorStore.getState().history.past.length;
+
+    editorStore.getState().booleanOp("subtract");
+
+    expect(editorStore.getState().history.past).toHaveLength(historyDepth);
+    expect(editorStore.getState().selection).toEqual([rect.id]);
+    expect(firstLayerChildren(editorStore.getState().doc)).toEqual([rect.id]);
   });
 });

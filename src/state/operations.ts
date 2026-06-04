@@ -1,7 +1,9 @@
 import { center, isEmpty, unionAll, type BBox } from "../core/geometry/bbox";
+import { apply, compose, IDENTITY, invert, type Matrix } from "../core/geometry/matrix";
+import { type BooleanOp, flattenNodeToPolygons, polygonBoolean } from "../core/geometry/polygonBoolean";
 import { createGroup, newId as createNodeId } from "../core/model/factory";
 import { worldBounds } from "../core/model/bounds";
-import type { Document, GroupNode, NodeId, SceneNode } from "../core/model/types";
+import type { Document, GroupNode, NodeId, PathNode, SceneNode, SubPath } from "../core/model/types";
 import { isContainer } from "../core/model/types";
 
 export type AlignEdge = "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom";
@@ -42,6 +44,11 @@ export interface UngroupSelectionResult {
   groupIds: NodeId[];
   order: NodeId[];
   liftedIds: NodeId[];
+}
+
+export interface BooleanSelectionResult {
+  node: PathNode;
+  removeIds: NodeId[];
 }
 
 const uniqueIds = (ids: readonly NodeId[]): NodeId[] => [...new Set(ids)];
@@ -293,6 +300,111 @@ export const bringForward = (doc: Document, ids: readonly NodeId[]): ZOrderPatch
 
 export const sendBackward = (doc: Document, ids: readonly NodeId[]): ZOrderPatch[] =>
   zOrderNodes(doc, ids, "sendBackward");
+
+const isBooleanShape = (node: SceneNode | undefined): node is PathNode | Extract<SceneNode, { type: "rect" | "ellipse" }> =>
+  node?.type === "path" || node?.type === "rect" || node?.type === "ellipse";
+
+const pathToNode = (doc: Document, targetId: NodeId): SceneNode[] | null => {
+  const visit = (id: NodeId, path: SceneNode[]): SceneNode[] | null => {
+    const node = doc.nodes[id];
+    if (!node) {
+      return null;
+    }
+
+    const nextPath = [...path, node];
+    if (id === targetId) {
+      return nextPath;
+    }
+
+    if (!isContainer(node)) {
+      return null;
+    }
+
+    for (const childId of node.children) {
+      const result = visit(childId, nextPath);
+      if (result) {
+        return result;
+      }
+    }
+
+    return null;
+  };
+
+  for (const layerId of doc.layerOrder) {
+    const result = visit(layerId, []);
+    if (result) {
+      return result;
+    }
+  }
+
+  return null;
+};
+
+const parentWorldTransform = (doc: Document, parentId: NodeId | null): Matrix => {
+  if (parentId === null) {
+    return IDENTITY;
+  }
+
+  const path = pathToNode(doc, parentId);
+  if (!path) {
+    return IDENTITY;
+  }
+
+  return path.reduce((acc, node) => compose(acc, node.transform), IDENTITY);
+};
+
+export const booleanSelection = (
+  doc: Document,
+  ids: readonly NodeId[],
+  op: BooleanOp,
+): BooleanSelectionResult | null => {
+  const candidates = topLevelNodeIds(doc, ids).filter((id) => isBooleanShape(doc.nodes[id]));
+  if (candidates.length < 2) {
+    return null;
+  }
+
+  const firstParent = findNodeParent(doc, candidates[0]!);
+  if (!firstParent) {
+    return null;
+  }
+
+  let result = flattenNodeToPolygons(doc, doc.nodes[candidates[0]!]!);
+  for (const id of candidates.slice(1)) {
+    result = polygonBoolean(result, flattenNodeToPolygons(doc, doc.nodes[id]!), op);
+  }
+
+  const parentInverse = invert(parentWorldTransform(doc, firstParent.parentId));
+  if (!parentInverse) {
+    return null;
+  }
+
+  const subpaths: SubPath[] = result.map((ring) => ({
+    anchors: ring.map((point) => ({
+      point: apply(parentInverse, point),
+      handleIn: null,
+      handleOut: null,
+    })),
+    closed: true,
+  }));
+  const source = doc.nodes[candidates[0]!] as PathNode | Extract<SceneNode, { type: "rect" | "ellipse" }>;
+
+  return {
+    node: {
+      id: createNodeId(),
+      name: "Boolean Path",
+      type: "path",
+      transform: IDENTITY,
+      opacity: source.opacity,
+      visible: source.visible,
+      locked: false,
+      fill: source.fill,
+      stroke: source.stroke,
+      blendMode: source.blendMode,
+      subpaths,
+    },
+    removeIds: candidates,
+  };
+};
 
 export const groupSelection = (doc: Document, ids: readonly NodeId[]): GroupSelectionResult | null => {
   const topLevelIds = topLevelNodeIds(doc, ids);

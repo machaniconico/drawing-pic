@@ -1,6 +1,7 @@
 import { original, produce } from "immer";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
+import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
 import { createDocument } from "../core/model/factory";
 import type { Document, NodeId, SceneNode } from "../core/model/types";
@@ -9,6 +10,7 @@ import {
   alignNodes as computeAlignNodes,
   bringForward as computeBringForward,
   bringToFront as computeBringToFront,
+  booleanSelection as computeBooleanSelection,
   cloneSubtree,
   distributeNodes as computeDistributeNodes,
   findNodeParent,
@@ -63,6 +65,7 @@ export interface EditorActions {
   sendBackward: () => void;
   groupSelection: () => void;
   ungroupSelection: () => void;
+  booleanOp: (op: BooleanOp) => void;
   copySelection: () => void;
   paste: () => void;
   duplicateSelection: () => void;
@@ -255,6 +258,41 @@ const insertRootAfter = (doc: Document, parentId: NodeId | null, sourceId: NodeI
   parent.children.splice(index < 0 ? parent.children.length : index + 1, 0, cloneId);
 };
 
+const insertBooleanResult = (doc: Document, parentId: NodeId | null, resultId: NodeId, removeIds: readonly NodeId[]): void => {
+  const removed = new Set(removeIds);
+  const replaceOrder = (order: NodeId[]): NodeId[] => {
+    const next: NodeId[] = [];
+    let inserted = false;
+
+    for (const id of order) {
+      if (!removed.has(id)) {
+        next.push(id);
+        continue;
+      }
+
+      if (!inserted) {
+        next.push(resultId);
+        inserted = true;
+      }
+    }
+
+    if (!inserted) {
+      next.push(resultId);
+    }
+    return next;
+  };
+
+  if (parentId === null) {
+    doc.layerOrder = replaceOrder(doc.layerOrder);
+    return;
+  }
+
+  const parent = doc.nodes[parentId];
+  if (parent && isContainer(parent)) {
+    parent.children = replaceOrder(parent.children);
+  }
+};
+
 const withDocHistory = (
   set: (
     partial:
@@ -393,6 +431,30 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       }
 
       state.selection = applyUngroupSelectionResults(state.doc, results);
+      return true;
+    });
+  },
+
+  booleanOp: (op) => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const result = computeBooleanSelection(sourceDoc, state.selection, op);
+      if (!result) {
+        return false;
+      }
+
+      const parent = findNodeParent(state.doc, result.removeIds[0]!);
+      if (!parent) {
+        return false;
+      }
+
+      state.doc.nodes[result.node.id] = result.node;
+      insertBooleanResult(state.doc, parent.parentId, result.node.id, result.removeIds);
+      for (const id of result.removeIds) {
+        removeFromParent(state.doc, id);
+        delete state.doc.nodes[id];
+      }
+      state.selection = [result.node.id];
       return true;
     });
   },
