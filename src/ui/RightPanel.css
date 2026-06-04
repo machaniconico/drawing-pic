@@ -65,6 +65,9 @@
 }
 
 .right-panel__content--export {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
   flex: 0 0 auto;
 }
 

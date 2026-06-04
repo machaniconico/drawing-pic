@@ -4,6 +4,7 @@ import type {
   Document,
   EllipseNode,
   GroupNode,
+  ImageNode,
   LayerNode,
   NodeId,
   Paint,
@@ -137,6 +138,20 @@ export const createText = (text: string, at: Vec2): TextNode => ({
   letterSpacing: 0,
   lineHeight: 1.2,
   textAlign: "left",
+});
+
+export const createImage = (
+  src: string,
+  width: number,
+  height: number,
+  at: Vec2 = { x: 0, y: 0 },
+): ImageNode => ({
+  ...nodeDefaults("Image"),
+  type: "image",
+  transform: { ...IDENTITY, e: at.x, f: at.y },
+  src,
+  width,
+  height,
 });
 
 /** コーナーアンカー（ハンドルなし）を作るヘルパ */

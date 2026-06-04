@@ -2,6 +2,7 @@ import { LayersPanel } from "./LayersPanel";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { AlignPanel } from "./AlignPanel";
 import { ExportMenu } from "./ExportMenu";
+import { ImportButton } from "./ImportButton";
 import "./RightPanel.css";
 
 export function RightPanel() {
@@ -15,6 +16,7 @@ export function RightPanel() {
           <h2 id="right-panel-export-heading">Export</h2>
         </header>
         <div className="right-panel__content right-panel__content--export">
+          <ImportButton />
           <ExportMenu />
         </div>
       </section>
