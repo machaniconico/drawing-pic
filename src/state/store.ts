@@ -75,6 +75,7 @@ export interface EditorActions {
   setActiveTool: (tool: ToolId) => void;
   setPan: (pan: Vec2) => void;
   setZoom: (zoom: number) => void;
+  loadDocument: (doc: Document) => void;
   undo: () => void;
   redo: () => void;
 }
@@ -597,6 +598,16 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     set(
       produce((state: EditorStore) => {
         state.viewport.zoom = zoom;
+      }),
+    );
+  },
+
+  loadDocument: (doc) => {
+    set(
+      produce((state: EditorStore) => {
+        state.doc = doc;
+        state.selection = [];
+        state.history = createHistory<Document>();
       }),
     );
   },
