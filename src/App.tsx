@@ -7,6 +7,7 @@ import Toolbar from "./ui/Toolbar";
 
 const KEY_TO_TOOL: Record<string, ToolId> = {
   v: "select",
+  a: "node",
   m: "rect",
   l: "ellipse",
   p: "pen",

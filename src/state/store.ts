@@ -37,7 +37,7 @@ import {
 } from "./history";
 import { moveNode, type LayerDropPosition } from "./layerReorder";
 
-export type ToolId = "select" | "rect" | "ellipse" | "pen" | "text" | "hand";
+export type ToolId = "select" | "node" | "rect" | "ellipse" | "pen" | "text" | "hand";
 
 export interface EditorViewport {
   pan: Vec2;
