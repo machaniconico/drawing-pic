@@ -113,6 +113,24 @@ describe("docSerialize", () => {
     expect(result.nodes.group_outer).toEqual(doc.nodes.group_outer);
   });
 
+  it("round-trips guides", () => {
+    const doc = createRichDocument();
+    doc.guides = [
+      { id: "guide_vertical", axis: "x", position: 120 },
+      { id: "guide_horizontal", axis: "y", position: 240 },
+    ];
+
+    expect(deserializeDocument(serializeDocument(doc)).guides).toEqual(doc.guides);
+  });
+
+  it("loads legacy v1 documents without guides as an empty guide list", () => {
+    const doc = createRichDocument();
+    const legacyDoc: Omit<Document, "guides"> & { guides?: Document["guides"] } = { ...doc };
+    delete legacyDoc.guides;
+
+    expect(deserializeDocument(JSON.stringify({ version: 1, doc: legacyDoc })).guides).toEqual([]);
+  });
+
   it("rejects malformed document shape", () => {
     const doc = createRichDocument();
 

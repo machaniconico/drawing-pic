@@ -1,6 +1,7 @@
 import type {
   Anchor,
   Document,
+  Guide,
   GradientStop,
   Paint,
   SceneNode,
@@ -89,6 +90,26 @@ const validateGradientStops = (value: unknown, path: string): void => {
   }
 
   value.forEach((stop, index) => validateGradientStop(stop, `${path}[${index}]`));
+};
+
+const validateGuide = (value: unknown, path: string): Guide => {
+  const guide = requireObject(value, path);
+  const id = requireString(guide.id, `${path}.id`);
+  const axis = requireString(guide.axis, `${path}.axis`);
+  if (axis !== "x" && axis !== "y") {
+    throw new Error(`${path}.axis has unsupported value "${axis}".`);
+  }
+  const position = requireNumber(guide.position, `${path}.position`);
+
+  return { id, axis, position };
+};
+
+const validateGuides = (value: unknown, path: string): Guide[] => {
+  if (!Array.isArray(value)) {
+    throw new Error(`${path} must be an array.`);
+  }
+
+  return value.map((guide, index) => validateGuide(guide, `${path}[${index}]`));
 };
 
 const validatePaint = (value: unknown, path: string): void => {
@@ -255,6 +276,7 @@ const validateDocument = (value: unknown): Document => {
   requireNumber(doc.width, "doc.width");
   requireNumber(doc.height, "doc.height");
   const layerOrder = requireStringArray(doc.layerOrder, "doc.layerOrder");
+  const guides = validateGuides("guides" in doc ? doc.guides : [], "doc.guides");
 
   const nodes = requireObject(doc.nodes, "doc.nodes");
   for (const [id, node] of Object.entries(nodes)) {
@@ -288,7 +310,7 @@ const validateDocument = (value: unknown): Document => {
     }
   }
 
-  return doc as unknown as Document;
+  return { ...doc, guides } as unknown as Document;
 };
 
 const orderPaint = (paint: Paint): Paint => {
@@ -317,6 +339,12 @@ const orderPaint = (paint: Paint): Paint => {
 const orderGradientStop = (stop: GradientStop): GradientStop => ({
   offset: stop.offset,
   color: stop.color,
+});
+
+const orderGuide = (guide: Guide): Guide => ({
+  id: guide.id,
+  axis: guide.axis,
+  position: guide.position,
 });
 
 const orderStroke = (stroke: Stroke | null): Stroke | null =>
@@ -432,6 +460,7 @@ const orderDocument = (doc: Document): Document => ({
   width: doc.width,
   height: doc.height,
   layerOrder: [...doc.layerOrder],
+  guides: doc.guides.map(orderGuide),
   nodes: Object.fromEntries(
     Object.keys(doc.nodes)
       .sort()

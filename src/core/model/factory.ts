@@ -67,6 +67,7 @@ export const createDocument = (
     width,
     height,
     layerOrder: [layer.id],
+    guides: [],
     nodes: { [layer.id]: layer },
   };
 };

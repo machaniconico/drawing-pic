@@ -17,6 +17,7 @@ const makeDoc = (nodes: Record<NodeId, SceneNode>, layerOrder: NodeId[]): Docume
   height: 600,
   nodes,
   layerOrder,
+  guides: [],
 });
 
 const layer = (id: NodeId, children: NodeId[], transform = translate(0, 0)): SceneNode => ({

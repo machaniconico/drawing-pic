@@ -36,6 +36,12 @@ import {
   type History,
 } from "./history";
 import { moveNode, type LayerDropPosition } from "./layerReorder";
+import {
+  addGuide as computeAddGuide,
+  clearGuides as computeClearGuides,
+  moveGuide as computeMoveGuide,
+  removeGuide as computeRemoveGuide,
+} from "./guides";
 
 export type ToolId = "select" | "node" | "rect" | "ellipse" | "pen" | "text" | "hand";
 
@@ -71,6 +77,10 @@ export interface EditorActions {
   paste: () => void;
   duplicateSelection: () => void;
   reorderNode: (dragId: NodeId, targetId: NodeId, position: LayerDropPosition) => void;
+  addGuide: (axis: "x" | "y", position: number) => NodeId | null;
+  moveGuide: (id: NodeId, position: number) => void;
+  removeGuide: (id: NodeId) => void;
+  clearGuides: () => void;
   setSelection: (ids: NodeId[]) => void;
   addToSelection: (id: NodeId) => void;
   clearSelection: () => void;
@@ -242,7 +252,13 @@ const clipboardDocument = (clipboard: readonly SceneNode[]): Document => ({
   width: 0,
   height: 0,
   layerOrder: clipboardRootIds(clipboard),
+  guides: [],
   nodes: Object.fromEntries(clipboard.map((node) => [node.id, node])) as Record<NodeId, SceneNode>,
+});
+
+const normalizeDocument = (doc: Document): Document => ({
+  ...doc,
+  guides: Array.isArray(doc.guides) ? doc.guides : [],
 });
 
 const insertRootAfter = (doc: Document, parentId: NodeId | null, sourceId: NodeId, cloneId: NodeId): void => {
@@ -567,6 +583,59 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     });
   },
 
+  addGuide: (axis, position) => {
+    let id: NodeId | null = null;
+
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const result = computeAddGuide(sourceDoc, axis, position);
+      id = result.id;
+      state.doc = result.doc;
+      return true;
+    });
+
+    return id;
+  },
+
+  moveGuide: (id, position) => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const nextDoc = computeMoveGuide(sourceDoc, id, position);
+      if (nextDoc === sourceDoc) {
+        return false;
+      }
+
+      state.doc = nextDoc;
+      return true;
+    });
+  },
+
+  removeGuide: (id) => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const nextDoc = computeRemoveGuide(sourceDoc, id);
+      if (nextDoc === sourceDoc) {
+        return false;
+      }
+
+      state.doc = nextDoc;
+      return true;
+    });
+  },
+
+  clearGuides: () => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const nextDoc = computeClearGuides(sourceDoc);
+      if (nextDoc === sourceDoc) {
+        return false;
+      }
+
+      state.doc = nextDoc;
+      return true;
+    });
+  },
+
   setSelection: (ids) => {
     set(
       produce((state: EditorStore) => {
@@ -620,7 +689,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
   loadDocument: (doc) => {
     set(
       produce((state: EditorStore) => {
-        state.doc = doc;
+        state.doc = normalizeDocument(doc);
         state.selection = [];
         state.history = createHistory<Document>();
       }),

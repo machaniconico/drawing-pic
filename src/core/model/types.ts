@@ -3,6 +3,12 @@ import type { Vec2 } from "../geometry/vector";
 
 export type NodeId = string;
 
+export interface Guide {
+  id: NodeId;
+  axis: "x" | "y";
+  position: number;
+}
+
 // ─────────────────────────────────────────────
 // 色・塗り
 // ─────────────────────────────────────────────
@@ -175,6 +181,7 @@ export interface Document {
   height: number;
   /** ルート直下のレイヤー（描画は配列順 = 下→上） */
   layerOrder: NodeId[];
+  guides: Guide[];
   nodes: Record<NodeId, SceneNode>;
 }
 
