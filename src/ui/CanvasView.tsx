@@ -30,6 +30,7 @@ import { renderDocument } from "../render/canvasRenderer";
 import { nodesInRect } from "../state/selectors";
 import { pushHistory } from "../state/history";
 import { editorStore, useEditorStore, type EditorStore, type EditorViewport } from "../state/store";
+import { Rulers } from "./Rulers";
 import "./CanvasView.css";
 
 interface Size {
@@ -1716,6 +1717,7 @@ export default function CanvasView() {
         ref={canvasRef}
         tabIndex={0}
       />
+      <Rulers />
       {inlineTextEdit !== null && inlineTextStyle !== null ? (
         <textarea
           aria-label="Edit text"
