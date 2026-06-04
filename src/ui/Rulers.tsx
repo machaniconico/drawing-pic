@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { useEditorStore } from "../state/store";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import type { Vec2 } from "../core/geometry/vector";
+import type { Guide, NodeId } from "../core/model/types";
+import { editorStore, useEditorStore, type EditorStore, type EditorViewport } from "../state/store";
 import "./Rulers.css";
 
 interface RulerSize {
@@ -12,6 +14,13 @@ interface Tick {
   position: number;
   kind: "minor" | "major";
   label: string | null;
+}
+
+interface RulerGuideDrag {
+  id: NodeId;
+  axis: Guide["axis"];
+  pointerId: number;
+  historyAfterCreate: EditorStore["history"];
 }
 
 const RULER_SIZE = 24;
@@ -54,6 +63,19 @@ const formatLabel = (value: number, step: number): string => {
 };
 
 const estimateLabelWidth = (label: string): number => label.length * 6 + 12;
+
+const clientPoint = (event: PointerEvent | ReactPointerEvent<SVGSVGElement>, element: Element): Vec2 => {
+  const rect = element.getBoundingClientRect();
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+  };
+};
+
+const worldPositionForAxis = (point: Vec2, axis: Guide["axis"], viewport: EditorViewport): number =>
+  axis === "x"
+    ? (point.x - viewport.pan.x) / viewport.zoom
+    : (point.y - viewport.pan.y) / viewport.zoom;
 
 const chooseMajorStep = (minWorld: number, maxWorld: number, zoom: number): number => {
   let majorStep = niceCeil(MAJOR_LABEL_SPACING_PX / zoom);
@@ -160,6 +182,7 @@ const useElementSize = (): [RefObject<HTMLDivElement>, RulerSize] => {
 export function Rulers() {
   const viewport = useEditorStore((state) => state.viewport);
   const [rootRef, size] = useElementSize();
+  const dragRef = useRef<RulerGuideDrag | null>(null);
   const horizontalLength = Math.max(0, size.width - RULER_SIZE);
   const verticalLength = Math.max(0, size.height - RULER_SIZE);
 
@@ -172,13 +195,77 @@ export function Rulers() {
     [verticalLength, viewport.pan.y, viewport.zoom],
   );
 
+  const beginGuideDrag = (event: ReactPointerEvent<SVGSVGElement>, axis: Guide["axis"]): void => {
+    const root = rootRef.current;
+    if (root === null) {
+      return;
+    }
+
+    event.preventDefault();
+    const state = editorStore.getState();
+    const point = clientPoint(event, root);
+    const position = worldPositionForAxis(point, axis, state.viewport);
+    const id = state.addGuide(axis, position);
+    if (id === null) {
+      return;
+    }
+
+    dragRef.current = {
+      id,
+      axis,
+      pointerId: event.pointerId,
+      historyAfterCreate: editorStore.getState().history,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const moveGuideDrag = (event: ReactPointerEvent<SVGSVGElement>): void => {
+    const root = rootRef.current;
+    const drag = dragRef.current;
+    if (root === null || drag === null || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    const state = editorStore.getState();
+    const point = clientPoint(event, root);
+    const position = worldPositionForAxis(point, drag.axis, state.viewport);
+    state.moveGuide(drag.id, position);
+    editorStore.setState({ history: drag.historyAfterCreate });
+  };
+
+  const finishGuideDrag = (event: ReactPointerEvent<SVGSVGElement>): void => {
+    const root = rootRef.current;
+    const drag = dragRef.current;
+    if (root === null || drag === null || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    const state = editorStore.getState();
+    const point = clientPoint(event, root);
+    const position = worldPositionForAxis(point, drag.axis, state.viewport);
+    state.moveGuide(drag.id, position);
+    editorStore.setState({ history: drag.historyAfterCreate });
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    dragRef.current = null;
+  };
+
   return (
     <div aria-hidden="true" className="rulers" ref={rootRef}>
       <div className="rulers__corner" />
       <svg
         className="rulers__axis rulers__axis--horizontal"
         height={RULER_SIZE}
+        onPointerCancel={finishGuideDrag}
+        onPointerDown={(event) => beginGuideDrag(event, "y")}
+        onPointerMove={moveGuideDrag}
+        onPointerUp={finishGuideDrag}
         role="presentation"
+        style={{ cursor: "ns-resize", pointerEvents: "auto" }}
         viewBox={`0 0 ${horizontalLength} ${RULER_SIZE}`}
         width={horizontalLength}
       >
@@ -206,7 +293,12 @@ export function Rulers() {
       <svg
         className="rulers__axis rulers__axis--vertical"
         height={verticalLength}
+        onPointerCancel={finishGuideDrag}
+        onPointerDown={(event) => beginGuideDrag(event, "x")}
+        onPointerMove={moveGuideDrag}
+        onPointerUp={finishGuideDrag}
         role="presentation"
+        style={{ cursor: "ew-resize", pointerEvents: "auto" }}
         viewBox={`0 0 ${RULER_SIZE} ${verticalLength}`}
         width={RULER_SIZE}
       >

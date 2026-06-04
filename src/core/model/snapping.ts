@@ -1,4 +1,5 @@
 import type { BBox } from "../geometry/bbox";
+import type { Guide } from "./types";
 
 export interface SnapResult {
   dx: number;
@@ -58,9 +59,16 @@ export const computeSnap = (
   moving: BBox,
   candidates: readonly BBox[],
   threshold: number,
+  guides: readonly Guide[] = [],
 ): SnapResult => {
-  const candidateXAnchors = candidates.flatMap((candidate) => [...xAnchors(candidate)]);
-  const candidateYAnchors = candidates.flatMap((candidate) => [...yAnchors(candidate)]);
+  const candidateXAnchors = [
+    ...candidates.flatMap((candidate) => [...xAnchors(candidate)]),
+    ...guides.filter((guide) => guide.axis === "x").map((guide) => guide.position),
+  ];
+  const candidateYAnchors = [
+    ...candidates.flatMap((candidate) => [...yAnchors(candidate)]),
+    ...guides.filter((guide) => guide.axis === "y").map((guide) => guide.position),
+  ];
   const xSnap = computeAxisSnap(xAnchors(moving), candidateXAnchors, threshold);
   const ySnap = computeAxisSnap(yAnchors(moving), candidateYAnchors, threshold);
 

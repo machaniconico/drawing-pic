@@ -59,4 +59,36 @@ describe("model snapping", () => {
       guidesY: [100],
     });
   });
+
+  it("snaps x anchors to vertical guide positions", () => {
+    const result = computeSnap(
+      fromRect(38, 100, 10, 10),
+      [],
+      3,
+      [{ id: "guide-x", axis: "x", position: 40 }],
+    );
+
+    expect(result).toEqual({
+      dx: 2,
+      dy: 0,
+      guidesX: [40],
+      guidesY: [],
+    });
+  });
+
+  it("snaps y anchors to horizontal guide positions", () => {
+    const result = computeSnap(
+      fromRect(100, 57, 10, 10),
+      [],
+      3,
+      [{ id: "guide-y", axis: "y", position: 60 }],
+    );
+
+    expect(result).toEqual({
+      dx: 0,
+      dy: -2,
+      guidesX: [],
+      guidesY: [60],
+    });
+  });
 });

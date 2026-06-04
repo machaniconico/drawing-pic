@@ -26,7 +26,7 @@ import { hitTest } from "../core/model/hittest";
 import { deleteAnchor, insertAnchor, moveAnchor, moveHandle, setAnchorType, type HandleSide } from "../core/model/pathEdit";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
 import { computeSnap, snapToGrid } from "../core/model/snapping";
-import { isContainer, type Anchor, type Document, type NodeId, type PathNode, type SceneNode, type TextNode } from "../core/model/types";
+import { isContainer, type Anchor, type Document, type Guide, type NodeId, type PathNode, type SceneNode, type TextNode } from "../core/model/types";
 import { renderDocument } from "../render/canvasRenderer";
 import { nodesInRect } from "../state/selectors";
 import { pushHistory } from "../state/history";
@@ -52,7 +52,8 @@ interface BaseDragState {
     | "rotate"
     | "pen-anchor"
     | "node-anchor"
-    | "node-handle";
+    | "node-handle"
+    | "guide";
   pointerId: number;
   startScreen: Vec2;
   lastScreen: Vec2;
@@ -124,6 +125,16 @@ interface NodeHandleDragState extends NodeEditDragBase {
   originalOffset: Vec2;
 }
 
+interface GuideDragState extends BaseDragState {
+  mode: "guide";
+  additive: false;
+  changed: boolean;
+  guideId: NodeId;
+  axis: Guide["axis"];
+  originalDoc: Document;
+  originalHistory: EditorStore["history"];
+}
+
 type DragState =
   | SimpleDragState
   | MoveDragState
@@ -131,7 +142,8 @@ type DragState =
   | RotateDragState
   | PenAnchorDragState
   | NodeAnchorDragState
-  | NodeHandleDragState;
+  | NodeHandleDragState
+  | GuideDragState;
 
 interface PenDraft {
   anchors: Anchor[];
@@ -175,6 +187,8 @@ const NODE_ANCHOR_HIT_SIZE = 12;
 const NODE_HANDLE_RADIUS = 4;
 const NODE_HANDLE_HIT_RADIUS = 8;
 const NODE_SEGMENT_HIT_TOLERANCE = 6;
+const RULER_SIZE = 24;
+const GUIDE_HIT_SCREEN_PX = 5;
 
 const RESIZE_HANDLE_DIRECTIONS: Record<ResizeHandleId, { x: -1 | 0 | 1; y: -1 | 0 | 1 }> = {
   nw: { x: -1, y: -1 },
@@ -212,6 +226,11 @@ interface SelectionOverlayGeometry {
 type SelectionHandleHit =
   | { type: "scale"; handleId: ResizeHandleId }
   | { type: "rotate" };
+
+interface GuideHit {
+  guide: Guide;
+  distance: number;
+}
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
@@ -436,6 +455,7 @@ const computeMoveGesture = (
     movedBounds,
     drag.candidateBounds,
     SNAP_THRESHOLD_SCREEN_PX / viewport.zoom,
+    drag.originalDoc.guides,
   );
   const gridDx = snapToGrid(movedBounds.minX, SNAP_GRID_SIZE) - movedBounds.minX;
   const gridDy = snapToGrid(movedBounds.minY, SNAP_GRID_SIZE) - movedBounds.minY;
@@ -478,6 +498,84 @@ const hitSelectionHandle = (
   }
 
   return null;
+};
+
+const guideScreenCoordinate = (guide: Guide, viewport: EditorViewport): number =>
+  guide.axis === "x"
+    ? worldToScreen({ x: guide.position, y: 0 }, viewport).x
+    : worldToScreen({ x: 0, y: guide.position }, viewport).y;
+
+const hitGuide = (
+  doc: Document,
+  viewport: EditorViewport,
+  point: Vec2,
+): Guide | null => {
+  let nearest: GuideHit | null = null;
+
+  for (const guide of doc.guides) {
+    const coordinate = guideScreenCoordinate(guide, viewport);
+    const distanceToGuide = guide.axis === "x"
+      ? Math.abs(point.x - coordinate)
+      : Math.abs(point.y - coordinate);
+    if (
+      distanceToGuide <= GUIDE_HIT_SCREEN_PX &&
+      (nearest === null || distanceToGuide < nearest.distance)
+    ) {
+      nearest = { guide, distance: distanceToGuide };
+    }
+  }
+
+  return nearest?.guide ?? null;
+};
+
+const guidePositionFromWorldPoint = (guide: Pick<Guide, "axis">, worldPoint: Vec2): number =>
+  guide.axis === "x" ? worldPoint.x : worldPoint.y;
+
+const isGuideDroppedOnRuler = (axis: Guide["axis"], point: Vec2): boolean =>
+  axis === "x" ? point.x <= RULER_SIZE : point.y <= RULER_SIZE;
+
+const moveGuideForGesture = (drag: GuideDragState, position: number): boolean => {
+  const state = editorStore.getState();
+  const current = state.doc.guides.find((guide) => guide.id === drag.guideId);
+  if (current === undefined || current.position === position) {
+    editorStore.setState({ history: drag.originalHistory });
+    return false;
+  }
+
+  state.moveGuide(drag.guideId, position);
+  editorStore.setState({ history: drag.originalHistory });
+  return true;
+};
+
+const removeGuideForGesture = (drag: GuideDragState): boolean => {
+  const state = editorStore.getState();
+  if (!state.doc.guides.some((guide) => guide.id === drag.guideId)) {
+    editorStore.setState({ history: drag.originalHistory });
+    return false;
+  }
+
+  state.removeGuide(drag.guideId);
+  editorStore.setState({
+    history: pushHistory(drag.originalHistory, drag.originalDoc),
+  });
+  return true;
+};
+
+const guideChangedFromOriginal = (drag: GuideDragState): boolean => {
+  const current = editorStore.getState().doc.guides.find((guide) => guide.id === drag.guideId);
+  const original = drag.originalDoc.guides.find((guide) => guide.id === drag.guideId);
+  return current?.position !== original?.position || current?.axis !== original?.axis;
+};
+
+const commitGuideGesture = (drag: GuideDragState): void => {
+  if (!drag.changed && !guideChangedFromOriginal(drag)) {
+    editorStore.setState({ history: drag.originalHistory });
+    return;
+  }
+
+  editorStore.setState({
+    history: pushHistory(drag.originalHistory, drag.originalDoc),
+  });
 };
 
 const drawSelectionOverlay = (
@@ -533,6 +631,40 @@ const drawSelectionOverlay = (
   );
   ctx.fill();
   ctx.stroke();
+  ctx.restore();
+};
+
+const drawDocumentGuides = (
+  ctx: CanvasRenderingContext2D,
+  guides: readonly Guide[],
+  viewport: EditorViewport,
+  size: Size,
+  dpr: number,
+): void => {
+  if (guides.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.strokeStyle = "#20d9ff";
+  ctx.globalAlpha = 0.9;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
+
+  for (const guide of guides) {
+    const coordinate = guideScreenCoordinate(guide, viewport);
+    ctx.beginPath();
+    if (guide.axis === "x") {
+      ctx.moveTo(coordinate + 0.5, 0);
+      ctx.lineTo(coordinate + 0.5, size.height);
+    } else {
+      ctx.moveTo(0, coordinate + 0.5);
+      ctx.lineTo(size.width, coordinate + 0.5);
+    }
+    ctx.stroke();
+  }
+
   ctx.restore();
 };
 
@@ -1585,6 +1717,7 @@ export default function CanvasView() {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         renderDocument(ctx, doc, renderViewport);
         const activeTool = editorStore.getState().activeTool;
+        drawDocumentGuides(ctx, doc.guides, viewport, size, dpr);
         if (activeTool !== "node") {
           drawSelectionOverlay(ctx, doc, selection, viewport, dpr, activeTool === "select");
         }
@@ -1762,6 +1895,29 @@ export default function CanvasView() {
         moved: false,
       };
       return;
+    }
+
+    if (state.activeTool === "select") {
+      const guideHit = hitGuide(state.doc, state.viewport, point);
+      if (guideHit !== null) {
+        event.preventDefault();
+        canvas.setPointerCapture(event.pointerId);
+        dragRef.current = {
+          mode: "guide",
+          pointerId: event.pointerId,
+          startScreen: point,
+          lastScreen: point,
+          startWorld: worldPoint,
+          additive: false,
+          moved: false,
+          changed: false,
+          guideId: guideHit.id,
+          axis: guideHit.axis,
+          originalDoc: structuredClone(state.doc) as Document,
+          originalHistory: state.history,
+        };
+        return;
+      }
     }
 
     if (state.activeTool === "rect" || state.activeTool === "ellipse") {
@@ -2060,6 +2216,22 @@ export default function CanvasView() {
     event.preventDefault();
     const moved = drag.moved || hasDragMoved(drag.startScreen, point);
 
+    if (drag.mode === "guide") {
+      const currentWorld = screenToWorld(point, state.viewport);
+      const position = guidePositionFromWorldPoint(drag, currentWorld);
+      const changed = moveGuideForGesture(drag, position);
+      dragRef.current = {
+        ...drag,
+        lastScreen: point,
+        moved,
+        changed: drag.changed || changed,
+      };
+      if (!changed) {
+        scheduleInteractiveDraw();
+      }
+      return;
+    }
+
     if (drag.mode === "pen-anchor") {
       const currentWorld = screenToWorld(point, state.viewport);
       const handleOut = {
@@ -2183,7 +2355,18 @@ export default function CanvasView() {
     const currentWorld = screenToWorld(point, state.viewport);
     const moved = drag.moved || hasDragMoved(drag.startScreen, point);
 
-    if (drag.mode === "pen-anchor") {
+    if (drag.mode === "guide") {
+      if (isGuideDroppedOnRuler(drag.axis, point)) {
+        removeGuideForGesture(drag);
+      } else {
+        const position = guidePositionFromWorldPoint(drag, currentWorld);
+        const changed = moveGuideForGesture(drag, position);
+        commitGuideGesture({
+          ...drag,
+          changed: drag.changed || changed,
+        });
+      }
+    } else if (drag.mode === "pen-anchor") {
       const handleOut = moved
         ? {
             x: currentWorld.x - drag.anchorWorld.x,
@@ -2350,6 +2533,22 @@ export default function CanvasView() {
 
   const onCanvasKeyDown = (event: ReactKeyboardEvent<HTMLCanvasElement>): void => {
     if (event.key !== "Delete" && event.key !== "Backspace") {
+      return;
+    }
+
+    const activeDrag = dragRef.current;
+    if (activeDrag?.mode === "guide") {
+      event.preventDefault();
+      event.stopPropagation();
+      event.nativeEvent.stopImmediatePropagation();
+
+      removeGuideForGesture(activeDrag);
+      const canvas = canvasRef.current;
+      if (canvas !== null && canvas.hasPointerCapture(activeDrag.pointerId)) {
+        canvas.releasePointerCapture(activeDrag.pointerId);
+      }
+      dragRef.current = null;
+      scheduleInteractiveDraw();
       return;
     }
 
