@@ -4,6 +4,7 @@ import { useEditorStore } from "./state/store";
 import CanvasView from "./ui/CanvasView";
 import { RightPanel } from "./ui/RightPanel";
 import Toolbar from "./ui/Toolbar";
+import ZoomControls, { fitCanvasToScreen, resetCanvasZoom } from "./ui/ZoomControls";
 
 const KEY_TO_TOOL: Record<string, ToolId> = {
   v: "select",
@@ -59,6 +60,18 @@ export default function App() {
         } else {
           undo();
         }
+        return;
+      }
+
+      if (hasCommandModifier && key === "0") {
+        event.preventDefault();
+        fitCanvasToScreen();
+        return;
+      }
+
+      if (hasCommandModifier && key === "1") {
+        event.preventDefault();
+        resetCanvasZoom();
         return;
       }
 
@@ -180,7 +193,10 @@ export default function App() {
       </header>
       <main className="app__workspace">
         <Toolbar />
-        <CanvasView />
+        <div className="app__canvas-region">
+          <CanvasView />
+          <ZoomControls />
+        </div>
         <aside className="app__right-panel">
           <RightPanel />
         </aside>
