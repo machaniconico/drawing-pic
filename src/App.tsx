@@ -40,6 +40,7 @@ export default function App() {
   const sendBackward = useEditorStore((state) => state.sendBackward);
   const groupSelection = useEditorStore((state) => state.groupSelection);
   const ungroupSelection = useEditorStore((state) => state.ungroupSelection);
+  const moveSelection = useEditorStore((state) => state.moveSelection);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -116,6 +117,25 @@ export default function App() {
         return;
       }
 
+      if (!hasCommandModifier && !event.altKey) {
+        const nudgeDistance = event.shiftKey ? 10 : 1;
+        const nudgeDelta: Record<string, readonly [number, number]> = {
+          arrowup: [0, -nudgeDistance],
+          arrowdown: [0, nudgeDistance],
+          arrowleft: [-nudgeDistance, 0],
+          arrowright: [nudgeDistance, 0],
+        };
+        const delta = nudgeDelta[key];
+
+        if (delta !== undefined) {
+          event.preventDefault();
+          if (selection.length > 0) {
+            moveSelection(delta[0], delta[1]);
+          }
+          return;
+        }
+      }
+
       if (hasCommandModifier || event.altKey || event.shiftKey) {
         return;
       }
@@ -137,6 +157,7 @@ export default function App() {
     copySelection,
     duplicateSelection,
     groupSelection,
+    moveSelection,
     paste,
     redo,
     removeNodes,
