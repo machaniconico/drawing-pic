@@ -25,7 +25,7 @@ import { corner, createEllipse, createPath, createRect, createText } from "../co
 import { hitTest } from "../core/model/hittest";
 import { deleteAnchor, insertAnchor, moveAnchor, moveHandle, setAnchorType, type HandleSide } from "../core/model/pathEdit";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
-import { computeSnap, snapToGrid } from "../core/model/snapping";
+import { computeSnap, snapToGrid, type SnapAlignmentLine } from "../core/model/snapping";
 import { isContainer, type Anchor, type Document, type Guide, type NodeId, type PathNode, type SceneNode, type TextNode } from "../core/model/types";
 import { renderDocument } from "../render/canvasRenderer";
 import { nodesInRect } from "../state/selectors";
@@ -159,6 +159,8 @@ interface InlineTextEdit {
 interface SnapGuides {
   guidesX: number[];
   guidesY: number[];
+  alignmentGuidesX: SnapAlignmentLine[];
+  alignmentGuidesY: SnapAlignmentLine[];
 }
 
 interface MoveGesture {
@@ -200,6 +202,13 @@ const RESIZE_HANDLE_DIRECTIONS: Record<ResizeHandleId, { x: -1 | 0 | 1; y: -1 | 
   sw: { x: -1, y: 1 },
   w: { x: -1, y: 0 },
 };
+
+const emptySnapGuides = (): SnapGuides => ({
+  guidesX: [],
+  guidesY: [],
+  alignmentGuidesX: [],
+  alignmentGuidesY: [],
+});
 
 const OPPOSITE_RESIZE_HANDLES: Record<ResizeHandleId, ResizeHandleId> = {
   nw: "se",
@@ -446,7 +455,7 @@ const computeMoveGesture = (
     return {
       dx: rawDx,
       dy: rawDy,
-      guides: { guidesX: [], guidesY: [] },
+      guides: emptySnapGuides(),
     };
   }
 
@@ -468,6 +477,8 @@ const computeMoveGesture = (
     guides: {
       guidesX: snap.guidesX,
       guidesY: snap.guidesY,
+      alignmentGuidesX: snap.alignmentGuidesX,
+      alignmentGuidesY: snap.alignmentGuidesY,
     },
   };
 };
@@ -1467,10 +1478,9 @@ const drawSnapGuides = (
   ctx: CanvasRenderingContext2D,
   guides: SnapGuides,
   viewport: EditorViewport,
-  size: Size,
   dpr: number,
 ): void => {
-  if (guides.guidesX.length === 0 && guides.guidesY.length === 0) {
+  if (guides.alignmentGuidesX.length === 0 && guides.alignmentGuidesY.length === 0) {
     return;
   }
 
@@ -1478,21 +1488,23 @@ const drawSnapGuides = (
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.strokeStyle = "#ff2d8f";
   ctx.lineWidth = 1;
-  ctx.setLineDash([5, 4]);
+  ctx.setLineDash([]);
 
-  for (const x of guides.guidesX) {
-    const screenX = worldToScreen({ x, y: 0 }, viewport).x;
+  for (const guide of guides.alignmentGuidesX) {
+    const start = worldToScreen({ x: guide.position, y: guide.spanMin }, viewport);
+    const end = worldToScreen({ x: guide.position, y: guide.spanMax }, viewport);
     ctx.beginPath();
-    ctx.moveTo(screenX + 0.5, 0);
-    ctx.lineTo(screenX + 0.5, size.height);
+    ctx.moveTo(start.x + 0.5, start.y);
+    ctx.lineTo(end.x + 0.5, end.y);
     ctx.stroke();
   }
 
-  for (const y of guides.guidesY) {
-    const screenY = worldToScreen({ x: 0, y }, viewport).y;
+  for (const guide of guides.alignmentGuidesY) {
+    const start = worldToScreen({ x: guide.spanMin, y: guide.position }, viewport);
+    const end = worldToScreen({ x: guide.spanMax, y: guide.position }, viewport);
     ctx.beginPath();
-    ctx.moveTo(0, screenY + 0.5);
-    ctx.lineTo(size.width, screenY + 0.5);
+    ctx.moveTo(start.x, start.y + 0.5);
+    ctx.lineTo(end.x, end.y + 0.5);
     ctx.stroke();
   }
 
@@ -1605,7 +1617,7 @@ export default function CanvasView() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
-  const snapGuidesRef = useRef<SnapGuides>({ guidesX: [], guidesY: [] });
+  const snapGuidesRef = useRef<SnapGuides>(emptySnapGuides());
   const spaceHeldRef = useRef(false);
   const frameRef = useRef<number | null>(null);
   const inlineTextEditRef = useRef<InlineTextEdit | null>(null);
@@ -1724,7 +1736,7 @@ export default function CanvasView() {
         if (activeTool === "node") {
           drawNodeEditOverlay(ctx, doc, selection, viewport, dpr, selectedPathAnchorRef.current);
         }
-        drawSnapGuides(ctx, snapGuidesRef.current, viewport, size, dpr);
+        drawSnapGuides(ctx, snapGuidesRef.current, viewport, dpr);
         drawShapePreview(ctx, dragRef.current, viewport, dpr);
         drawMarqueePreview(ctx, dragRef.current, dpr);
         drawPenPreview(
@@ -2308,7 +2320,7 @@ export default function CanvasView() {
       });
     } else if (drag.mode === "move") {
       if (!moved) {
-        snapGuidesRef.current = { guidesX: [], guidesY: [] };
+        snapGuidesRef.current = emptySnapGuides();
         dragRef.current = {
           ...drag,
           lastScreen: point,
@@ -2446,7 +2458,7 @@ export default function CanvasView() {
     if (canvas.hasPointerCapture(event.pointerId)) {
       canvas.releasePointerCapture(event.pointerId);
     }
-    snapGuidesRef.current = { guidesX: [], guidesY: [] };
+    snapGuidesRef.current = emptySnapGuides();
     dragRef.current = null;
     scheduleInteractiveDraw();
   };

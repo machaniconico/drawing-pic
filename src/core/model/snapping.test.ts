@@ -11,6 +11,11 @@ describe("model snapping", () => {
       dy: 0,
       guidesX: [10],
       guidesY: [],
+      alignmentGuidesX: [
+        { position: 10, spanMin: 0, spanMax: 60 },
+        { position: 20, spanMin: 0, spanMax: 60 },
+      ],
+      alignmentGuidesY: [],
     });
   });
 
@@ -22,6 +27,8 @@ describe("model snapping", () => {
       dy: 1,
       guidesX: [25],
       guidesY: [25],
+      alignmentGuidesX: [{ position: 25, spanMin: 0, spanMax: 50 }],
+      alignmentGuidesY: [{ position: 25, spanMin: 0, spanMax: 50 }],
     });
   });
 
@@ -33,6 +40,8 @@ describe("model snapping", () => {
       dy: 0,
       guidesX: [],
       guidesY: [],
+      alignmentGuidesX: [],
+      alignmentGuidesY: [],
     });
   });
 
@@ -57,6 +66,12 @@ describe("model snapping", () => {
       dy: -2,
       guidesX: [60],
       guidesY: [100],
+      alignmentGuidesX: [{ position: 60, spanMin: 100, spanMax: 320 }],
+      alignmentGuidesY: [
+        { position: 100, spanMin: 50, spanMax: 310 },
+        { position: 105, spanMin: 50, spanMax: 310 },
+        { position: 110, spanMin: 50, spanMax: 310 },
+      ],
     });
   });
 
@@ -73,6 +88,8 @@ describe("model snapping", () => {
       dy: 0,
       guidesX: [40],
       guidesY: [],
+      alignmentGuidesX: [],
+      alignmentGuidesY: [],
     });
   });
 
@@ -89,6 +106,25 @@ describe("model snapping", () => {
       dy: -2,
       guidesX: [],
       guidesY: [60],
+      alignmentGuidesX: [],
+      alignmentGuidesY: [],
+    });
+  });
+
+  it("reports every object x alignment line that shares the selected snap delta", () => {
+    const result = computeSnap(fromRect(2, 20, 10, 10), [fromRect(0, 0, 10, 10)], 3);
+
+    expect(result).toEqual({
+      dx: -2,
+      dy: 0,
+      guidesX: [0],
+      guidesY: [],
+      alignmentGuidesX: [
+        { position: 0, spanMin: 0, spanMax: 30 },
+        { position: 5, spanMin: 0, spanMax: 30 },
+        { position: 10, spanMin: 0, spanMax: 30 },
+      ],
+      alignmentGuidesY: [],
     });
   });
 });
