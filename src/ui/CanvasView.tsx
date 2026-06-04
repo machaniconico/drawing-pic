@@ -19,13 +19,14 @@ import {
   width as bboxWidth,
   type BBox,
 } from "../core/geometry/bbox";
-import { applyVector, compose, IDENTITY, invert, rotation, scaling, translate, type Matrix } from "../core/geometry/matrix";
+import { apply, applyVector, compose, IDENTITY, invert, rotation, scaling, translate, type Matrix } from "../core/geometry/matrix";
 import type { Vec2 } from "../core/geometry/vector";
 import { corner, createEllipse, createPath, createRect, createText } from "../core/model/factory";
 import { hitTest } from "../core/model/hittest";
+import { moveAnchor, moveHandle, type HandleSide } from "../core/model/pathEdit";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
 import { computeSnap, snapToGrid } from "../core/model/snapping";
-import { isContainer, type Anchor, type Document, type NodeId, type SceneNode, type TextNode } from "../core/model/types";
+import { isContainer, type Anchor, type Document, type NodeId, type PathNode, type SceneNode, type TextNode } from "../core/model/types";
 import { renderDocument } from "../render/canvasRenderer";
 import { nodesInRect } from "../state/selectors";
 import { pushHistory } from "../state/history";
@@ -41,7 +42,17 @@ interface Size {
 type ResizeHandleId = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
 interface BaseDragState {
-  mode: "move" | "pan" | "create-rect" | "create-ellipse" | "marquee" | "scale" | "rotate" | "pen-anchor";
+  mode:
+    | "move"
+    | "pan"
+    | "create-rect"
+    | "create-ellipse"
+    | "marquee"
+    | "scale"
+    | "rotate"
+    | "pen-anchor"
+    | "node-anchor"
+    | "node-handle";
   pointerId: number;
   startScreen: Vec2;
   lastScreen: Vec2;
@@ -88,7 +99,39 @@ interface PenAnchorDragState extends BaseDragState {
   anchorWorld: Vec2;
 }
 
-type DragState = SimpleDragState | MoveDragState | ScaleDragState | RotateDragState | PenAnchorDragState;
+interface SelectedPathAnchor {
+  subpathIndex: number;
+  anchorIndex: number;
+}
+
+interface NodeEditDragBase extends BaseDragState {
+  mode: "node-anchor" | "node-handle";
+  additive: false;
+  changed: boolean;
+  nodeId: NodeId;
+  target: SelectedPathAnchor;
+  originalDoc: Document;
+  nodeWorldTransform: Matrix;
+}
+
+interface NodeAnchorDragState extends NodeEditDragBase {
+  mode: "node-anchor";
+}
+
+interface NodeHandleDragState extends NodeEditDragBase {
+  mode: "node-handle";
+  side: HandleSide;
+  originalOffset: Vec2;
+}
+
+type DragState =
+  | SimpleDragState
+  | MoveDragState
+  | ScaleDragState
+  | RotateDragState
+  | PenAnchorDragState
+  | NodeAnchorDragState
+  | NodeHandleDragState;
 
 interface PenDraft {
   anchors: Anchor[];
@@ -127,6 +170,11 @@ const SNAP_GRID_SIZE = 8;
 const MATRIX_EPSILON = 1e-9;
 const SCALE_EPSILON = 1e-6;
 const SNAP_ROTATION_RADIANS = Math.PI / 12;
+const NODE_ANCHOR_SIZE = 7;
+const NODE_ANCHOR_HIT_SIZE = 12;
+const NODE_HANDLE_RADIUS = 4;
+const NODE_HANDLE_HIT_RADIUS = 8;
+const NODE_SEGMENT_HIT_TOLERANCE = 6;
 
 const RESIZE_HANDLE_DIRECTIONS: Record<ResizeHandleId, { x: -1 | 0 | 1; y: -1 | 0 | 1 }> = {
   nw: { x: -1, y: -1 },
@@ -188,6 +236,8 @@ const hasDragMoved = (start: Vec2, current: Vec2): boolean =>
 
 const addVec2 = (a: Vec2, b: Vec2 | null): Vec2 =>
   b === null ? a : { x: a.x + b.x, y: a.y + b.y };
+
+const subVec2 = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x - b.x, y: a.y - b.y });
 
 const matrixNearlyEqual = (a: Matrix, b: Matrix): boolean =>
   Math.abs(a.a - b.a) < MATRIX_EPSILON &&
@@ -549,6 +599,207 @@ const parentWorldTransform = (doc: Document, id: NodeId): Matrix => {
   return path.slice(0, -1).reduce((acc, node) => compose(acc, node.transform), IDENTITY);
 };
 
+const nodeWorldTransform = (doc: Document, id: NodeId): Matrix => {
+  const path = pathToNode(doc, id);
+  if (path === null) {
+    return IDENTITY;
+  }
+
+  return path.reduce((acc, node) => compose(acc, node.transform), IDENTITY);
+};
+
+const getEditablePathNode = (
+  doc: Document,
+  selection: readonly NodeId[],
+): { id: NodeId; node: PathNode; worldTransform: Matrix } | null => {
+  if (selection.length !== 1) {
+    return null;
+  }
+
+  const id = selection[0];
+  if (id === undefined) {
+    return null;
+  }
+
+  const node = doc.nodes[id];
+  if (!node || node.type !== "path" || node.locked || !node.visible) {
+    return null;
+  }
+
+  return { id, node, worldTransform: nodeWorldTransform(doc, id) };
+};
+
+const isValidSelectedAnchor = (node: PathNode, anchor: SelectedPathAnchor | null): anchor is SelectedPathAnchor => {
+  if (anchor === null) {
+    return false;
+  }
+
+  const subpath = node.subpaths[anchor.subpathIndex];
+  return Boolean(subpath && anchor.anchorIndex >= 0 && anchor.anchorIndex < subpath.anchors.length);
+};
+
+const selectedAnchorsEqual = (a: SelectedPathAnchor | null, b: SelectedPathAnchor | null): boolean =>
+  a === b ||
+  (a !== null &&
+    b !== null &&
+    a.subpathIndex === b.subpathIndex &&
+    a.anchorIndex === b.anchorIndex);
+
+const vecNearlyEqual = (a: Vec2, b: Vec2): boolean =>
+  Math.abs(a.x - b.x) < MATRIX_EPSILON && Math.abs(a.y - b.y) < MATRIX_EPSILON;
+
+const handleNearlyEqual = (a: Vec2 | null, b: Vec2 | null): boolean =>
+  a === b || (a !== null && b !== null && vecNearlyEqual(a, b));
+
+const pathSubpathsNearlyEqual = (a: PathNode["subpaths"], b: PathNode["subpaths"]): boolean =>
+  a.length === b.length &&
+  a.every((subpath, subpathIndex) => {
+    const other = b[subpathIndex];
+    return Boolean(
+      other &&
+        subpath.closed === other.closed &&
+        subpath.anchors.length === other.anchors.length &&
+        subpath.anchors.every((anchor, anchorIndex) => {
+          const otherAnchor = other.anchors[anchorIndex];
+          return Boolean(
+            otherAnchor &&
+              vecNearlyEqual(anchor.point, otherAnchor.point) &&
+              handleNearlyEqual(anchor.handleIn, otherAnchor.handleIn) &&
+              handleNearlyEqual(anchor.handleOut, otherAnchor.handleOut),
+          );
+        }),
+    );
+  });
+
+const clonePathSubpaths = (subpaths: PathNode["subpaths"]): PathNode["subpaths"] =>
+  subpaths.map((subpath) => ({
+    closed: subpath.closed,
+    anchors: subpath.anchors.map((anchor) => ({
+      point: { ...anchor.point },
+      handleIn: anchor.handleIn === null ? null : { ...anchor.handleIn },
+      handleOut: anchor.handleOut === null ? null : { ...anchor.handleOut },
+    })),
+  }));
+
+const screenDeltaToNodeLocal = (
+  drag: NodeEditDragBase,
+  point: Vec2,
+  viewport: EditorViewport,
+): Vec2 => {
+  const worldDelta = {
+    x: (point.x - drag.startScreen.x) / viewport.zoom,
+    y: (point.y - drag.startScreen.y) / viewport.zoom,
+  };
+  const invertedWorld = invert(drag.nodeWorldTransform);
+  return invertedWorld === null ? worldDelta : applyVector(invertedWorld, worldDelta);
+};
+
+type NodeEditHit =
+  | { type: "handle"; target: SelectedPathAnchor; side: HandleSide; offset: Vec2 }
+  | { type: "anchor"; target: SelectedPathAnchor }
+  | { type: "segment"; target: SelectedPathAnchor };
+
+const cubicPoint = (p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: number): Vec2 => {
+  const mt = 1 - t;
+  const mt2 = mt * mt;
+  const t2 = t * t;
+  return {
+    x: mt2 * mt * p0.x + 3 * mt2 * t * p1.x + 3 * mt * t2 * p2.x + t2 * t * p3.x,
+    y: mt2 * mt * p0.y + 3 * mt2 * t * p1.y + 3 * mt * t2 * p2.y + t2 * t * p3.y,
+  };
+};
+
+const distanceToSegment = (point: Vec2, a: Vec2, b: Vec2): number => {
+  const ab = subVec2(b, a);
+  const lengthSquared = ab.x * ab.x + ab.y * ab.y;
+  if (lengthSquared === 0) {
+    return distance(point, a);
+  }
+
+  const ap = subVec2(point, a);
+  const t = clamp((ap.x * ab.x + ap.y * ab.y) / lengthSquared, 0, 1);
+  return distance(point, { x: a.x + ab.x * t, y: a.y + ab.y * t });
+};
+
+const distanceToCubic = (
+  point: Vec2,
+  p0: Vec2,
+  p1: Vec2,
+  p2: Vec2,
+  p3: Vec2,
+): number => {
+  let previous = p0;
+  let nearest = Number.POSITIVE_INFINITY;
+  for (let step = 1; step <= 24; step += 1) {
+    const current = cubicPoint(p0, p1, p2, p3, step / 24);
+    nearest = Math.min(nearest, distanceToSegment(point, previous, current));
+    previous = current;
+  }
+  return nearest;
+};
+
+const hitNodeEditOverlay = (
+  node: PathNode,
+  worldTransform: Matrix,
+  viewport: EditorViewport,
+  point: Vec2,
+  selectedAnchor: SelectedPathAnchor | null,
+): NodeEditHit | null => {
+  if (isValidSelectedAnchor(node, selectedAnchor)) {
+    const subpath = node.subpaths[selectedAnchor.subpathIndex]!;
+    const anchor = subpath.anchors[selectedAnchor.anchorIndex]!;
+    const handleHits: Array<{ side: HandleSide; offset: Vec2 }> = [];
+    if (anchor.handleIn !== null) {
+      handleHits.push({ side: "in", offset: anchor.handleIn });
+    }
+    if (anchor.handleOut !== null) {
+      handleHits.push({ side: "out", offset: anchor.handleOut });
+    }
+
+    for (const handle of handleHits) {
+      const screenPoint = worldToScreen(apply(worldTransform, addVec2(anchor.point, handle.offset)), viewport);
+      if (distance(point, screenPoint) <= NODE_HANDLE_HIT_RADIUS) {
+        return {
+          type: "handle",
+          target: selectedAnchor,
+          side: handle.side,
+          offset: handle.offset,
+        };
+      }
+    }
+  }
+
+  const halfHit = NODE_ANCHOR_HIT_SIZE / 2;
+  for (const [subpathIndex, subpath] of node.subpaths.entries()) {
+    for (const [anchorIndex, anchor] of subpath.anchors.entries()) {
+      const screenPoint = worldToScreen(apply(worldTransform, anchor.point), viewport);
+      if (Math.abs(point.x - screenPoint.x) <= halfHit && Math.abs(point.y - screenPoint.y) <= halfHit) {
+        return { type: "anchor", target: { subpathIndex, anchorIndex } };
+      }
+    }
+  }
+
+  for (const [subpathIndex, subpath] of node.subpaths.entries()) {
+    for (const [anchorIndex, anchor] of subpath.anchors.entries()) {
+      const nextIndex = anchorIndex + 1 < subpath.anchors.length ? anchorIndex + 1 : subpath.closed ? 0 : -1;
+      const nextAnchor = nextIndex >= 0 ? subpath.anchors[nextIndex] : undefined;
+      if (nextAnchor === undefined) {
+        continue;
+      }
+
+      const p0 = worldToScreen(apply(worldTransform, anchor.point), viewport);
+      const p1 = worldToScreen(apply(worldTransform, addVec2(anchor.point, anchor.handleOut)), viewport);
+      const p2 = worldToScreen(apply(worldTransform, addVec2(nextAnchor.point, nextAnchor.handleIn)), viewport);
+      const p3 = worldToScreen(apply(worldTransform, nextAnchor.point), viewport);
+      if (distanceToCubic(point, p0, p1, p2, p3) <= NODE_SEGMENT_HIT_TOLERANCE) {
+        return { type: "segment", target: { subpathIndex, anchorIndex } };
+      }
+    }
+  }
+
+  return null;
+};
+
 const composeAboutPoint = (point: Vec2, transform: Matrix): Matrix =>
   compose(
     translate(point.x, point.y),
@@ -707,6 +958,144 @@ const commitTransformGesture = (drag: TransformDragBase): void => {
   editorStore.setState((state) => ({
     history: pushHistory(state.history, drag.originalDoc),
   }));
+};
+
+const applyNodeEditGesture = (
+  drag: NodeAnchorDragState | NodeHandleDragState,
+  currentScreen: Vec2,
+  viewport: EditorViewport,
+  freeHandle: boolean,
+): boolean => {
+  const originalNode = drag.originalDoc.nodes[drag.nodeId];
+  if (!originalNode || originalNode.type !== "path") {
+    return false;
+  }
+
+  const originalSubpath = originalNode.subpaths[drag.target.subpathIndex];
+  if (originalSubpath === undefined) {
+    return false;
+  }
+
+  const localDelta = screenDeltaToNodeLocal(drag, currentScreen, viewport);
+  const nextSubpath =
+    drag.mode === "node-anchor"
+      ? moveAnchor(originalSubpath, drag.target.anchorIndex, localDelta)
+      : moveHandle(
+          originalSubpath,
+          drag.target.anchorIndex,
+          drag.side,
+          { x: drag.originalOffset.x + localDelta.x, y: drag.originalOffset.y + localDelta.y },
+          freeHandle ? "free" : "mirror",
+        );
+  const nextSubpaths = clonePathSubpaths(originalNode.subpaths);
+  nextSubpaths[drag.target.subpathIndex] = nextSubpath;
+  let changed = false;
+
+  editorStore.setState(
+    produce((state: EditorStore) => {
+      const node = state.doc.nodes[drag.nodeId];
+      if (!node || node.type !== "path" || node.locked || !node.visible) {
+        return;
+      }
+
+      if (pathSubpathsNearlyEqual(node.subpaths, nextSubpaths)) {
+        return;
+      }
+
+      node.subpaths = nextSubpaths;
+      changed = true;
+    }),
+  );
+
+  return changed;
+};
+
+const nodeEditChangedFromOriginal = (drag: NodeAnchorDragState | NodeHandleDragState): boolean => {
+  const originalNode = drag.originalDoc.nodes[drag.nodeId];
+  const currentNode = editorStore.getState().doc.nodes[drag.nodeId];
+  return Boolean(
+    originalNode &&
+      originalNode.type === "path" &&
+      currentNode &&
+      currentNode.type === "path" &&
+      !pathSubpathsNearlyEqual(originalNode.subpaths, currentNode.subpaths),
+  );
+};
+
+const commitNodeEditGesture = (drag: NodeAnchorDragState | NodeHandleDragState): void => {
+  editorStore.setState((state) => ({
+    history: pushHistory(state.history, drag.originalDoc),
+  }));
+};
+
+const drawNodeEditOverlay = (
+  ctx: CanvasRenderingContext2D,
+  doc: Document,
+  selection: readonly NodeId[],
+  viewport: EditorViewport,
+  dpr: number,
+  selectedAnchor: SelectedPathAnchor | null,
+): void => {
+  const editable = getEditablePathNode(doc, selection);
+  if (editable === null) {
+    return;
+  }
+
+  const halfAnchor = NODE_ANCHOR_SIZE / 2;
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
+
+  if (isValidSelectedAnchor(editable.node, selectedAnchor)) {
+    const subpath = editable.node.subpaths[selectedAnchor.subpathIndex]!;
+    const anchor = subpath.anchors[selectedAnchor.anchorIndex]!;
+    const anchorPoint = worldToScreen(apply(editable.worldTransform, anchor.point), viewport);
+    const handleEntries: Array<{ side: HandleSide; offset: Vec2 }> = [];
+    if (anchor.handleIn !== null) {
+      handleEntries.push({ side: "in", offset: anchor.handleIn });
+    }
+    if (anchor.handleOut !== null) {
+      handleEntries.push({ side: "out", offset: anchor.handleOut });
+    }
+
+    ctx.strokeStyle = "#f59e0b";
+    ctx.fillStyle = "#ffffff";
+    for (const handle of handleEntries) {
+      const handlePoint = worldToScreen(apply(editable.worldTransform, addVec2(anchor.point, handle.offset)), viewport);
+      ctx.beginPath();
+      ctx.moveTo(anchorPoint.x, anchorPoint.y);
+      ctx.lineTo(handlePoint.x, handlePoint.y);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(handlePoint.x, handlePoint.y, NODE_HANDLE_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  ctx.strokeStyle = "#2d8cf0";
+  for (const [subpathIndex, subpath] of editable.node.subpaths.entries()) {
+    for (const [anchorIndex, anchor] of subpath.anchors.entries()) {
+      const point = worldToScreen(apply(editable.worldTransform, anchor.point), viewport);
+      const isSelected =
+        selectedAnchor !== null &&
+        selectedAnchor.subpathIndex === subpathIndex &&
+        selectedAnchor.anchorIndex === anchorIndex;
+      ctx.fillStyle = isSelected ? "#2d8cf0" : "#ffffff";
+      ctx.fillRect(point.x - halfAnchor, point.y - halfAnchor, NODE_ANCHOR_SIZE, NODE_ANCHOR_SIZE);
+      ctx.strokeRect(
+        point.x - halfAnchor + 0.5,
+        point.y - halfAnchor + 0.5,
+        NODE_ANCHOR_SIZE,
+        NODE_ANCHOR_SIZE,
+      );
+    }
+  }
+
+  ctx.restore();
 };
 
 const drawShapePreview = (
@@ -935,10 +1324,13 @@ export default function CanvasView() {
   const inlineTextEditRef = useRef<InlineTextEdit | null>(null);
   const [penDraft, setPenDraftState] = useState<PenDraft>(createEmptyPenDraft);
   const penDraftRef = useRef<PenDraft>(penDraft);
+  const [selectedPathAnchor, setSelectedPathAnchorState] = useState<SelectedPathAnchor | null>(null);
+  const selectedPathAnchorRef = useRef<SelectedPathAnchor | null>(selectedPathAnchor);
   const [inlineTextEdit, setInlineTextEditState] = useState<InlineTextEdit | null>(null);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const activeTool = useEditorStore((state) => state.activeTool);
   const doc = useEditorStore((state) => state.doc);
+  const selection = useEditorStore((state) => state.selection);
   const viewport = useEditorStore((state) => state.viewport);
   const previousToolRef = useRef(activeTool);
 
@@ -1037,7 +1429,13 @@ export default function CanvasView() {
         };
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         renderDocument(ctx, doc, renderViewport);
-        drawSelectionOverlay(ctx, doc, selection, viewport, dpr, editorStore.getState().activeTool === "select");
+        const activeTool = editorStore.getState().activeTool;
+        if (activeTool !== "node") {
+          drawSelectionOverlay(ctx, doc, selection, viewport, dpr, activeTool === "select");
+        }
+        if (activeTool === "node") {
+          drawNodeEditOverlay(ctx, doc, selection, viewport, dpr, selectedPathAnchorRef.current);
+        }
         drawSnapGuides(ctx, snapGuidesRef.current, viewport, size, dpr);
         drawShapePreview(ctx, dragRef.current, viewport, dpr);
         drawMarqueePreview(ctx, dragRef.current, dpr);
@@ -1099,6 +1497,16 @@ export default function CanvasView() {
     state.setPan({ ...state.viewport.pan });
   };
 
+  const setSelectedPathAnchor = useCallback((anchor: SelectedPathAnchor | null): void => {
+    if (selectedAnchorsEqual(selectedPathAnchorRef.current, anchor)) {
+      return;
+    }
+
+    selectedPathAnchorRef.current = anchor;
+    setSelectedPathAnchorState(anchor);
+    scheduleInteractiveDraw();
+  }, []);
+
   const setPenDraft = useCallback((draft: PenDraft | ((current: PenDraft) => PenDraft)): void => {
     const next = typeof draft === "function" ? draft(penDraftRef.current) : draft;
     penDraftRef.current = next;
@@ -1124,6 +1532,18 @@ export default function CanvasView() {
     }
     previousToolRef.current = activeTool;
   }, [activeTool, finalizePenPath]);
+
+  useEffect(() => {
+    if (activeTool !== "node") {
+      setSelectedPathAnchor(null);
+      return;
+    }
+
+    const editable = getEditablePathNode(doc, selection);
+    if (editable === null || !isValidSelectedAnchor(editable.node, selectedPathAnchor)) {
+      setSelectedPathAnchor(null);
+    }
+  }, [activeTool, doc, selection, selectedPathAnchor, setSelectedPathAnchor]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -1259,6 +1679,85 @@ export default function CanvasView() {
       state.addNode(textNode);
       state.setSelection([textNode.id]);
       beginInlineTextEdit(textNode, true);
+      return;
+    }
+
+    if (state.activeTool === "node") {
+      event.preventDefault();
+      const editable = getEditablePathNode(state.doc, state.selection);
+      if (editable !== null) {
+        const editHit = hitNodeEditOverlay(
+          editable.node,
+          editable.worldTransform,
+          state.viewport,
+          point,
+          selectedPathAnchorRef.current,
+        );
+
+        if (editHit?.type === "handle") {
+          setSelectedPathAnchor(editHit.target);
+          canvas.setPointerCapture(event.pointerId);
+          dragRef.current = {
+            mode: "node-handle",
+            pointerId: event.pointerId,
+            startScreen: point,
+            lastScreen: point,
+            startWorld: worldPoint,
+            additive: false,
+            moved: false,
+            changed: false,
+            nodeId: editable.id,
+            target: editHit.target,
+            originalDoc: structuredClone(state.doc) as Document,
+            nodeWorldTransform: editable.worldTransform,
+            side: editHit.side,
+            originalOffset: editHit.offset,
+          };
+          scheduleInteractiveDraw();
+          return;
+        }
+
+        if (editHit?.type === "anchor") {
+          setSelectedPathAnchor(editHit.target);
+          canvas.setPointerCapture(event.pointerId);
+          dragRef.current = {
+            mode: "node-anchor",
+            pointerId: event.pointerId,
+            startScreen: point,
+            lastScreen: point,
+            startWorld: worldPoint,
+            additive: false,
+            moved: false,
+            changed: false,
+            nodeId: editable.id,
+            target: editHit.target,
+            originalDoc: structuredClone(state.doc) as Document,
+            nodeWorldTransform: editable.worldTransform,
+          };
+          scheduleInteractiveDraw();
+          return;
+        }
+
+        if (editHit?.type === "segment") {
+          setSelectedPathAnchor(null);
+          return;
+        }
+      }
+
+      const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+      if (hit === null) {
+        state.clearSelection();
+        setSelectedPathAnchor(null);
+        return;
+      }
+
+      const hitNode = state.doc.nodes[hit];
+      if (hitNode?.type === "path") {
+        state.setSelection([hit]);
+        setSelectedPathAnchor(null);
+      } else if (editable !== null && hit === editable.id) {
+        setSelectedPathAnchor(null);
+      }
       return;
     }
 
@@ -1436,6 +1935,20 @@ export default function CanvasView() {
       return;
     }
 
+    if (drag.mode === "node-anchor" || drag.mode === "node-handle") {
+      const changed = applyNodeEditGesture(drag, point, state.viewport, event.altKey);
+      dragRef.current = {
+        ...drag,
+        lastScreen: point,
+        moved,
+        changed: drag.changed || changed,
+      };
+      if (!changed) {
+        scheduleInteractiveDraw();
+      }
+      return;
+    }
+
     if (drag.mode === "scale" || drag.mode === "rotate") {
       const currentWorld = screenToWorld(point, state.viewport);
       const changed = applyTransformGesture(drag, currentWorld, event.shiftKey);
@@ -1539,6 +2052,11 @@ export default function CanvasView() {
           cursorWorld: currentWorld,
         };
       });
+    } else if (drag.mode === "node-anchor" || drag.mode === "node-handle") {
+      applyNodeEditGesture(drag, point, state.viewport, event.altKey);
+      if (nodeEditChangedFromOriginal(drag)) {
+        commitNodeEditGesture(drag);
+      }
     } else if (drag.mode === "scale" || drag.mode === "rotate") {
       const changed = applyTransformGesture(drag, currentWorld, event.shiftKey);
       if (drag.changed || changed) {
