@@ -23,7 +23,7 @@ import { apply, applyVector, compose, IDENTITY, invert, rotation, scaling, trans
 import type { Vec2 } from "../core/geometry/vector";
 import { corner, createEllipse, createPath, createRect, createText } from "../core/model/factory";
 import { hitTest } from "../core/model/hittest";
-import { moveAnchor, moveHandle, type HandleSide } from "../core/model/pathEdit";
+import { deleteAnchor, insertAnchor, moveAnchor, moveHandle, setAnchorType, type HandleSide } from "../core/model/pathEdit";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
 import { computeSnap, snapToGrid } from "../core/model/snapping";
 import { isContainer, type Anchor, type Document, type NodeId, type PathNode, type SceneNode, type TextNode } from "../core/model/types";
@@ -697,7 +697,7 @@ const screenDeltaToNodeLocal = (
 type NodeEditHit =
   | { type: "handle"; target: SelectedPathAnchor; side: HandleSide; offset: Vec2 }
   | { type: "anchor"; target: SelectedPathAnchor }
-  | { type: "segment"; target: SelectedPathAnchor };
+  | { type: "segment"; target: SelectedPathAnchor; t: number };
 
 const cubicPoint = (p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: number): Vec2 => {
   const mt = 1 - t;
@@ -709,31 +709,43 @@ const cubicPoint = (p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: number): Vec2 => 
   };
 };
 
-const distanceToSegment = (point: Vec2, a: Vec2, b: Vec2): number => {
+const nearestOnSegment = (point: Vec2, a: Vec2, b: Vec2): { distance: number; t: number } => {
   const ab = subVec2(b, a);
   const lengthSquared = ab.x * ab.x + ab.y * ab.y;
   if (lengthSquared === 0) {
-    return distance(point, a);
+    return { distance: distance(point, a), t: 0 };
   }
 
   const ap = subVec2(point, a);
   const t = clamp((ap.x * ab.x + ap.y * ab.y) / lengthSquared, 0, 1);
-  return distance(point, { x: a.x + ab.x * t, y: a.y + ab.y * t });
+  return { distance: distance(point, { x: a.x + ab.x * t, y: a.y + ab.y * t }), t };
 };
 
-const distanceToCubic = (
+const nearestOnCubic = (
   point: Vec2,
   p0: Vec2,
   p1: Vec2,
   p2: Vec2,
   p3: Vec2,
-): number => {
+): { distance: number; t: number } => {
   let previous = p0;
-  let nearest = Number.POSITIVE_INFINITY;
+  let previousT = 0;
+  let nearest = {
+    distance: Number.POSITIVE_INFINITY,
+    t: 0,
+  };
   for (let step = 1; step <= 24; step += 1) {
-    const current = cubicPoint(p0, p1, p2, p3, step / 24);
-    nearest = Math.min(nearest, distanceToSegment(point, previous, current));
+    const currentT = step / 24;
+    const current = cubicPoint(p0, p1, p2, p3, currentT);
+    const segmentNearest = nearestOnSegment(point, previous, current);
+    if (segmentNearest.distance < nearest.distance) {
+      nearest = {
+        distance: segmentNearest.distance,
+        t: previousT + (currentT - previousT) * segmentNearest.t,
+      };
+    }
     previous = current;
+    previousT = currentT;
   }
   return nearest;
 };
@@ -779,6 +791,7 @@ const hitNodeEditOverlay = (
     }
   }
 
+  let nearestSegment: ({ distance: number } & Extract<NodeEditHit, { type: "segment" }>) | null = null;
   for (const [subpathIndex, subpath] of node.subpaths.entries()) {
     for (const [anchorIndex, anchor] of subpath.anchors.entries()) {
       const nextIndex = anchorIndex + 1 < subpath.anchors.length ? anchorIndex + 1 : subpath.closed ? 0 : -1;
@@ -791,13 +804,19 @@ const hitNodeEditOverlay = (
       const p1 = worldToScreen(apply(worldTransform, addVec2(anchor.point, anchor.handleOut)), viewport);
       const p2 = worldToScreen(apply(worldTransform, addVec2(nextAnchor.point, nextAnchor.handleIn)), viewport);
       const p3 = worldToScreen(apply(worldTransform, nextAnchor.point), viewport);
-      if (distanceToCubic(point, p0, p1, p2, p3) <= NODE_SEGMENT_HIT_TOLERANCE) {
-        return { type: "segment", target: { subpathIndex, anchorIndex } };
+      const nearest = nearestOnCubic(point, p0, p1, p2, p3);
+      if (nearest.distance <= NODE_SEGMENT_HIT_TOLERANCE && (nearestSegment === null || nearest.distance < nearestSegment.distance)) {
+        nearestSegment = {
+          type: "segment",
+          target: { subpathIndex, anchorIndex },
+          t: nearest.t,
+          distance: nearest.distance,
+        };
       }
     }
   }
 
-  return null;
+  return nearestSegment;
 };
 
 const composeAboutPoint = (point: Vec2, transform: Matrix): Matrix =>
@@ -1026,6 +1045,142 @@ const commitNodeEditGesture = (drag: NodeAnchorDragState | NodeHandleDragState):
   editorStore.setState((state) => ({
     history: pushHistory(state.history, drag.originalDoc),
   }));
+};
+
+const insertNodeEditAnchor = (
+  nodeId: NodeId,
+  target: SelectedPathAnchor,
+  t: number,
+): SelectedPathAnchor | null => {
+  const state = editorStore.getState();
+  const node = state.doc.nodes[nodeId];
+  if (!node || node.type !== "path" || node.locked || !node.visible) {
+    return null;
+  }
+
+  const subpath = node.subpaths[target.subpathIndex];
+  if (subpath === undefined) {
+    return null;
+  }
+
+  const originalDoc = structuredClone(state.doc) as Document;
+  const nextSubpath = insertAnchor(subpath, target.anchorIndex, t);
+  const nextSelection: SelectedPathAnchor = {
+    subpathIndex: target.subpathIndex,
+    anchorIndex: target.anchorIndex + 1,
+  };
+  let changed = false;
+
+  editorStore.setState(
+    produce((store: EditorStore) => {
+      const path = store.doc.nodes[nodeId];
+      if (!path || path.type !== "path" || path.locked || !path.visible) {
+        return;
+      }
+
+      const nextSubpaths = clonePathSubpaths(path.subpaths);
+      nextSubpaths[target.subpathIndex] = nextSubpath;
+      if (pathSubpathsNearlyEqual(path.subpaths, nextSubpaths)) {
+        return;
+      }
+
+      path.subpaths = nextSubpaths;
+      store.history = pushHistory(store.history, originalDoc);
+      changed = true;
+    }),
+  );
+
+  return changed ? nextSelection : null;
+};
+
+const toggleNodeEditAnchorType = (nodeId: NodeId, target: SelectedPathAnchor): boolean => {
+  const state = editorStore.getState();
+  const node = state.doc.nodes[nodeId];
+  if (!node || node.type !== "path" || node.locked || !node.visible) {
+    return false;
+  }
+
+  const subpath = node.subpaths[target.subpathIndex];
+  const anchor = subpath?.anchors[target.anchorIndex];
+  if (subpath === undefined || anchor === undefined) {
+    return false;
+  }
+
+  const originalDoc = structuredClone(state.doc) as Document;
+  const nextType = anchor.handleIn !== null || anchor.handleOut !== null ? "corner" : "smooth";
+  const nextSubpath = setAnchorType(subpath, target.anchorIndex, nextType);
+  let changed = false;
+
+  editorStore.setState(
+    produce((store: EditorStore) => {
+      const path = store.doc.nodes[nodeId];
+      if (!path || path.type !== "path" || path.locked || !path.visible) {
+        return;
+      }
+
+      const nextSubpaths = clonePathSubpaths(path.subpaths);
+      nextSubpaths[target.subpathIndex] = nextSubpath;
+      if (pathSubpathsNearlyEqual(path.subpaths, nextSubpaths)) {
+        return;
+      }
+
+      path.subpaths = nextSubpaths;
+      store.history = pushHistory(store.history, originalDoc);
+      changed = true;
+    }),
+  );
+
+  return changed;
+};
+
+const deleteNodeEditAnchor = (
+  nodeId: NodeId,
+  target: SelectedPathAnchor,
+): { removedNode: boolean; selectedAnchor: SelectedPathAnchor | null } => {
+  const state = editorStore.getState();
+  const node = state.doc.nodes[nodeId];
+  if (!node || node.type !== "path" || node.locked || !node.visible) {
+    return { removedNode: false, selectedAnchor: null };
+  }
+
+  const subpath = node.subpaths[target.subpathIndex];
+  if (subpath === undefined || target.anchorIndex < 0 || target.anchorIndex >= subpath.anchors.length) {
+    return { removedNode: false, selectedAnchor: null };
+  }
+
+  if (subpath.anchors.length <= 2) {
+    state.removeNodes([nodeId]);
+    return { removedNode: true, selectedAnchor: null };
+  }
+
+  const originalDoc = structuredClone(state.doc) as Document;
+  const nextSubpath = deleteAnchor(subpath, target.anchorIndex);
+  const nextSelection: SelectedPathAnchor = {
+    subpathIndex: target.subpathIndex,
+    anchorIndex: Math.min(target.anchorIndex, nextSubpath.anchors.length - 1),
+  };
+  let changed = false;
+
+  editorStore.setState(
+    produce((store: EditorStore) => {
+      const path = store.doc.nodes[nodeId];
+      if (!path || path.type !== "path" || path.locked || !path.visible) {
+        return;
+      }
+
+      const nextSubpaths = clonePathSubpaths(path.subpaths);
+      nextSubpaths[target.subpathIndex] = nextSubpath;
+      if (pathSubpathsNearlyEqual(path.subpaths, nextSubpaths)) {
+        return;
+      }
+
+      path.subpaths = nextSubpaths;
+      store.history = pushHistory(store.history, originalDoc);
+      changed = true;
+    }),
+  );
+
+  return { removedNode: false, selectedAnchor: changed ? nextSelection : null };
 };
 
 const drawNodeEditOverlay = (
@@ -1719,6 +1874,15 @@ export default function CanvasView() {
 
         if (editHit?.type === "anchor") {
           setSelectedPathAnchor(editHit.target);
+          if (event.altKey) {
+            toggleNodeEditAnchorType(editable.id, editHit.target);
+            return;
+          }
+
+          if (event.detail >= 2) {
+            return;
+          }
+
           canvas.setPointerCapture(event.pointerId);
           dragRef.current = {
             mode: "node-anchor",
@@ -1739,7 +1903,8 @@ export default function CanvasView() {
         }
 
         if (editHit?.type === "segment") {
-          setSelectedPathAnchor(null);
+          const insertedAnchor = insertNodeEditAnchor(editable.id, editHit.target, editHit.t);
+          setSelectedPathAnchor(insertedAnchor);
           return;
         }
       }
@@ -2110,6 +2275,33 @@ export default function CanvasView() {
       return;
     }
 
+    if (state.activeTool === "node") {
+      const canvas = canvasRef.current;
+      if (canvas === null) {
+        return;
+      }
+
+      const editable = getEditablePathNode(state.doc, state.selection);
+      if (editable === null) {
+        return;
+      }
+
+      event.preventDefault();
+      const point = eventPoint(event, canvas);
+      const editHit = hitNodeEditOverlay(
+        editable.node,
+        editable.worldTransform,
+        state.viewport,
+        point,
+        selectedPathAnchorRef.current,
+      );
+      if (editHit?.type === "anchor") {
+        setSelectedPathAnchor(editHit.target);
+        toggleNodeEditAnchorType(editable.id, editHit.target);
+      }
+      return;
+    }
+
     if (state.activeTool !== "select" && state.activeTool !== "text") {
       return;
     }
@@ -2154,6 +2346,30 @@ export default function CanvasView() {
       event.preventDefault();
       finishInlineTextEdit("cancel");
     }
+  };
+
+  const onCanvasKeyDown = (event: ReactKeyboardEvent<HTMLCanvasElement>): void => {
+    if (event.key !== "Delete" && event.key !== "Backspace") {
+      return;
+    }
+
+    const state = editorStore.getState();
+    if (state.activeTool !== "node") {
+      return;
+    }
+
+    const editable = getEditablePathNode(state.doc, state.selection);
+    const selectedAnchor = selectedPathAnchorRef.current;
+    if (editable === null || !isValidSelectedAnchor(editable.node, selectedAnchor)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.nativeEvent.stopImmediatePropagation();
+
+    const result = deleteNodeEditAnchor(editable.id, selectedAnchor);
+    setSelectedPathAnchor(result.selectedAnchor);
   };
 
   const onWheel = (event: ReactWheelEvent<HTMLCanvasElement>): void => {
@@ -2231,6 +2447,7 @@ export default function CanvasView() {
         onPointerMove={onPointerMove}
         onPointerUp={finishDrag}
         onDoubleClick={onDoubleClick}
+        onKeyDown={onCanvasKeyDown}
         onWheel={onWheel}
         ref={canvasRef}
         tabIndex={0}
