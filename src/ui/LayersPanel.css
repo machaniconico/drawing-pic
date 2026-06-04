@@ -29,6 +29,7 @@
 .layers-panel__row {
   --layer-depth: 0;
 
+  position: relative;
   display: grid;
   grid-template-columns: 24px 24px 20px minmax(0, 1fr);
   align-items: center;
@@ -38,6 +39,42 @@
   border: 1px solid transparent;
   cursor: default;
   user-select: none;
+}
+
+.layers-panel__row--drag-over {
+  background: rgba(45, 140, 240, 0.14);
+}
+
+.layers-panel__row--drag-over::before {
+  position: absolute;
+  left: calc(8px + var(--layer-depth) * 16px);
+  right: 8px;
+  z-index: 1;
+  content: "";
+  pointer-events: none;
+}
+
+.layers-panel__row--drop-before::before,
+.layers-panel__row--drop-after::before {
+  height: 2px;
+  background: #4aa3ff;
+  border-radius: 999px;
+}
+
+.layers-panel__row--drop-before::before {
+  top: -1px;
+}
+
+.layers-panel__row--drop-after::before {
+  bottom: -1px;
+}
+
+.layers-panel__row--drop-inside::before {
+  top: 4px;
+  bottom: 4px;
+  border: 1px solid #4aa3ff;
+  border-radius: 4px;
+  background: rgba(45, 140, 240, 0.12);
 }
 
 .layers-panel__row:hover {

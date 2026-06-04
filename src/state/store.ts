@@ -35,6 +35,7 @@ import {
   undoHistory,
   type History,
 } from "./history";
+import { moveNode, type LayerDropPosition } from "./layerReorder";
 
 export type ToolId = "select" | "rect" | "ellipse" | "pen" | "text" | "hand";
 
@@ -69,6 +70,7 @@ export interface EditorActions {
   copySelection: () => void;
   paste: () => void;
   duplicateSelection: () => void;
+  reorderNode: (dragId: NodeId, targetId: NodeId, position: LayerDropPosition) => void;
   setSelection: (ids: NodeId[]) => void;
   addToSelection: (id: NodeId) => void;
   clearSelection: () => void;
@@ -549,6 +551,19 @@ export const editorStore = createStore<EditorStore>()((set) => ({
 
       state.selection = duplicatedRootIds;
       return duplicatedRootIds.length > 0;
+    });
+  },
+
+  reorderNode: (dragId, targetId, position) => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const nextDoc = moveNode(sourceDoc, dragId, targetId, position);
+      if (nextDoc === sourceDoc) {
+        return false;
+      }
+
+      state.doc = nextDoc;
+      return true;
     });
   },
 

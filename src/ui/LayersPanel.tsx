@@ -1,5 +1,7 @@
-import type { CSSProperties, MouseEvent } from "react";
+import type { CSSProperties, DragEvent, MouseEvent } from "react";
+import { useState } from "react";
 import { isContainer, type NodeId, type SceneNode } from "../core/model/types";
+import type { LayerDropPosition } from "../state/layerReorder";
 import { useEditorStore } from "../state/store";
 import "./LayersPanel.css";
 
@@ -12,6 +14,13 @@ interface LayerRow {
 type LayerDepthStyle = CSSProperties & {
   "--layer-depth": number;
 };
+
+interface DropIndicator {
+  id: NodeId;
+  position: LayerDropPosition;
+}
+
+const dragDataType = "application/x-drawing-pic-node-id";
 
 const typeGlyphs: Record<SceneNode["type"], string> = {
   ellipse: "E",
@@ -51,12 +60,43 @@ const depthStyle = (depth: number): LayerDepthStyle => ({
   "--layer-depth": depth,
 });
 
+const dropPositionFromEvent = (event: DragEvent<HTMLDivElement>, node: SceneNode): LayerDropPosition => {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const y = event.clientY - rect.top;
+
+  if (isContainer(node)) {
+    const insideBand = rect.height * 0.25;
+    if (y < insideBand) {
+      return "before";
+    }
+    if (y > rect.height - insideBand) {
+      return "after";
+    }
+    return "inside";
+  }
+
+  return y < rect.height / 2 ? "before" : "after";
+};
+
+const rowClassName = (selected: boolean, indicator: DropIndicator | null, id: NodeId): string => {
+  const classes = ["layers-panel__row"];
+  if (selected) {
+    classes.push("layers-panel__row--selected");
+  }
+  if (indicator?.id === id) {
+    classes.push("layers-panel__row--drag-over", `layers-panel__row--drop-${indicator.position}`);
+  }
+  return classes.join(" ");
+};
+
 export function LayersPanel() {
   const doc = useEditorStore((state) => state.doc);
   const selection = useEditorStore((state) => state.selection);
   const updateNode = useEditorStore((state) => state.updateNode);
   const setSelection = useEditorStore((state) => state.setSelection);
   const addToSelection = useEditorStore((state) => state.addToSelection);
+  const reorderNode = useEditorStore((state) => state.reorderNode);
+  const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(null);
 
   const rows = buildRows(doc.nodes, doc.layerOrder, 0);
 
@@ -79,6 +119,40 @@ export function LayersPanel() {
     updateNode(node.id, { locked: !node.locked });
   };
 
+  const handleDragStart = (event: DragEvent<HTMLDivElement>, id: NodeId): void => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(dragDataType, id);
+    event.dataTransfer.setData("text/plain", id);
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>, node: SceneNode): void => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropIndicator({ id: node.id, position: dropPositionFromEvent(event, node) });
+  };
+
+  const handleDragLeave = (event: DragEvent<HTMLDivElement>, id: NodeId): void => {
+    const relatedTarget = event.relatedTarget;
+    if (relatedTarget instanceof Node && event.currentTarget.contains(relatedTarget)) {
+      return;
+    }
+
+    setDropIndicator((indicator) => (indicator?.id === id ? null : indicator));
+  };
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>, node: SceneNode): void => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const dragId = event.dataTransfer.getData(dragDataType) || event.dataTransfer.getData("text/plain");
+    const position = dropPositionFromEvent(event, node);
+    setDropIndicator(null);
+
+    if (dragId) {
+      reorderNode(dragId, node.id, position);
+    }
+  };
+
   return (
     <aside className="layers-panel" aria-label="Layers">
       <div className="layers-panel__header">Layers</div>
@@ -89,9 +163,15 @@ export function LayersPanel() {
           return (
             <div
               aria-selected={selected}
-              className={selected ? "layers-panel__row layers-panel__row--selected" : "layers-panel__row"}
+              className={rowClassName(selected, dropIndicator, id)}
+              draggable
               key={id}
               onClick={(event) => handleRowClick(event, id)}
+              onDragEnd={() => setDropIndicator(null)}
+              onDragLeave={(event) => handleDragLeave(event, id)}
+              onDragOver={(event) => handleDragOver(event, node)}
+              onDragStart={(event) => handleDragStart(event, id)}
+              onDrop={(event) => handleDrop(event, node)}
               role="treeitem"
               style={depthStyle(depth)}
               tabIndex={0}
@@ -107,6 +187,7 @@ export function LayersPanel() {
                 onClick={(event) => handleToggleVisible(event, node)}
                 title={node.visible ? "Visible" : "Hidden"}
                 type="button"
+                draggable={false}
               >
                 {node.visible ? "V" : "-"}
               </button>
@@ -121,6 +202,7 @@ export function LayersPanel() {
                 onClick={(event) => handleToggleLocked(event, node)}
                 title={node.locked ? "Locked" : "Unlocked"}
                 type="button"
+                draggable={false}
               >
                 {node.locked ? "L" : "-"}
               </button>
