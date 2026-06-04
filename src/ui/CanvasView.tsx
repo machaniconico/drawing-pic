@@ -39,7 +39,7 @@ interface Size {
 type ResizeHandleId = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
 interface BaseDragState {
-  mode: "move" | "pan" | "create-rect" | "create-ellipse" | "marquee" | "scale" | "rotate";
+  mode: "move" | "pan" | "create-rect" | "create-ellipse" | "marquee" | "scale" | "rotate" | "pen-anchor";
   pointerId: number;
   startScreen: Vec2;
   lastScreen: Vec2;
@@ -73,7 +73,14 @@ interface RotateDragState extends TransformDragBase {
   startAngle: number;
 }
 
-type DragState = SimpleDragState | ScaleDragState | RotateDragState;
+interface PenAnchorDragState extends BaseDragState {
+  mode: "pen-anchor";
+  additive: false;
+  anchorIndex: number;
+  anchorWorld: Vec2;
+}
+
+type DragState = SimpleDragState | ScaleDragState | RotateDragState | PenAnchorDragState;
 
 interface PenDraft {
   anchors: Anchor[];
@@ -157,6 +164,9 @@ const distance = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
 const hasDragMoved = (start: Vec2, current: Vec2): boolean =>
   Math.abs(current.x - start.x) > DRAG_MOVE_THRESHOLD ||
   Math.abs(current.y - start.y) > DRAG_MOVE_THRESHOLD;
+
+const addVec2 = (a: Vec2, b: Vec2 | null): Vec2 =>
+  b === null ? a : { x: a.x + b.x, y: a.y + b.y };
 
 const matrixNearlyEqual = (a: Matrix, b: Matrix): boolean =>
   Math.abs(a.a - b.a) < MATRIX_EPSILON &&
@@ -627,12 +637,14 @@ const drawPenPreview = (
   draft: PenDraft,
   viewport: EditorViewport,
   dpr: number,
+  activeAnchorIndex: number | null,
 ): void => {
   if (draft.anchors.length === 0) {
     return;
   }
 
-  const points = draft.anchors.map((anchor) => worldToScreen(anchor.point, viewport));
+  const anchors = draft.anchors;
+  const points = anchors.map((anchor) => worldToScreen(anchor.point, viewport));
   const cursorPoint = draft.cursorWorld === null ? null : worldToScreen(draft.cursorWorld, viewport);
   const halfDot = PEN_ANCHOR_SIZE / 2;
 
@@ -646,15 +658,63 @@ const drawPenPreview = (
   if (points.length > 1 || cursorPoint !== null) {
     ctx.beginPath();
     ctx.moveTo(points[0].x, points[0].y);
-    for (const point of points.slice(1)) {
-      ctx.lineTo(point.x, point.y);
+    for (let index = 0; index < anchors.length - 1; index += 1) {
+      const current = anchors[index];
+      const next = anchors[index + 1];
+      if (current === undefined || next === undefined) {
+        continue;
+      }
+
+      const cp1 = worldToScreen(addVec2(current.point, current.handleOut), viewport);
+      const cp2 = worldToScreen(addVec2(next.point, next.handleIn), viewport);
+      const end = points[index + 1];
+      if (end === undefined) {
+        continue;
+      }
+      ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, end.x, end.y);
     }
     if (cursorPoint !== null) {
-      ctx.lineTo(cursorPoint.x, cursorPoint.y);
+      const lastAnchor = anchors[anchors.length - 1];
+      if (lastAnchor !== undefined) {
+        const cp1 = worldToScreen(addVec2(lastAnchor.point, lastAnchor.handleOut), viewport);
+        ctx.bezierCurveTo(cp1.x, cp1.y, cursorPoint.x, cursorPoint.y, cursorPoint.x, cursorPoint.y);
+      }
     }
     ctx.stroke();
   }
 
+  ctx.strokeStyle = "#f59e0b";
+  ctx.fillStyle = "#ffffff";
+  ctx.lineWidth = 1;
+  for (const [index, anchor] of anchors.entries()) {
+    if (activeAnchorIndex !== null && index !== activeAnchorIndex) {
+      continue;
+    }
+
+    const anchorPoint = points[index];
+    if (anchorPoint === undefined) {
+      continue;
+    }
+
+    const handlePoints = [anchor.handleIn, anchor.handleOut]
+      .filter((handle): handle is Vec2 => handle !== null)
+      .map((handle) => worldToScreen({ x: anchor.point.x + handle.x, y: anchor.point.y + handle.y }, viewport));
+
+    for (const handlePoint of handlePoints) {
+      ctx.beginPath();
+      ctx.moveTo(anchorPoint.x, anchorPoint.y);
+      ctx.lineTo(handlePoint.x, handlePoint.y);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(handlePoint.x, handlePoint.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  ctx.strokeStyle = "#2d8cf0";
+  ctx.fillStyle = "#ffffff";
   for (const point of points) {
     ctx.fillRect(point.x - halfDot, point.y - halfDot, PEN_ANCHOR_SIZE, PEN_ANCHOR_SIZE);
     ctx.strokeRect(
@@ -788,7 +848,13 @@ export default function CanvasView() {
         drawSelectionOverlay(ctx, doc, selection, viewport, dpr, editorStore.getState().activeTool === "select");
         drawShapePreview(ctx, dragRef.current, viewport, dpr);
         drawMarqueePreview(ctx, dragRef.current, dpr);
-        drawPenPreview(ctx, penDraftRef.current, viewport, dpr);
+        drawPenPreview(
+          ctx,
+          penDraftRef.current,
+          viewport,
+          dpr,
+          dragRef.current?.mode === "pen-anchor" ? dragRef.current.anchorIndex : null,
+        );
       });
     };
 
@@ -968,10 +1034,23 @@ export default function CanvasView() {
         return;
       }
 
+      const anchorIndex = penDraftRef.current.anchors.length;
+      canvas.setPointerCapture(event.pointerId);
       setPenDraft((current) => ({
         anchors: [...current.anchors, corner(worldPoint)],
         cursorWorld: worldPoint,
       }));
+      dragRef.current = {
+        mode: "pen-anchor",
+        pointerId: event.pointerId,
+        startScreen: point,
+        lastScreen: point,
+        startWorld: worldPoint,
+        additive: false,
+        moved: false,
+        anchorIndex,
+        anchorWorld: worldPoint,
+      };
       scheduleInteractiveDraw();
       return;
     }
@@ -1112,6 +1191,46 @@ export default function CanvasView() {
     event.preventDefault();
     const moved = drag.moved || hasDragMoved(drag.startScreen, point);
 
+    if (drag.mode === "pen-anchor") {
+      const currentWorld = screenToWorld(point, state.viewport);
+      const handleOut = {
+        x: currentWorld.x - drag.anchorWorld.x,
+        y: currentWorld.y - drag.anchorWorld.y,
+      };
+      const handleIn = {
+        x: -handleOut.x,
+        y: -handleOut.y,
+      };
+
+      setPenDraft((current) => {
+        const anchor = current.anchors[drag.anchorIndex];
+        if (anchor === undefined) {
+          return {
+            ...current,
+            cursorWorld: currentWorld,
+          };
+        }
+
+        const anchors = [...current.anchors];
+        anchors[drag.anchorIndex] = {
+          ...anchor,
+          handleIn,
+          handleOut,
+        };
+        return {
+          anchors,
+          cursorWorld: currentWorld,
+        };
+      });
+      dragRef.current = {
+        ...drag,
+        lastScreen: point,
+        moved,
+      };
+      scheduleInteractiveDraw();
+      return;
+    }
+
     if (drag.mode === "scale" || drag.mode === "rotate") {
       const currentWorld = screenToWorld(point, state.viewport);
       const changed = applyTransformGesture(drag, currentWorld, event.shiftKey);
@@ -1158,7 +1277,41 @@ export default function CanvasView() {
     const currentWorld = screenToWorld(point, state.viewport);
     const moved = drag.moved || hasDragMoved(drag.startScreen, point);
 
-    if (drag.mode === "scale" || drag.mode === "rotate") {
+    if (drag.mode === "pen-anchor") {
+      const handleOut = moved
+        ? {
+            x: currentWorld.x - drag.anchorWorld.x,
+            y: currentWorld.y - drag.anchorWorld.y,
+          }
+        : null;
+      const handleIn = handleOut === null
+        ? null
+        : {
+            x: -handleOut.x,
+            y: -handleOut.y,
+          };
+
+      setPenDraft((current) => {
+        const anchor = current.anchors[drag.anchorIndex];
+        if (anchor === undefined) {
+          return {
+            ...current,
+            cursorWorld: currentWorld,
+          };
+        }
+
+        const anchors = [...current.anchors];
+        anchors[drag.anchorIndex] = {
+          ...anchor,
+          handleIn,
+          handleOut,
+        };
+        return {
+          anchors,
+          cursorWorld: currentWorld,
+        };
+      });
+    } else if (drag.mode === "scale" || drag.mode === "rotate") {
       const changed = applyTransformGesture(drag, currentWorld, event.shiftKey);
       if (drag.changed || changed) {
         commitTransformGesture(drag);
