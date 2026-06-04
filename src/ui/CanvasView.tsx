@@ -19,12 +19,13 @@ import {
   width as bboxWidth,
   type BBox,
 } from "../core/geometry/bbox";
-import { compose, IDENTITY, invert, rotation, scaling, translate, type Matrix } from "../core/geometry/matrix";
+import { applyVector, compose, IDENTITY, invert, rotation, scaling, translate, type Matrix } from "../core/geometry/matrix";
 import type { Vec2 } from "../core/geometry/vector";
 import { corner, createEllipse, createPath, createRect, createText } from "../core/model/factory";
 import { hitTest } from "../core/model/hittest";
-import { selectionBounds } from "../core/model/bounds";
-import type { Anchor, Document, NodeId, SceneNode, TextNode } from "../core/model/types";
+import { selectionBounds, worldBounds } from "../core/model/bounds";
+import { computeSnap, snapToGrid } from "../core/model/snapping";
+import { isContainer, type Anchor, type Document, type NodeId, type SceneNode, type TextNode } from "../core/model/types";
 import { renderDocument } from "../render/canvasRenderer";
 import { nodesInRect } from "../state/selectors";
 import { pushHistory } from "../state/history";
@@ -49,11 +50,11 @@ interface BaseDragState {
 }
 
 interface SimpleDragState extends BaseDragState {
-  mode: "move" | "pan" | "create-rect" | "create-ellipse" | "marquee";
+  mode: "pan" | "create-rect" | "create-ellipse" | "marquee";
 }
 
 interface TransformDragBase extends BaseDragState {
-  additive: false;
+  additive: boolean;
   changed: boolean;
   originalDoc: Document;
   originalTransforms: Partial<Record<NodeId, Matrix>>;
@@ -73,6 +74,12 @@ interface RotateDragState extends TransformDragBase {
   startAngle: number;
 }
 
+interface MoveDragState extends TransformDragBase {
+  mode: "move";
+  initialBounds: BBox;
+  candidateBounds: BBox[];
+}
+
 interface PenAnchorDragState extends BaseDragState {
   mode: "pen-anchor";
   additive: false;
@@ -80,7 +87,7 @@ interface PenAnchorDragState extends BaseDragState {
   anchorWorld: Vec2;
 }
 
-type DragState = SimpleDragState | ScaleDragState | RotateDragState | PenAnchorDragState;
+type DragState = SimpleDragState | MoveDragState | ScaleDragState | RotateDragState | PenAnchorDragState;
 
 interface PenDraft {
   anchors: Anchor[];
@@ -93,6 +100,17 @@ interface InlineTextEdit {
   createdEmpty: boolean;
 }
 
+interface SnapGuides {
+  guidesX: number[];
+  guidesY: number[];
+}
+
+interface MoveGesture {
+  dx: number;
+  dy: number;
+  guides: SnapGuides;
+}
+
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 64;
 const HANDLE_SIZE = 7;
@@ -103,6 +121,8 @@ const ROTATION_HANDLE_HIT_RADIUS = 10;
 const PEN_CLOSE_THRESHOLD = 6;
 const PEN_ANCHOR_SIZE = 6;
 const DRAG_MOVE_THRESHOLD = 2;
+const SNAP_THRESHOLD_SCREEN_PX = 6;
+const SNAP_GRID_SIZE = 8;
 const MATRIX_EPSILON = 1e-9;
 const SCALE_EPSILON = 1e-6;
 const SNAP_ROTATION_RADIANS = Math.PI / 12;
@@ -279,6 +299,105 @@ const getSelectionOverlayGeometry = (
     resizeHandles,
     rotationHandle: { x: centerX, y: y - ROTATION_HANDLE_OFFSET },
     topMidpoint,
+  };
+};
+
+const translateBBox = (box: BBox, dx: number, dy: number): BBox => ({
+  minX: box.minX + dx,
+  minY: box.minY + dy,
+  maxX: box.maxX + dx,
+  maxY: box.maxY + dy,
+});
+
+const collectSnapCandidateBounds = (doc: Document, selection: readonly NodeId[]): BBox[] => {
+  const selectedIds = new Set(selection);
+  const candidateIds = new Set<NodeId>();
+
+  const addSiblingCandidates = (childIds: readonly NodeId[]): void => {
+    const containsSelection = childIds.some((childId) => selectedIds.has(childId));
+    if (containsSelection) {
+      for (const childId of childIds) {
+        if (!selectedIds.has(childId)) {
+          candidateIds.add(childId);
+        }
+      }
+    }
+
+    for (const childId of childIds) {
+      const child = doc.nodes[childId];
+      if (child && isContainer(child)) {
+        addSiblingCandidates(child.children);
+      }
+    }
+  };
+
+  const addBounds = (id: NodeId, bounds: BBox[]): void => {
+    if (selectedIds.has(id)) {
+      return;
+    }
+
+    const node = doc.nodes[id];
+    if (!node || !node.visible) {
+      return;
+    }
+
+    if (isContainer(node)) {
+      for (const childId of node.children) {
+        addBounds(childId, bounds);
+      }
+      return;
+    }
+
+    const box = worldBounds(doc, id);
+    if (!isEmpty(box)) {
+      bounds.push(box);
+    }
+  };
+
+  addSiblingCandidates(doc.layerOrder);
+
+  const bounds: BBox[] = [];
+  for (const id of candidateIds) {
+    addBounds(id, bounds);
+  }
+  return bounds;
+};
+
+const computeMoveGesture = (
+  drag: MoveDragState,
+  currentScreen: Vec2,
+  viewport: EditorViewport,
+  snappingDisabled: boolean,
+): MoveGesture => {
+  const rawDx = (currentScreen.x - drag.startScreen.x) / viewport.zoom;
+  const rawDy = (currentScreen.y - drag.startScreen.y) / viewport.zoom;
+
+  if (snappingDisabled || isEmpty(drag.initialBounds)) {
+    return {
+      dx: rawDx,
+      dy: rawDy,
+      guides: { guidesX: [], guidesY: [] },
+    };
+  }
+
+  const movedBounds = translateBBox(drag.initialBounds, rawDx, rawDy);
+  const snap = computeSnap(
+    movedBounds,
+    drag.candidateBounds,
+    SNAP_THRESHOLD_SCREEN_PX / viewport.zoom,
+  );
+  const gridDx = snapToGrid(movedBounds.minX, SNAP_GRID_SIZE) - movedBounds.minX;
+  const gridDy = snapToGrid(movedBounds.minY, SNAP_GRID_SIZE) - movedBounds.minY;
+  const snapDx = snap.guidesX.length > 0 ? snap.dx : gridDx;
+  const snapDy = snap.guidesY.length > 0 ? snap.dy : gridDy;
+
+  return {
+    dx: rawDx + snapDx,
+    dy: rawDy + snapDy,
+    guides: {
+      guidesX: snap.guidesX,
+      guidesY: snap.guidesY,
+    },
   };
 };
 
@@ -548,7 +667,42 @@ const applyTransformGesture = (
   return changed;
 };
 
-const commitTransformGesture = (drag: ScaleDragState | RotateDragState): void => {
+const applyMoveGesture = (drag: MoveDragState, dx: number, dy: number): boolean => {
+  let changed = false;
+
+  editorStore.setState(
+    produce((state: EditorStore) => {
+      for (const id of drag.selectedIds) {
+        const node = state.doc.nodes[id];
+        const originalTransform = drag.originalTransforms[id];
+        if (!node || node.locked || !node.visible || originalTransform === undefined) {
+          continue;
+        }
+
+        const parentWorld = parentWorldTransform(drag.originalDoc, id);
+        const invertedParentWorld = invert(parentWorld);
+        const localDelta = invertedParentWorld === null
+          ? { x: dx, y: dy }
+          : applyVector(invertedParentWorld, { x: dx, y: dy });
+        const nextTransform = {
+          ...originalTransform,
+          e: originalTransform.e + localDelta.x,
+          f: originalTransform.f + localDelta.y,
+        };
+        if (matrixNearlyEqual(node.transform, nextTransform)) {
+          continue;
+        }
+
+        node.transform = nextTransform;
+        changed = true;
+      }
+    }),
+  );
+
+  return changed;
+};
+
+const commitTransformGesture = (drag: TransformDragBase): void => {
   editorStore.setState((state) => ({
     history: pushHistory(state.history, drag.originalDoc),
   }));
@@ -629,6 +783,42 @@ const drawMarqueePreview = (
   ctx.setLineDash([6, 4]);
   ctx.fillRect(x, y, width, height);
   ctx.strokeRect(x + 0.5, y + 0.5, width, height);
+  ctx.restore();
+};
+
+const drawSnapGuides = (
+  ctx: CanvasRenderingContext2D,
+  guides: SnapGuides,
+  viewport: EditorViewport,
+  size: Size,
+  dpr: number,
+): void => {
+  if (guides.guidesX.length === 0 && guides.guidesY.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.strokeStyle = "#ff2d8f";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([5, 4]);
+
+  for (const x of guides.guidesX) {
+    const screenX = worldToScreen({ x, y: 0 }, viewport).x;
+    ctx.beginPath();
+    ctx.moveTo(screenX + 0.5, 0);
+    ctx.lineTo(screenX + 0.5, size.height);
+    ctx.stroke();
+  }
+
+  for (const y of guides.guidesY) {
+    const screenY = worldToScreen({ x: 0, y }, viewport).y;
+    ctx.beginPath();
+    ctx.moveTo(0, screenY + 0.5);
+    ctx.lineTo(size.width, screenY + 0.5);
+    ctx.stroke();
+  }
+
   ctx.restore();
 };
 
@@ -738,6 +928,7 @@ export default function CanvasView() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const snapGuidesRef = useRef<SnapGuides>({ guidesX: [], guidesY: [] });
   const spaceHeldRef = useRef(false);
   const frameRef = useRef<number | null>(null);
   const inlineTextEditRef = useRef<InlineTextEdit | null>(null);
@@ -846,6 +1037,7 @@ export default function CanvasView() {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         renderDocument(ctx, doc, renderViewport);
         drawSelectionOverlay(ctx, doc, selection, viewport, dpr, editorStore.getState().activeTool === "select");
+        drawSnapGuides(ctx, snapGuidesRef.current, viewport, size, dpr);
         drawShapePreview(ctx, dragRef.current, viewport, dpr);
         drawMarqueePreview(ctx, dragRef.current, dpr);
         drawPenPreview(
@@ -1153,6 +1345,12 @@ export default function CanvasView() {
       state.setSelection([hit]);
     }
 
+    const moveState = editorStore.getState();
+    const selectedIds = transformableSelection(moveState.doc, moveState.selection);
+    if (selectedIds.length === 0) {
+      return;
+    }
+
     canvas.setPointerCapture(event.pointerId);
     dragRef.current = {
       mode: "move",
@@ -1162,6 +1360,12 @@ export default function CanvasView() {
       startWorld: worldPoint,
       additive,
       moved: false,
+      changed: false,
+      originalDoc: structuredClone(moveState.doc) as Document,
+      originalTransforms: captureOriginalTransforms(moveState.doc, selectedIds),
+      selectedIds,
+      initialBounds: selectionBounds(moveState.doc, moveState.selection),
+      candidateBounds: collectSnapCandidateBounds(moveState.doc, moveState.selection),
     };
   };
 
@@ -1252,7 +1456,30 @@ export default function CanvasView() {
         y: state.viewport.pan.y + screenDy,
       });
     } else if (drag.mode === "move") {
-      state.moveSelection(screenDx / state.viewport.zoom, screenDy / state.viewport.zoom);
+      if (!moved) {
+        snapGuidesRef.current = { guidesX: [], guidesY: [] };
+        dragRef.current = {
+          ...drag,
+          lastScreen: point,
+          moved,
+        };
+        scheduleInteractiveDraw();
+        return;
+      }
+
+      const gesture = computeMoveGesture(drag, point, state.viewport, event.ctrlKey || event.metaKey);
+      const changed = applyMoveGesture(drag, gesture.dx, gesture.dy);
+      snapGuidesRef.current = gesture.guides;
+      dragRef.current = {
+        ...drag,
+        lastScreen: point,
+        moved,
+        changed: drag.changed || changed,
+      };
+      if (!changed) {
+        scheduleInteractiveDraw();
+      }
+      return;
     } else if (drag.mode === "create-rect" || drag.mode === "create-ellipse" || drag.mode === "marquee") {
       scheduleInteractiveDraw();
     }
@@ -1316,6 +1543,14 @@ export default function CanvasView() {
       if (drag.changed || changed) {
         commitTransformGesture(drag);
       }
+    } else if (drag.mode === "move") {
+      if (moved) {
+        const gesture = computeMoveGesture(drag, point, state.viewport, event.ctrlKey || event.metaKey);
+        const changed = applyMoveGesture(drag, gesture.dx, gesture.dy);
+        if (drag.changed || changed) {
+          commitTransformGesture(drag);
+        }
+      }
     } else if (drag.mode === "create-rect") {
       commitShape("rect", drag.startWorld, currentWorld);
     } else if (drag.mode === "create-ellipse") {
@@ -1344,6 +1579,7 @@ export default function CanvasView() {
     if (canvas.hasPointerCapture(event.pointerId)) {
       canvas.releasePointerCapture(event.pointerId);
     }
+    snapGuidesRef.current = { guidesX: [], guidesY: [] };
     dragRef.current = null;
     scheduleInteractiveDraw();
   };
