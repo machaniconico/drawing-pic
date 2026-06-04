@@ -1023,7 +1023,10 @@ export default function CanvasView() {
           selectedIds,
           anchorWorld: getResizeHandlePoint(geometry.bounds, anchorId),
           handleId: handleHit.handleId,
-          handleStartWorld: getResizeHandlePoint(geometry.bounds, handleHit.handleId),
+          // Use the actual pointer-down world position as the scale reference so
+          // the gesture starts at scale=1 wherever the user grabbed (within the
+          // handle hit radius) instead of snapping to the idealized handle point.
+          handleStartWorld: worldPoint,
         };
       } else {
         const centerWorld = bboxCenter(geometry.bounds);
