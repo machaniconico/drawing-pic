@@ -36,10 +36,11 @@ import {
   type TransformSnapGuide,
   type TransformSnapResult,
 } from "../core/model/snapping";
-import { isContainer, type Anchor, type Document, type Guide, type NodeId, type PathNode, type SceneNode, type TextNode } from "../core/model/types";
+import { hasStyle, isContainer, type Anchor, type Document, type Guide, type NodeId, type PathNode, type SceneNode, type TextNode } from "../core/model/types";
 import { renderDocument } from "../render/canvasRenderer";
 import { nodesInRect } from "../state/selectors";
 import { pushHistory } from "../state/history";
+import { sampleStyleAt, type SampledStyle } from "../state/operations";
 import { editorStore, useEditorStore, type EditorStore, type EditorViewport } from "../state/store";
 import GuidePrefs from "./GuidePrefs";
 import { Rulers } from "./Rulers";
@@ -1127,6 +1128,41 @@ const clonePathSubpaths = (subpaths: PathNode["subpaths"]): PathNode["subpaths"]
       handleOut: anchor.handleOut === null ? null : { ...anchor.handleOut },
     })),
   }));
+
+const cloneStroke = (stroke: SampledStyle["stroke"]): SampledStyle["stroke"] =>
+  stroke === null ? null : structuredClone(stroke);
+
+const applySampledStyleToSelection = (ids: readonly NodeId[], style: SampledStyle): boolean => {
+  if (ids.length === 0) {
+    return false;
+  }
+
+  const state = editorStore.getState();
+  const selectedIds = [...new Set(ids)];
+  const originalDoc = structuredClone(state.doc) as Document;
+  let changed = false;
+
+  editorStore.setState(
+    produce((store: EditorStore) => {
+      for (const id of selectedIds) {
+        const node = store.doc.nodes[id];
+        if (!node || !hasStyle(node)) {
+          continue;
+        }
+
+        node.fill = structuredClone(style.fill);
+        node.stroke = cloneStroke(style.stroke);
+        changed = true;
+      }
+
+      if (changed) {
+        store.history = pushHistory(store.history, originalDoc);
+      }
+    }),
+  );
+
+  return changed;
+};
 
 const screenDeltaToNodeLocal = (
   drag: NodeEditDragBase,
@@ -2300,6 +2336,21 @@ export default function CanvasView() {
         additive: false,
         moved: false,
       };
+      return;
+    }
+
+    if (state.activeTool === "eyedropper") {
+      event.preventDefault();
+      if (state.selection.length === 0) {
+        return;
+      }
+
+      const sampledStyle = sampleStyleAt(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+      if (sampledStyle === null) {
+        return;
+      }
+
+      applySampledStyleToSelection(state.selection, sampledStyle);
       return;
     }
 

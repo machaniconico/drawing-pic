@@ -13,6 +13,7 @@ const KEY_TO_TOOL: Record<string, ToolId> = {
   l: "ellipse",
   p: "pen",
   t: "text",
+  i: "eyedropper",
   h: "hand",
 };
 
