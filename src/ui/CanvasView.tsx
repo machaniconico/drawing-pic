@@ -29,6 +29,7 @@ import { selectionBounds, worldBounds } from "../core/model/bounds";
 import {
   computeSnap,
   computeTransformSnap,
+  snapRotation,
   snapToGrid,
   type SnapAlignmentLine,
   type TransformSnapEdgeResult,
@@ -187,6 +188,10 @@ interface TransformGesture {
   guides: SnapGuides;
 }
 
+interface RotateGesture extends TransformGesture {
+  angleRad: number;
+}
+
 interface NodeAnchorGesture {
   localDelta: Vec2;
   guides: SnapGuides;
@@ -195,6 +200,11 @@ interface NodeAnchorGesture {
 interface NodeEditGestureResult {
   changed: boolean;
   guides: SnapGuides;
+}
+
+interface RotationReadout {
+  angleRad: number;
+  screenPoint: Vec2;
 }
 
 const MIN_ZOOM = 0.05;
@@ -212,6 +222,7 @@ const SNAP_GRID_SIZE = 8;
 const MATRIX_EPSILON = 1e-9;
 const SCALE_EPSILON = 1e-6;
 const SNAP_ROTATION_RADIANS = Math.PI / 12;
+const ROTATION_SNAP_THRESHOLD_RADIANS = SNAP_ROTATION_RADIANS / 2;
 const NODE_ANCHOR_SIZE = 7;
 const NODE_ANCHOR_HIT_SIZE = 12;
 const NODE_HANDLE_RADIUS = 4;
@@ -286,6 +297,10 @@ const worldToScreen = (point: Vec2, viewport: EditorViewport): Vec2 => ({
 });
 
 const distance = (a: Vec2, b: Vec2): number => Math.hypot(a.x - b.x, a.y - b.y);
+
+const radiansToDegrees = (angleRad: number): number => angleRad * 180 / Math.PI;
+
+const formatRotationReadout = (angleRad: number): string => `${Math.round(radiansToDegrees(angleRad))}deg`;
 
 const hasDragMoved = (start: Vec2, current: Vec2): boolean =>
   Math.abs(current.x - start.x) > DRAG_MOVE_THRESHOLD ||
@@ -866,6 +881,41 @@ const drawSelectionOverlay = (
   ctx.restore();
 };
 
+const drawRotationReadout = (
+  ctx: CanvasRenderingContext2D,
+  readout: RotationReadout | null,
+  size: Size,
+  dpr: number,
+): void => {
+  if (readout === null) {
+    return;
+  }
+
+  const label = formatRotationReadout(readout.angleRad);
+  const paddingX = 8;
+  const paddingY = 5;
+  const offset = 14;
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.font = "12px system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+  ctx.textBaseline = "middle";
+
+  const metrics = ctx.measureText(label);
+  const width = Math.ceil(metrics.width + paddingX * 2);
+  const height = Math.ceil(12 + paddingY * 2);
+  const x = clamp(readout.screenPoint.x + offset, 4, Math.max(4, size.width - width - 4));
+  const y = clamp(readout.screenPoint.y - offset - height, 4, Math.max(4, size.height - height - 4));
+
+  ctx.fillStyle = "rgba(17, 24, 39, 0.92)";
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.28)";
+  ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(label, x + paddingX, y + height / 2);
+  ctx.restore();
+};
+
 const drawDocumentGuides = (
   ctx: CanvasRenderingContext2D,
   guides: readonly Guide[],
@@ -1346,7 +1396,8 @@ const rotateGestureMatrix = (
   drag: RotateDragState,
   currentWorld: Vec2,
   constrained: boolean,
-): Matrix => {
+  snappingDisabled: boolean,
+): RotateGesture => {
   const currentAngle = Math.atan2(
     currentWorld.y - drag.centerWorld.y,
     currentWorld.x - drag.centerWorld.x,
@@ -1354,9 +1405,15 @@ const rotateGestureMatrix = (
   const rawAngle = currentAngle - drag.startAngle;
   const angle = constrained
     ? Math.round(rawAngle / SNAP_ROTATION_RADIANS) * SNAP_ROTATION_RADIANS
-    : rawAngle;
+    : snappingDisabled
+      ? rawAngle
+      : snapRotation(rawAngle, { threshold: ROTATION_SNAP_THRESHOLD_RADIANS });
 
-  return composeAboutPoint(drag.centerWorld, rotation(angle));
+  return {
+    matrix: composeAboutPoint(drag.centerWorld, rotation(angle)),
+    guides: emptySnapGuides(),
+    angleRad: angle,
+  };
 };
 
 const applyTransformGesture = (
@@ -1367,7 +1424,7 @@ const applyTransformGesture = (
 ): boolean => {
   const gestureMatrix = gestureMatrixOverride ?? (drag.mode === "scale"
     ? scaleGestureMatrix(drag, currentWorld, constrained)
-    : rotateGestureMatrix(drag, currentWorld, constrained));
+    : rotateGestureMatrix(drag, currentWorld, constrained, true).matrix);
   let changed = false;
 
   editorStore.setState(
@@ -1946,6 +2003,7 @@ export default function CanvasView() {
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const snapGuidesRef = useRef<SnapGuides>(emptySnapGuides());
+  const rotationReadoutRef = useRef<RotationReadout | null>(null);
   const spaceHeldRef = useRef(false);
   const frameRef = useRef<number | null>(null);
   const inlineTextEditRef = useRef<InlineTextEdit | null>(null);
@@ -2072,6 +2130,7 @@ export default function CanvasView() {
           drawNodeEditOverlay(ctx, doc, selection, viewport, dpr, selectedPathAnchorRef.current);
         }
         drawSnapGuides(ctx, snapGuidesRef.current, viewport, dpr);
+        drawRotationReadout(ctx, rotationReadoutRef.current, size, dpr);
         drawShapePreview(ctx, dragRef.current, viewport, dpr);
         drawMarqueePreview(ctx, dragRef.current, dpr);
         drawPenPreview(
@@ -2454,6 +2513,7 @@ export default function CanvasView() {
       canvas.setPointerCapture(event.pointerId);
 
       if (handleHit.type === "scale") {
+        rotationReadoutRef.current = null;
         const anchorId = OPPOSITE_RESIZE_HANDLES[handleHit.handleId];
         dragRef.current = {
           mode: "scale",
@@ -2492,6 +2552,10 @@ export default function CanvasView() {
           selectedIds,
           centerWorld,
           startAngle: Math.atan2(worldPoint.y - centerWorld.y, worldPoint.x - centerWorld.x),
+        };
+        rotationReadoutRef.current = {
+          angleRad: 0,
+          screenPoint: point,
         };
       }
 
@@ -2645,12 +2709,19 @@ export default function CanvasView() {
 
     if (drag.mode === "scale" || drag.mode === "rotate") {
       const currentWorld = screenToWorld(point, state.viewport);
-      const gesture = drag.mode === "scale"
-        ? computeScaleGesture(drag, currentWorld, state.viewport, event.shiftKey, event.ctrlKey || event.metaKey)
-        : {
-            matrix: rotateGestureMatrix(drag, currentWorld, event.shiftKey),
-            guides: emptySnapGuides(),
-          };
+      const snappingDisabled = event.ctrlKey || event.metaKey;
+      let gesture: TransformGesture;
+      if (drag.mode === "rotate") {
+        const rotateGesture = rotateGestureMatrix(drag, currentWorld, event.shiftKey, snappingDisabled);
+        gesture = rotateGesture;
+        rotationReadoutRef.current = {
+          angleRad: rotateGesture.angleRad,
+          screenPoint: point,
+        };
+      } else {
+        gesture = computeScaleGesture(drag, currentWorld, state.viewport, event.shiftKey, snappingDisabled);
+        rotationReadoutRef.current = null;
+      }
       const changed = applyTransformGesture(drag, currentWorld, event.shiftKey, gesture.matrix);
       snapGuidesRef.current = gesture.guides;
       dragRef.current = {
@@ -2773,12 +2844,10 @@ export default function CanvasView() {
         commitNodeEditGesture(drag);
       }
     } else if (drag.mode === "scale" || drag.mode === "rotate") {
+      const snappingDisabled = event.ctrlKey || event.metaKey;
       const gesture = drag.mode === "scale"
-        ? computeScaleGesture(drag, currentWorld, state.viewport, event.shiftKey, event.ctrlKey || event.metaKey)
-        : {
-            matrix: rotateGestureMatrix(drag, currentWorld, event.shiftKey),
-            guides: emptySnapGuides(),
-          };
+        ? computeScaleGesture(drag, currentWorld, state.viewport, event.shiftKey, snappingDisabled)
+        : rotateGestureMatrix(drag, currentWorld, event.shiftKey, snappingDisabled);
       const changed = applyTransformGesture(drag, currentWorld, event.shiftKey, gesture.matrix);
       if (drag.changed || changed) {
         commitTransformGesture(drag);
@@ -2820,6 +2889,7 @@ export default function CanvasView() {
       canvas.releasePointerCapture(event.pointerId);
     }
     snapGuidesRef.current = emptySnapGuides();
+    rotationReadoutRef.current = null;
     dragRef.current = null;
     scheduleInteractiveDraw();
   };
