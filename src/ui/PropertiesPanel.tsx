@@ -1,5 +1,6 @@
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { isEmpty, width as bboxWidth, height as bboxHeight } from "../core/geometry/bbox";
-import { worldBounds } from "../core/model/bounds";
+import { selectionBounds } from "../core/model/bounds";
 import {
   hasStyle,
   type GradientStop,
@@ -240,10 +241,73 @@ const formatNumber = (value: number): string =>
 const readNumber = (value: number): number | null =>
   Number.isFinite(value) ? value : null;
 
+interface CommitNumberInputProps {
+  readonly ariaLabel: string;
+  readonly disabled?: boolean;
+  readonly min?: number;
+  readonly onCommit: (value: number) => void;
+  readonly value: number | null;
+}
+
+function CommitNumberInput({
+  ariaLabel,
+  disabled = false,
+  min,
+  onCommit,
+  value,
+}: CommitNumberInputProps) {
+  const formattedValue = value === null ? "" : formatNumber(value);
+  const [draft, setDraft] = useState(formattedValue);
+
+  useEffect(() => {
+    setDraft(formattedValue);
+  }, [formattedValue]);
+
+  const commitDraft = (): void => {
+    const trimmedDraft = draft.trim();
+    if (trimmedDraft === "") {
+      setDraft(formattedValue);
+      return;
+    }
+
+    const parsedValue = Number(trimmedDraft);
+    if (!Number.isFinite(parsedValue)) {
+      setDraft(formattedValue);
+      return;
+    }
+
+    onCommit(parsedValue);
+    setDraft(formattedValue);
+  };
+
+  const commitOnEnter = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === "Enter") {
+      event.currentTarget.blur();
+    }
+  };
+
+  return (
+    <input
+      aria-label={ariaLabel}
+      className="properties-panel__number"
+      disabled={disabled}
+      min={min}
+      onBlur={commitDraft}
+      onChange={(event) => setDraft(event.currentTarget.value)}
+      onKeyDown={commitOnEnter}
+      step={1}
+      type="number"
+      value={draft}
+    />
+  );
+}
+
 export function PropertiesPanel() {
   const doc = useEditorStore((state) => state.doc);
   const selection = useEditorStore((state) => state.selection);
   const updateNode = useEditorStore((state) => state.updateNode);
+  const setSelectionPosition = useEditorStore((state) => state.setSelectionPosition);
+  const setSelectionSize = useEditorStore((state) => state.setSelectionSize);
   const selectedNodes = getSelectedNodes({ doc, selection });
 
   if (selectedNodes.length === 0) {
@@ -256,6 +320,89 @@ export function PropertiesPanel() {
       </aside>
     );
   }
+
+  const bounds = selectionBounds(doc, selection);
+  const boundsAreEmpty = isEmpty(bounds);
+  const boundsWidth = bboxWidth(bounds);
+  const boundsHeight = bboxHeight(bounds);
+
+  const commitSelectionX = (x: number): void => {
+    if (boundsAreEmpty) {
+      return;
+    }
+
+    setSelectionPosition(x, bounds.minY);
+  };
+
+  const commitSelectionY = (y: number): void => {
+    if (boundsAreEmpty) {
+      return;
+    }
+
+    setSelectionPosition(bounds.minX, y);
+  };
+
+  const commitSelectionWidth = (width: number): void => {
+    if (boundsAreEmpty) {
+      return;
+    }
+
+    setSelectionSize(width, boundsHeight);
+  };
+
+  const commitSelectionHeight = (height: number): void => {
+    if (boundsAreEmpty) {
+      return;
+    }
+
+    setSelectionSize(boundsWidth, height);
+  };
+
+  const geometrySection = (
+    <section className="properties-panel__section" aria-label="Geometry">
+      <h3>Geometry</h3>
+      <div className="properties-panel__grid">
+        <label className="properties-panel__field">
+          <span className="properties-panel__label">X</span>
+          <CommitNumberInput
+            ariaLabel="Selection X position"
+            disabled={boundsAreEmpty}
+            onCommit={commitSelectionX}
+            value={boundsAreEmpty ? null : bounds.minX}
+          />
+        </label>
+        <label className="properties-panel__field">
+          <span className="properties-panel__label">Y</span>
+          <CommitNumberInput
+            ariaLabel="Selection Y position"
+            disabled={boundsAreEmpty}
+            onCommit={commitSelectionY}
+            value={boundsAreEmpty ? null : bounds.minY}
+          />
+        </label>
+        <label className="properties-panel__field">
+          <span className="properties-panel__label">W</span>
+          <CommitNumberInput
+            ariaLabel="Selection width"
+            disabled={boundsAreEmpty}
+            min={0}
+            onCommit={commitSelectionWidth}
+            value={boundsAreEmpty ? null : boundsWidth}
+          />
+        </label>
+        <label className="properties-panel__field">
+          <span className="properties-panel__label">H</span>
+          <CommitNumberInput
+            ariaLabel="Selection height"
+            disabled={boundsAreEmpty}
+            min={0}
+            onCommit={commitSelectionHeight}
+            value={boundsAreEmpty ? null : boundsHeight}
+          />
+        </label>
+      </div>
+    </section>
+  );
 
   if (selectedNodes.length > 1) {
     const sharedOpacity = selectedNodes.every((node) => node.opacity === selectedNodes[0].opacity)
@@ -276,13 +423,12 @@ export function PropertiesPanel() {
             </span>
           </div>
         </section>
+        {geometrySection}
       </aside>
     );
   }
 
   const node = selectedNodes[0];
-  const bounds = worldBounds(doc, node.id);
-  const boundsAreEmpty = isEmpty(bounds);
   const opacityPercent = Math.round(clamp(node.opacity, 0, 1) * 100);
 
   const setOpacity = (value: number): void => {
@@ -292,24 +438,6 @@ export function PropertiesPanel() {
     }
 
     updateNode(node.id, { opacity: clamp(nextOpacity, 0, 100) / 100 });
-  };
-
-  const setX = (value: number): void => {
-    const nextX = readNumber(value);
-    if (nextX === null) {
-      return;
-    }
-
-    updateNode(node.id, { transform: { ...node.transform, e: nextX } });
-  };
-
-  const setY = (value: number): void => {
-    const nextY = readNumber(value);
-    if (nextY === null) {
-      return;
-    }
-
-    updateNode(node.id, { transform: { ...node.transform, f: nextY } });
   };
 
   const setFillType = (fillType: FillType): void => {
@@ -822,45 +950,7 @@ export function PropertiesPanel() {
         ) : null}
       </section>
 
-      <section className="properties-panel__section" aria-label="Geometry">
-        <h3>Geometry</h3>
-        <div className="properties-panel__grid">
-          <label className="properties-panel__field">
-            <span className="properties-panel__label">X</span>
-            <input
-              aria-label="X position"
-              className="properties-panel__number"
-              onChange={(event) => setX(event.currentTarget.valueAsNumber)}
-              step={1}
-              type="number"
-              value={node.transform.e}
-            />
-          </label>
-          <label className="properties-panel__field">
-            <span className="properties-panel__label">Y</span>
-            <input
-              aria-label="Y position"
-              className="properties-panel__number"
-              onChange={(event) => setY(event.currentTarget.valueAsNumber)}
-              step={1}
-              type="number"
-              value={node.transform.f}
-            />
-          </label>
-          <div className="properties-panel__field">
-            <span className="properties-panel__label">W</span>
-            <span className="properties-panel__metric">
-              {boundsAreEmpty ? "-" : formatNumber(bboxWidth(bounds))}
-            </span>
-          </div>
-          <div className="properties-panel__field">
-            <span className="properties-panel__label">H</span>
-            <span className="properties-panel__metric">
-              {boundsAreEmpty ? "-" : formatNumber(bboxHeight(bounds))}
-            </span>
-          </div>
-        </div>
-      </section>
+      {geometrySection}
     </aside>
   );
 }
