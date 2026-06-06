@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { fromRect } from "../geometry/bbox";
-import { computeSnap, computeTransformSnap, snapToGrid } from "./snapping";
+import { computeSnap, computeTransformSnap, snapRotation, snapToGrid } from "./snapping";
+
+const degToRad = (degrees: number): number => (degrees * Math.PI) / 180;
 
 describe("model snapping", () => {
   it("snaps a moving left edge to a candidate left edge", () => {
@@ -49,6 +51,44 @@ describe("model snapping", () => {
     expect(snapToGrid(23, 10)).toBe(20);
     expect(snapToGrid(26, 10)).toBe(30);
     expect(snapToGrid(-14, 10)).toBe(-10);
+  });
+
+  it("snaps rotation to a 15 degree multiple within threshold", () => {
+    expect(
+      snapRotation(degToRad(44), {
+        threshold: degToRad(2),
+        stepRad: degToRad(15),
+      }),
+    ).toBeCloseTo(degToRad(45));
+  });
+
+  it("snaps rotation to a cardinal angle even when the configured step would not match", () => {
+    expect(
+      snapRotation(degToRad(89), {
+        threshold: degToRad(2),
+        stepRad: degToRad(20),
+      }),
+    ).toBeCloseTo(degToRad(90));
+  });
+
+  it("keeps the original rotation when no snap target is within threshold", () => {
+    const angle = degToRad(38);
+
+    expect(
+      snapRotation(angle, {
+        threshold: degToRad(1),
+        stepRad: degToRad(15),
+      }),
+    ).toBe(angle);
+  });
+
+  it("snaps rotation across the zero turn boundary and handles negative angles", () => {
+    expect(snapRotation(degToRad(359), { threshold: degToRad(2) })).toBeCloseTo(degToRad(360));
+    expect(snapRotation(degToRad(-1), { threshold: degToRad(2) })).toBeCloseTo(0);
+  });
+
+  it("uses a 15 degree default rotation snap step", () => {
+    expect(snapRotation(degToRad(31), { threshold: degToRad(2) })).toBeCloseTo(degToRad(30));
   });
 
   it("chooses the nearest x and y matches independently", () => {

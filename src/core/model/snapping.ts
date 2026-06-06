@@ -37,6 +37,11 @@ export interface GridGuide extends Guide {
 
 export type TransformSnapGuide = Guide | GridGuide;
 
+export interface RotationSnapOptions {
+  readonly threshold: number;
+  readonly stepRad?: number;
+}
+
 interface AxisSnap {
   delta: number;
   guide: number | null;
@@ -56,6 +61,9 @@ interface TransformAxisSnap {
 
 const midpoint = (a: number, b: number): number => (a + b) / 2;
 const SNAP_EPSILON = 1e-9;
+const FULL_TURN_RAD = Math.PI * 2;
+const DEFAULT_ROTATION_SNAP_STEP_RAD = Math.PI / 12;
+const CARDINAL_ROTATION_ANGLES_RAD = [0, Math.PI / 2, Math.PI, (Math.PI * 3) / 2] as const;
 
 const xAnchors = (box: BBox): readonly number[] => [
   box.minX,
@@ -417,6 +425,45 @@ export const snapToGrid = (value: number, grid: number): number => {
   }
 
   return Math.round(value / grid) * grid;
+};
+
+const normalizePositiveAngle = (angleRad: number): number => {
+  const normalized = angleRad % FULL_TURN_RAD;
+  return normalized < 0 ? normalized + FULL_TURN_RAD : normalized;
+};
+
+const nearestPeriodicAngle = (angleRad: number, targetAngleRad: number): number => {
+  const normalizedTarget = normalizePositiveAngle(targetAngleRad);
+  const turns = Math.round((angleRad - normalizedTarget) / FULL_TURN_RAD);
+  return normalizedTarget + turns * FULL_TURN_RAD;
+};
+
+export const snapRotation = (angleRad: number, opts: RotationSnapOptions): number => {
+  const { threshold, stepRad = DEFAULT_ROTATION_SNAP_STEP_RAD } = opts;
+  if (threshold < 0) {
+    return angleRad;
+  }
+
+  let bestAngle = angleRad;
+  let bestDistance = Infinity;
+  const considerCandidate = (candidate: number): void => {
+    const distance = Math.abs(candidate - angleRad);
+    if (distance <= threshold && distance < bestDistance) {
+      bestAngle = candidate;
+      bestDistance = distance;
+    }
+  };
+
+  const absoluteStep = Math.abs(stepRad);
+  if (absoluteStep > SNAP_EPSILON) {
+    considerCandidate(Math.round(angleRad / absoluteStep) * absoluteStep);
+  }
+
+  for (const cardinalAngleRad of CARDINAL_ROTATION_ANGLES_RAD) {
+    considerCandidate(nearestPeriodicAngle(angleRad, cardinalAngleRad));
+  }
+
+  return bestAngle;
 };
 
 export const computeTransformSnap = (
