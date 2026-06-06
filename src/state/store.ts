@@ -46,7 +46,16 @@ import {
   setGuideLocked as computeSetGuideLocked,
 } from "./guides";
 
-export type ToolId = "select" | "node" | "rect" | "ellipse" | "pen" | "text" | "hand" | "eyedropper";
+export type ToolId =
+  | "select"
+  | "node"
+  | "rect"
+  | "ellipse"
+  | "pen"
+  | "text"
+  | "hand"
+  | "eyedropper"
+  | "measure";
 
 export interface EditorViewport {
   pan: Vec2;
