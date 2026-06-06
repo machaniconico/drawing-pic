@@ -7,6 +7,9 @@ export interface Guide {
   id: NodeId;
   axis: "x" | "y";
   position: number;
+  color?: string;
+  locked?: boolean;
+  hidden?: boolean;
 }
 
 // ─────────────────────────────────────────────

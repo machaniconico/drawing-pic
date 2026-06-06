@@ -100,8 +100,19 @@ const validateGuide = (value: unknown, path: string): Guide => {
     throw new Error(`${path}.axis has unsupported value "${axis}".`);
   }
   const position = requireNumber(guide.position, `${path}.position`);
+  const result: Guide = { id, axis, position };
 
-  return { id, axis, position };
+  if ("color" in guide) {
+    result.color = requireString(guide.color, `${path}.color`);
+  }
+  if ("locked" in guide) {
+    result.locked = requireBoolean(guide.locked, `${path}.locked`);
+  }
+  if ("hidden" in guide) {
+    result.hidden = requireBoolean(guide.hidden, `${path}.hidden`);
+  }
+
+  return result;
 };
 
 const validateGuides = (value: unknown, path: string): Guide[] => {
@@ -341,11 +352,25 @@ const orderGradientStop = (stop: GradientStop): GradientStop => ({
   color: stop.color,
 });
 
-const orderGuide = (guide: Guide): Guide => ({
-  id: guide.id,
-  axis: guide.axis,
-  position: guide.position,
-});
+const orderGuide = (guide: Guide): Guide => {
+  const result: Guide = {
+    id: guide.id,
+    axis: guide.axis,
+    position: guide.position,
+  };
+
+  if (guide.color !== undefined) {
+    result.color = guide.color;
+  }
+  if (guide.locked !== undefined) {
+    result.locked = guide.locked;
+  }
+  if (guide.hidden !== undefined) {
+    result.hidden = guide.hidden;
+  }
+
+  return result;
+};
 
 const orderStroke = (stroke: Stroke | null): Stroke | null =>
   stroke === null

@@ -41,6 +41,9 @@ import {
   clearGuides as computeClearGuides,
   moveGuide as computeMoveGuide,
   removeGuide as computeRemoveGuide,
+  setGuideColor as computeSetGuideColor,
+  setGuideHidden as computeSetGuideHidden,
+  setGuideLocked as computeSetGuideLocked,
 } from "./guides";
 
 export type ToolId = "select" | "node" | "rect" | "ellipse" | "pen" | "text" | "hand";
@@ -80,6 +83,9 @@ export interface EditorActions {
   addGuide: (axis: "x" | "y", position: number) => NodeId | null;
   moveGuide: (id: NodeId, position: number) => void;
   removeGuide: (id: NodeId) => void;
+  setGuideColor: (id: NodeId, color: string) => void;
+  setGuideLocked: (id: NodeId, locked: boolean) => void;
+  setGuideHidden: (id: NodeId, hidden: boolean) => void;
   clearGuides: () => void;
   setSelection: (ids: NodeId[]) => void;
   addToSelection: (id: NodeId) => void;
@@ -614,6 +620,45 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     withDocHistory(set, (state) => {
       const sourceDoc = original(state.doc) ?? state.doc;
       const nextDoc = computeRemoveGuide(sourceDoc, id);
+      if (nextDoc === sourceDoc) {
+        return false;
+      }
+
+      state.doc = nextDoc;
+      return true;
+    });
+  },
+
+  setGuideColor: (id, color) => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const nextDoc = computeSetGuideColor(sourceDoc, id, color);
+      if (nextDoc === sourceDoc) {
+        return false;
+      }
+
+      state.doc = nextDoc;
+      return true;
+    });
+  },
+
+  setGuideLocked: (id, locked) => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const nextDoc = computeSetGuideLocked(sourceDoc, id, locked);
+      if (nextDoc === sourceDoc) {
+        return false;
+      }
+
+      state.doc = nextDoc;
+      return true;
+    });
+  },
+
+  setGuideHidden: (id, hidden) => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const nextDoc = computeSetGuideHidden(sourceDoc, id, hidden);
       if (nextDoc === sourceDoc) {
         return false;
       }

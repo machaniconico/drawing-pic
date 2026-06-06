@@ -23,6 +23,9 @@ export const moveGuide = (doc: Document, id: NodeId, position: number): Document
   if (index < 0) {
     return doc;
   }
+  if (doc.guides[index]?.locked === true) {
+    return doc;
+  }
 
   return {
     ...doc,
@@ -31,13 +34,47 @@ export const moveGuide = (doc: Document, id: NodeId, position: number): Document
 };
 
 export const removeGuide = (doc: Document, id: NodeId): Document => {
-  if (!doc.guides.some((guide) => guide.id === id)) {
+  const target = doc.guides.find((guide) => guide.id === id);
+  if (!target || target.locked === true) {
     return doc;
   }
 
   return {
     ...doc,
     guides: doc.guides.filter((guide) => guide.id !== id),
+  };
+};
+
+export const setGuideColor = (doc: Document, id: NodeId, color: string): Document => {
+  if (!doc.guides.some((guide) => guide.id === id)) {
+    return doc;
+  }
+
+  return {
+    ...doc,
+    guides: doc.guides.map((guide) => (guide.id === id ? { ...guide, color } : guide)),
+  };
+};
+
+export const setGuideLocked = (doc: Document, id: NodeId, locked: boolean): Document => {
+  if (!doc.guides.some((guide) => guide.id === id)) {
+    return doc;
+  }
+
+  return {
+    ...doc,
+    guides: doc.guides.map((guide) => (guide.id === id ? { ...guide, locked } : guide)),
+  };
+};
+
+export const setGuideHidden = (doc: Document, id: NodeId, hidden: boolean): Document => {
+  if (!doc.guides.some((guide) => guide.id === id)) {
+    return doc;
+  }
+
+  return {
+    ...doc,
+    guides: doc.guides.map((guide) => (guide.id === id ? { ...guide, hidden } : guide)),
   };
 };
 

@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { createDocument } from "../core/model/factory";
 import type { Document } from "../core/model/types";
-import { addGuide, clearGuides, moveGuide, removeGuide } from "./guides";
+import {
+  addGuide,
+  clearGuides,
+  moveGuide,
+  removeGuide,
+  setGuideColor,
+  setGuideHidden,
+  setGuideLocked,
+} from "./guides";
 import { createEditorStateForTest, editorStore } from "./store";
 
 const createGuideDocument = (): Document => ({
@@ -40,6 +48,48 @@ describe("guides", () => {
     expect(next.guides).toEqual([{ id: "guide-2", axis: "y", position: 200 }]);
   });
 
+  it("sets guide preferences immutably", () => {
+    const doc = createGuideDocument();
+
+    const colored = setGuideColor(doc, "guide-1", "#00d8ff");
+    const locked = setGuideLocked(colored, "guide-1", true);
+    const hidden = setGuideHidden(locked, "guide-2", true);
+
+    expect(colored).not.toBe(doc);
+    expect(colored.guides).toEqual([
+      { id: "guide-1", axis: "x", position: 100, color: "#00d8ff" },
+      { id: "guide-2", axis: "y", position: 200 },
+    ]);
+    expect(locked.guides[0]).toEqual({ id: "guide-1", axis: "x", position: 100, color: "#00d8ff", locked: true });
+    expect(hidden.guides[1]).toEqual({ id: "guide-2", axis: "y", position: 200, hidden: true });
+    expect(doc.guides).toEqual([
+      { id: "guide-1", axis: "x", position: 100 },
+      { id: "guide-2", axis: "y", position: 200 },
+    ]);
+  });
+
+  it("returns the same document when setting preferences for a missing guide", () => {
+    const doc = createGuideDocument();
+
+    expect(setGuideColor(doc, "missing-guide", "#00d8ff")).toBe(doc);
+    expect(setGuideLocked(doc, "missing-guide", true)).toBe(doc);
+    expect(setGuideHidden(doc, "missing-guide", true)).toBe(doc);
+  });
+
+  it("does not move or remove locked guides", () => {
+    const doc: Document = {
+      ...createGuideDocument(),
+      guides: [
+        { id: "guide-1", axis: "x", position: 100, locked: true },
+        { id: "guide-2", axis: "y", position: 200 },
+      ],
+    };
+
+    expect(moveGuide(doc, "guide-1", 150)).toBe(doc);
+    expect(removeGuide(doc, "guide-1")).toBe(doc);
+    expect(moveGuide(doc, "guide-2", 250).guides[1]).toEqual({ id: "guide-2", axis: "y", position: 250 });
+  });
+
   it("clears all guides", () => {
     const doc = createGuideDocument();
     const next = clearGuides(doc);
@@ -55,6 +105,9 @@ describe("guides", () => {
     addGuide(doc, "x", 300);
     moveGuide(doc, "guide-1", 125);
     removeGuide(doc, "guide-1");
+    setGuideColor(doc, "guide-1", "#00d8ff");
+    setGuideLocked(doc, "guide-1", true);
+    setGuideHidden(doc, "guide-1", true);
     clearGuides(doc);
 
     expect(doc).toEqual(originalSnapshot);

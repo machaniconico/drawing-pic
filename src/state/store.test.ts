@@ -118,4 +118,45 @@ describe("editorStore", () => {
     expect(canUndo(history)).toBe(false);
     expect(canRedo(history)).toBe(false);
   });
+
+  it("updates guide preferences through undoable document history", () => {
+    const id = editorStore.getState().addGuide("x", 80);
+    expect(id).not.toBeNull();
+    const guideId = id ?? "";
+
+    editorStore.getState().setGuideColor(guideId, "#00d8ff");
+    editorStore.getState().setGuideLocked(guideId, true);
+    editorStore.getState().setGuideHidden(guideId, true);
+
+    expect(editorStore.getState().doc.guides).toEqual([
+      { id: guideId, axis: "x", position: 80, color: "#00d8ff", locked: true, hidden: true },
+    ]);
+
+    editorStore.getState().undo();
+    expect(editorStore.getState().doc.guides[0]).toEqual({
+      id: guideId,
+      axis: "x",
+      position: 80,
+      color: "#00d8ff",
+      locked: true,
+    });
+
+    editorStore.getState().undo();
+    expect(editorStore.getState().doc.guides[0]).toEqual({ id: guideId, axis: "x", position: 80, color: "#00d8ff" });
+
+    editorStore.getState().redo();
+    editorStore.getState().redo();
+    expect(editorStore.getState().doc.guides[0]?.hidden).toBe(true);
+  });
+
+  it("does not push history when guide preference actions miss", () => {
+    const before = editorStore.getState().doc;
+
+    editorStore.getState().setGuideColor("missing-guide", "#00d8ff");
+    editorStore.getState().setGuideLocked("missing-guide", true);
+    editorStore.getState().setGuideHidden("missing-guide", true);
+
+    expect(editorStore.getState().doc).toBe(before);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
 });

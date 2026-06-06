@@ -123,12 +123,31 @@ describe("docSerialize", () => {
     expect(deserializeDocument(serializeDocument(doc)).guides).toEqual(doc.guides);
   });
 
+  it("round-trips guide preferences", () => {
+    const doc = createRichDocument();
+    doc.guides = [
+      { id: "guide_vertical", axis: "x", position: 120, color: "#00d8ff", locked: true, hidden: true },
+      { id: "guide_horizontal", axis: "y", position: 240, locked: false, hidden: false },
+    ];
+
+    expect(deserializeDocument(serializeDocument(doc)).guides).toEqual(doc.guides);
+  });
+
   it("loads legacy v1 documents without guides as an empty guide list", () => {
     const doc = createRichDocument();
     const legacyDoc: Omit<Document, "guides"> & { guides?: Document["guides"] } = { ...doc };
     delete legacyDoc.guides;
 
     expect(deserializeDocument(JSON.stringify({ version: 1, doc: legacyDoc })).guides).toEqual([]);
+  });
+
+  it("loads legacy guides without preference fields unchanged", () => {
+    const doc = createRichDocument();
+    doc.guides = [{ id: "legacy_guide", axis: "x", position: 120 }];
+
+    expect(deserializeDocument(JSON.stringify({ version: 1, doc })).guides).toEqual([
+      { id: "legacy_guide", axis: "x", position: 120 },
+    ]);
   });
 
   it("rejects malformed document shape", () => {
