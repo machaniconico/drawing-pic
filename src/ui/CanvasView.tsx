@@ -1005,6 +1005,14 @@ const drawGridOverlay = (
     return;
   }
 
+  // Skip drawing when the grid would be denser than a few screen pixels: such a
+  // grid is visually just noise and, when zoomed far out, would draw tens of
+  // thousands of lines per frame. This bounds the loops below to size/MIN px.
+  const MIN_SCREEN_SPACING = 4;
+  if (spacing * viewport.zoom < MIN_SCREEN_SPACING) {
+    return;
+  }
+
   const worldTopLeft = screenToWorld({ x: 0, y: 0 }, viewport);
   const worldBottomRight = screenToWorld({ x: size.width, y: size.height }, viewport);
   const minX = Math.min(worldTopLeft.x, worldBottomRight.x);
