@@ -24,6 +24,7 @@ import { apply, applyVector, compose, IDENTITY, invert, rotation, scaling, trans
 import type { Vec2 } from "../core/geometry/vector";
 import { corner, createEllipse, createPath, createRect, createText } from "../core/model/factory";
 import { hitTest } from "../core/model/hittest";
+import { formatAngle, formatDistance, measureBetween } from "../core/model/measure";
 import { deleteAnchor, insertAnchor, moveAnchor, moveHandle, setAnchorType, type HandleSide } from "../core/model/pathEdit";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
 import {
@@ -65,7 +66,8 @@ interface BaseDragState {
     | "pen-anchor"
     | "node-anchor"
     | "node-handle"
-    | "guide";
+    | "guide"
+    | "measure";
   pointerId: number;
   startScreen: Vec2;
   lastScreen: Vec2;
@@ -150,6 +152,11 @@ interface GuideDragState extends BaseDragState {
   originalHistory: EditorStore["history"];
 }
 
+interface MeasureDragState extends BaseDragState {
+  mode: "measure";
+  additive: false;
+}
+
 type DragState =
   | SimpleDragState
   | MoveDragState
@@ -158,7 +165,8 @@ type DragState =
   | PenAnchorDragState
   | NodeAnchorDragState
   | NodeHandleDragState
-  | GuideDragState;
+  | GuideDragState
+  | MeasureDragState;
 
 interface PenDraft {
   anchors: Anchor[];
@@ -206,6 +214,11 @@ interface NodeEditGestureResult {
 interface RotationReadout {
   angleRad: number;
   screenPoint: Vec2;
+}
+
+interface MeasureOverlay {
+  startWorld: Vec2;
+  endWorld: Vec2;
 }
 
 const MIN_ZOOM = 0.05;
@@ -310,6 +323,21 @@ const addVec2 = (a: Vec2, b: Vec2 | null): Vec2 =>
   b === null ? a : { x: a.x + b.x, y: a.y + b.y };
 
 const subVec2 = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x - b.x, y: a.y - b.y });
+
+const constrainMeasureEnd = (start: Vec2, end: Vec2): Vec2 => {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy);
+  if (length <= MATRIX_EPSILON) {
+    return end;
+  }
+
+  const snappedAngle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+  return {
+    x: start.x + Math.cos(snappedAngle) * length,
+    y: start.y + Math.sin(snappedAngle) * length,
+  };
+};
 
 const matrixNearlyEqual = (a: Matrix, b: Matrix): boolean =>
   Math.abs(a.a - b.a) < MATRIX_EPSILON &&
@@ -947,6 +975,65 @@ const drawRotationReadout = (
   const y = clamp(readout.screenPoint.y - offset - height, 4, Math.max(4, size.height - height - 4));
 
   ctx.fillStyle = "rgba(17, 24, 39, 0.92)";
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.28)";
+  ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(label, x + paddingX, y + height / 2);
+  ctx.restore();
+};
+
+const drawMeasureOverlay = (
+  ctx: CanvasRenderingContext2D,
+  overlay: MeasureOverlay | null,
+  viewport: EditorViewport,
+  size: Size,
+  dpr: number,
+): void => {
+  if (overlay === null) {
+    return;
+  }
+
+  const measurement = measureBetween(overlay.startWorld, overlay.endWorld);
+  const start = worldToScreen(overlay.startWorld, viewport);
+  const end = worldToScreen(overlay.endWorld, viewport);
+  const midpoint = worldToScreen(measurement.midpoint, viewport);
+  const label = `${formatDistance(measurement.distance)} px  ${formatAngle(measurement.angleDeg)}`;
+  const paddingX = 8;
+  const paddingY = 5;
+  const offset = 12;
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = "#0f766e";
+  ctx.fillStyle = "#ffffff";
+  ctx.setLineDash([]);
+
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(start.x, start.y, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(end.x, end.y, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.font = "12px system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+  ctx.textBaseline = "middle";
+  const metrics = ctx.measureText(label);
+  const width = Math.ceil(metrics.width + paddingX * 2);
+  const height = Math.ceil(12 + paddingY * 2);
+  const anchor = distance(start, end) < 80 ? end : midpoint;
+  const x = clamp(anchor.x + offset, 4, Math.max(4, size.width - width - 4));
+  const y = clamp(anchor.y - offset - height, 4, Math.max(4, size.height - height - 4));
+
+  ctx.fillStyle = "rgba(17, 24, 39, 0.94)";
   ctx.fillRect(x, y, width, height);
   ctx.strokeStyle = "rgba(255, 255, 255, 0.28)";
   ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
@@ -2128,6 +2215,7 @@ export default function CanvasView() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const measureOverlayRef = useRef<MeasureOverlay | null>(null);
   const snapGuidesRef = useRef<SnapGuides>(emptySnapGuides());
   const rotationReadoutRef = useRef<RotationReadout | null>(null);
   const spaceHeldRef = useRef(false);
@@ -2260,6 +2348,7 @@ export default function CanvasView() {
         }
         drawSnapGuides(ctx, snapGuidesRef.current, viewport, dpr);
         drawRotationReadout(ctx, rotationReadoutRef.current, size, dpr);
+        drawMeasureOverlay(ctx, measureOverlayRef.current, viewport, size, dpr);
         drawShapePreview(ctx, dragRef.current, viewport, dpr);
         drawMarqueePreview(ctx, dragRef.current, dpr);
         drawPenPreview(
@@ -2320,6 +2409,23 @@ export default function CanvasView() {
     state.setPan({ ...state.viewport.pan });
   };
 
+  const setMeasureOverlay = (overlay: MeasureOverlay | null): void => {
+    measureOverlayRef.current = overlay;
+    scheduleInteractiveDraw();
+  };
+
+  const cancelMeasureDrag = (): void => {
+    const activeDrag = dragRef.current;
+    if (activeDrag?.mode === "measure") {
+      const canvas = canvasRef.current;
+      if (canvas !== null && canvas.hasPointerCapture(activeDrag.pointerId)) {
+        canvas.releasePointerCapture(activeDrag.pointerId);
+      }
+      dragRef.current = null;
+    }
+    setMeasureOverlay(null);
+  };
+
   const setSelectedPathAnchor = useCallback((anchor: SelectedPathAnchor | null): void => {
     if (selectedAnchorsEqual(selectedPathAnchorRef.current, anchor)) {
       return;
@@ -2353,8 +2459,25 @@ export default function CanvasView() {
     if (previousToolRef.current === "pen" && activeTool !== "pen") {
       finalizePenPath(false);
     }
+    if (previousToolRef.current === "measure" && activeTool !== "measure") {
+      cancelMeasureDrag();
+    }
     previousToolRef.current = activeTool;
   }, [activeTool, finalizePenPath]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape" || editorStore.getState().activeTool !== "measure") {
+        return;
+      }
+
+      event.preventDefault();
+      cancelMeasureDrag();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     if (activeTool !== "node") {
@@ -2444,6 +2567,25 @@ export default function CanvasView() {
       }
 
       applySampledStyleToSelection(state.selection, sampledStyle);
+      return;
+    }
+
+    if (state.activeTool === "measure") {
+      event.preventDefault();
+      canvas.setPointerCapture(event.pointerId);
+      dragRef.current = {
+        mode: "measure",
+        pointerId: event.pointerId,
+        startScreen: point,
+        lastScreen: point,
+        startWorld: worldPoint,
+        additive: false,
+        moved: false,
+      };
+      setMeasureOverlay({
+        startWorld: worldPoint,
+        endWorld: worldPoint,
+      });
       return;
     }
 
@@ -2780,6 +2922,26 @@ export default function CanvasView() {
     event.preventDefault();
     const moved = drag.moved || hasDragMoved(drag.startScreen, point);
 
+    if (drag.mode === "measure") {
+      if (state.activeTool !== "measure") {
+        cancelMeasureDrag();
+        return;
+      }
+
+      const currentWorld = screenToWorld(point, state.viewport);
+      const endWorld = event.shiftKey ? constrainMeasureEnd(drag.startWorld, currentWorld) : currentWorld;
+      dragRef.current = {
+        ...drag,
+        lastScreen: point,
+        moved,
+      };
+      setMeasureOverlay({
+        startWorld: drag.startWorld,
+        endWorld,
+      });
+      return;
+    }
+
     if (drag.mode === "guide") {
       const currentWorld = screenToWorld(point, state.viewport);
       const position = guidePositionFromWorldPoint(drag, currentWorld);
@@ -2957,6 +3119,11 @@ export default function CanvasView() {
     const currentWorld = screenToWorld(point, state.viewport);
     const moved = drag.moved || hasDragMoved(drag.startScreen, point);
 
+    if (drag.mode === "measure" && state.activeTool !== "measure") {
+      cancelMeasureDrag();
+      return;
+    }
+
     if (drag.mode === "guide") {
       if (isGuideDroppedOnRuler(drag.axis, point)) {
         removeGuideForGesture(drag);
@@ -3001,6 +3168,12 @@ export default function CanvasView() {
           anchors,
           cursorWorld: currentWorld,
         };
+      });
+    } else if (drag.mode === "measure") {
+      const endWorld = event.shiftKey ? constrainMeasureEnd(drag.startWorld, currentWorld) : currentWorld;
+      setMeasureOverlay({
+        startWorld: drag.startWorld,
+        endWorld,
       });
     } else if (drag.mode === "node-anchor" || drag.mode === "node-handle") {
       applyNodeEditGesture(
