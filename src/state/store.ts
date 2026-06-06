@@ -53,11 +53,23 @@ export interface EditorViewport {
   zoom: number;
 }
 
+export type SnapTarget = "objects" | "guides" | "grid";
+
+export interface SnapSettings {
+  enabled: boolean;
+  toObjects: boolean;
+  toGuides: boolean;
+  toGrid: boolean;
+  gridSize: number;
+}
+
 export interface EditorState {
   doc: Document;
   selection: NodeId[];
   activeTool: ToolId;
   viewport: EditorViewport;
+  snapSettings: SnapSettings;
+  showGrid: boolean;
   history: History<Document>;
   clipboard: SceneNode[];
 }
@@ -93,12 +105,20 @@ export interface EditorActions {
   setActiveTool: (tool: ToolId) => void;
   setPan: (pan: Vec2) => void;
   setZoom: (zoom: number) => void;
+  setSnapEnabled: (on: boolean) => void;
+  setSnapTarget: (target: SnapTarget, on: boolean) => void;
+  setGridSize: (size: number) => void;
+  setShowGrid: (on: boolean) => void;
   loadDocument: (doc: Document) => void;
   undo: () => void;
   redo: () => void;
 }
 
 export type EditorStore = EditorState & EditorActions;
+
+const DEFAULT_SNAP_GRID_SIZE = 8;
+const MIN_SNAP_GRID_SIZE = 1;
+const MAX_SNAP_GRID_SIZE = 1024;
 
 const initialState = (): EditorState => ({
   doc: createDocument(),
@@ -108,6 +128,14 @@ const initialState = (): EditorState => ({
     pan: { x: 0, y: 0 },
     zoom: 1,
   },
+  snapSettings: {
+    enabled: true,
+    toObjects: true,
+    toGuides: true,
+    toGrid: true,
+    gridSize: DEFAULT_SNAP_GRID_SIZE,
+  },
+  showGrid: false,
   history: createHistory<Document>(),
   clipboard: [],
 });
@@ -727,6 +755,52 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     set(
       produce((state: EditorStore) => {
         state.viewport.zoom = zoom;
+      }),
+    );
+  },
+
+  setSnapEnabled: (on) => {
+    set(
+      produce((state: EditorStore) => {
+        state.snapSettings.enabled = on;
+      }),
+    );
+  },
+
+  setSnapTarget: (target, on) => {
+    set(
+      produce((state: EditorStore) => {
+        if (target === "objects") {
+          state.snapSettings.toObjects = on;
+          return;
+        }
+
+        if (target === "guides") {
+          state.snapSettings.toGuides = on;
+          return;
+        }
+
+        state.snapSettings.toGrid = on;
+      }),
+    );
+  },
+
+  setGridSize: (size) => {
+    if (!Number.isFinite(size) || size <= 0) {
+      return;
+    }
+
+    set(
+      produce((state: EditorStore) => {
+        state.snapSettings.gridSize = Math.min(MAX_SNAP_GRID_SIZE, Math.max(MIN_SNAP_GRID_SIZE, size));
+      }),
+    );
+  },
+
+  setShowGrid: (on) => {
+    set(
+      produce((state: EditorStore) => {
+        state.showGrid = on;
       }),
     );
   },

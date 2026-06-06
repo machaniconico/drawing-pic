@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createRect } from "../core/model/factory";
 import type { Document, NodeId } from "../core/model/types";
 import { canRedo, canUndo, createHistory } from "./history";
-import { createEditorStateForTest, editorStore } from "./store";
+import { createEditorStateForTest, editorStore, type SnapTarget } from "./store";
 import { getDocBounds, getSelectedNodes, isSelected } from "./selectors";
 
 const resetStore = (): void => {
@@ -53,6 +53,80 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(historyDepth);
     expect(editorStore.getState().activeTool).toBe("hand");
     expect(editorStore.getState().viewport).toEqual({ pan: { x: 12, y: 24 }, zoom: 2 });
+  });
+
+  it("defaults snap and grid editor state to current behavior", () => {
+    expect(editorStore.getState().snapSettings).toEqual({
+      enabled: true,
+      toObjects: true,
+      toGuides: true,
+      toGrid: true,
+      gridSize: 8,
+    });
+    expect(editorStore.getState().showGrid).toBe(false);
+  });
+
+  it("updates snap enabled without touching other editor state", () => {
+    const before = editorStore.getState();
+
+    editorStore.getState().setSnapEnabled(false);
+
+    const after = editorStore.getState();
+    expect(after.snapSettings).toEqual({ ...before.snapSettings, enabled: false });
+    expect(after.showGrid).toBe(before.showGrid);
+    expect(after.doc).toBe(before.doc);
+    expect(after.history).toBe(before.history);
+  });
+
+  it("updates individual snap targets without touching sibling fields", () => {
+    const cases: ReadonlyArray<{ target: SnapTarget; key: "toObjects" | "toGuides" | "toGrid" }> = [
+      { target: "objects", key: "toObjects" },
+      { target: "guides", key: "toGuides" },
+      { target: "grid", key: "toGrid" },
+    ];
+
+    for (const { target, key } of cases) {
+      resetStore();
+      const before = editorStore.getState();
+
+      editorStore.getState().setSnapTarget(target, false);
+
+      const after = editorStore.getState();
+      expect(after.snapSettings).toEqual({ ...before.snapSettings, [key]: false });
+      expect(after.showGrid).toBe(before.showGrid);
+      expect(after.doc).toBe(before.doc);
+      expect(after.history).toBe(before.history);
+    }
+  });
+
+  it("updates grid size and rejects non-positive or NaN values", () => {
+    const before = editorStore.getState();
+
+    editorStore.getState().setGridSize(16);
+
+    const changed = editorStore.getState();
+    expect(changed.snapSettings).toEqual({ ...before.snapSettings, gridSize: 16 });
+    expect(changed.showGrid).toBe(before.showGrid);
+    expect(changed.doc).toBe(before.doc);
+    expect(changed.history).toBe(before.history);
+
+    editorStore.getState().setGridSize(0);
+    editorStore.getState().setGridSize(-4);
+    editorStore.getState().setGridSize(Number.NaN);
+
+    expect(editorStore.getState().snapSettings.gridSize).toBe(16);
+  });
+
+  it("updates show grid without touching snap settings or history", () => {
+    const before = editorStore.getState();
+
+    editorStore.getState().setShowGrid(true);
+
+    const after = editorStore.getState();
+    expect(after.showGrid).toBe(true);
+    expect(after.snapSettings).toEqual(before.snapSettings);
+    expect(after.doc).toBe(before.doc);
+    expect(after.history).toBe(before.history);
   });
 
   it("updates and moves selected nodes through document history", () => {
