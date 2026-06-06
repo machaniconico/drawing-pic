@@ -1,0 +1,105 @@
+.snap-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  color: #e6e6e6;
+  background: transparent;
+  font-size: 12px;
+}
+
+.snap-settings__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #dedede;
+  line-height: 1.2;
+}
+
+.snap-settings__row--master {
+  font-weight: 650;
+}
+
+.snap-settings__row--grid-size {
+  justify-content: space-between;
+}
+
+.snap-settings__row--target {
+  min-height: 24px;
+}
+
+.snap-settings__fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.snap-settings__fieldset:disabled {
+  color: #858585;
+}
+
+.snap-settings__fieldset:disabled .snap-settings__row {
+  color: #858585;
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.snap-settings__legend {
+  padding: 0;
+  margin: 0 0 2px;
+  color: #a8a8a8;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.snap-settings__target-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.snap-settings__checkbox {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #2d8cf0;
+}
+
+.snap-settings__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snap-settings__number {
+  width: 72px;
+  min-width: 0;
+  min-height: 26px;
+  padding: 3px 6px;
+  color: #ededed;
+  background: #2b2b2d;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.snap-settings__number:hover {
+  border-color: #4c4c4c;
+}
+
+.snap-settings__number:focus-visible,
+.snap-settings__checkbox:focus-visible {
+  outline: 1px solid rgba(45, 140, 240, 0.7);
+  outline-offset: 1px;
+}
