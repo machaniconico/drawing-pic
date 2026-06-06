@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { canUndo } from "./history";
 import { apply, compose, IDENTITY, type Matrix } from "../core/geometry/matrix";
 import { createDocument, createGroup, createRect, defaultStroke, rgba, solid } from "../core/model/factory";
-import { worldBounds } from "../core/model/bounds";
+import { selectionBounds, worldBounds } from "../core/model/bounds";
 import type { Document, NodeId, SceneNode } from "../core/model/types";
 import { isContainer } from "../core/model/types";
 import {
@@ -13,6 +13,8 @@ import {
   distributeNodes,
   flipNodes,
   groupSelection,
+  moveSelectionTo,
+  resizeSelectionTo,
   rotateNodes90,
   sampleStyleAt,
   sendBackward,
@@ -68,6 +70,16 @@ const expectPointCloseTo = (
 ): void => {
   expect(actual.x).toBeCloseTo(expected.x, 9);
   expect(actual.y).toBeCloseTo(expected.y, 9);
+};
+
+const expectBoundsCloseTo = (
+  actual: { minX: number; minY: number; maxX: number; maxY: number },
+  expected: { minX: number; minY: number; maxX: number; maxY: number },
+): void => {
+  expect(actual.minX).toBeCloseTo(expected.minX, 9);
+  expect(actual.minY).toBeCloseTo(expected.minY, 9);
+  expect(actual.maxX).toBeCloseTo(expected.maxX, 9);
+  expect(actual.maxY).toBeCloseTo(expected.maxY, 9);
 };
 
 const applyMatrixPatches = (doc: Document, patches: Record<NodeId, Matrix>): void => {
@@ -233,6 +245,74 @@ describe("selection operations", () => {
     applyMatrixPatches(doc, rotateNodes90(doc, [rect.id], "cw"));
     applyMatrixPatches(doc, rotateNodes90(doc, [rect.id], "cw"));
     expectMatrixCloseTo(rect.transform, IDENTITY);
+  });
+
+  it("moves a single selected node bbox top-left to the target without resizing it", () => {
+    const doc = createDocument();
+    const rect = createRect(10, 20, 30, 40);
+    addToFirstLayer(doc, [rect]);
+    const before = selectionBounds(doc, [rect.id]);
+
+    applyMatrixPatches(doc, moveSelectionTo(doc, [rect.id], 100, 200));
+
+    const after = selectionBounds(doc, [rect.id]);
+    expect(after.minX).toBeCloseTo(100, 9);
+    expect(after.minY).toBeCloseTo(200, 9);
+    expect(after.maxX - after.minX).toBeCloseTo(before.maxX - before.minX, 9);
+    expect(after.maxY - after.minY).toBeCloseTo(before.maxY - before.minY, 9);
+  });
+
+  it("moves multiple selected nodes as one rigid bbox to the target", () => {
+    const doc = createDocument();
+    const left = createRect(10, 10, 10, 10);
+    const right = createRect(30, 20, 20, 5);
+    addToFirstLayer(doc, [left, right]);
+
+    applyMatrixPatches(doc, moveSelectionTo(doc, [left.id, right.id], 100, 200));
+
+    expectBoundsCloseTo(selectionBounds(doc, [left.id, right.id]), {
+      minX: 100,
+      minY: 200,
+      maxX: 140,
+      maxY: 215,
+    });
+    expect(left.transform.e).toBeCloseTo(100, 9);
+    expect(left.transform.f).toBeCloseTo(200, 9);
+    expect(right.transform.e).toBeCloseTo(120, 9);
+    expect(right.transform.f).toBeCloseTo(210, 9);
+  });
+
+  it("resizes the selected bbox to double width and half height with a fixed top-left", () => {
+    const doc = createDocument();
+    const left = createRect(10, 20, 10, 20);
+    const right = createRect(30, 40, 20, 20);
+    addToFirstLayer(doc, [left, right]);
+
+    applyMatrixPatches(doc, resizeSelectionTo(doc, [left.id, right.id], 80, 20));
+
+    expectBoundsCloseTo(selectionBounds(doc, [left.id, right.id]), {
+      minX: 10,
+      minY: 20,
+      maxX: 90,
+      maxY: 40,
+    });
+  });
+
+  it("keeps zero-size resize axes finite and skips non-positive target axes", () => {
+    const doc = createDocument();
+    const verticalLine = createRect(10, 20, 0, 10);
+    const rect = createRect(50, 60, 20, 30);
+    addToFirstLayer(doc, [verticalLine, rect]);
+    const originalRectTransform = rect.transform;
+
+    applyMatrixPatches(doc, resizeSelectionTo(doc, [verticalLine.id], 50, 30));
+    const lineBounds = selectionBounds(doc, [verticalLine.id]);
+    expectBoundsCloseTo(lineBounds, { minX: 10, minY: 20, maxX: 10, maxY: 50 });
+    expect(Object.values(verticalLine.transform).every(Number.isFinite)).toBe(true);
+
+    applyMatrixPatches(doc, resizeSelectionTo(doc, [rect.id], -5, 0));
+    expectMatrixCloseTo(rect.transform, originalRectTransform);
+    expectBoundsCloseTo(selectionBounds(doc, [rect.id]), { minX: 50, minY: 60, maxX: 70, maxY: 90 });
   });
 
   it("flips a single node corner to its mirrored corner around the node center", () => {

@@ -1,9 +1,9 @@
-import { center, isEmpty, unionAll, type BBox } from "../core/geometry/bbox";
+import { center, height, isEmpty, unionAll, width, type BBox } from "../core/geometry/bbox";
 import { apply, compose, IDENTITY, invert, rotationAround, scaling, translate, type Matrix } from "../core/geometry/matrix";
 import { type BooleanOp, flattenNodeToPolygons, polygonBoolean } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
 import { createGroup, newId as createNodeId } from "../core/model/factory";
-import { worldBounds } from "../core/model/bounds";
+import { selectionBounds, worldBounds } from "../core/model/bounds";
 import { hitTest, type HitTestOptions } from "../core/model/hittest";
 import type { Document, GroupNode, NodeId, Paint, PathNode, SceneNode, Stroke, SubPath } from "../core/model/types";
 import { hasStyle, isContainer } from "../core/model/types";
@@ -60,6 +60,8 @@ export interface SampledStyle {
   fill: Paint;
   stroke: Stroke | null;
 }
+
+const NUMERIC_TRANSFORM_EPSILON = 1e-9;
 
 const uniqueIds = (ids: readonly NodeId[]): NodeId[] => [...new Set(ids)];
 
@@ -320,6 +322,66 @@ export const rotateNodes90 = (
     doc,
     targets.map((target) => target.id),
     rotationAround(angle, pivot.x, pivot.y),
+  );
+};
+
+export const moveSelectionTo = (
+  doc: Document,
+  ids: readonly NodeId[],
+  x: number,
+  y: number,
+): MatrixPatchMap => {
+  const targets = topLevelNodeIds(doc, ids);
+  if (targets.length === 0) {
+    return {};
+  }
+
+  const bounds = selectionBounds(doc, ids);
+  if (isEmpty(bounds)) {
+    return {};
+  }
+
+  return selectionTransformPatches(
+    doc,
+    targets,
+    translate(x - bounds.minX, y - bounds.minY),
+  );
+};
+
+export const resizeSelectionTo = (
+  doc: Document,
+  ids: readonly NodeId[],
+  targetWidth: number,
+  targetHeight: number,
+): MatrixPatchMap => {
+  const targets = topLevelNodeIds(doc, ids);
+  if (targets.length === 0) {
+    return {};
+  }
+
+  const bounds = selectionBounds(doc, ids);
+  if (isEmpty(bounds)) {
+    return {};
+  }
+
+  const currentWidth = width(bounds);
+  const currentHeight = height(bounds);
+  const scaleX =
+    currentWidth < NUMERIC_TRANSFORM_EPSILON || targetWidth <= 0
+      ? 1
+      : targetWidth / currentWidth;
+  const scaleY =
+    currentHeight < NUMERIC_TRANSFORM_EPSILON || targetHeight <= 0
+      ? 1
+      : targetHeight / currentHeight;
+
+  return selectionTransformPatches(
+    doc,
+    targets,
+    compose(
+      translate(bounds.minX, bounds.minY),
+      compose(scaling(scaleX, scaleY), translate(-bounds.minX, -bounds.minY)),
+    ),
   );
 };
 
