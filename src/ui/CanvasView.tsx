@@ -41,7 +41,7 @@ import { renderDocument } from "../render/canvasRenderer";
 import { nodesInRect } from "../state/selectors";
 import { pushHistory } from "../state/history";
 import { sampleStyleAt, type SampledStyle } from "../state/operations";
-import { editorStore, useEditorStore, type EditorStore, type EditorViewport } from "../state/store";
+import { editorStore, useEditorStore, type EditorStore, type EditorViewport, type SnapSettings } from "../state/store";
 import GuidePrefs from "./GuidePrefs";
 import { Rulers } from "./Rulers";
 import "./CanvasView.css";
@@ -219,7 +219,6 @@ const PEN_CLOSE_THRESHOLD = 6;
 const PEN_ANCHOR_SIZE = 6;
 const DRAG_MOVE_THRESHOLD = 2;
 const SNAP_THRESHOLD_SCREEN_PX = 6;
-const SNAP_GRID_SIZE = 8;
 const MATRIX_EPSILON = 1e-9;
 const SCALE_EPSILON = 1e-6;
 const SNAP_ROTATION_RADIANS = Math.PI / 12;
@@ -492,22 +491,60 @@ const pointBBox = (point: Vec2): BBox => fromRect(point.x, point.y, 0, 0);
 const visibleGuides = (guides: readonly Guide[]): Guide[] =>
   guides.filter((guide) => guide.hidden !== true);
 
-const transformSnapGuides = (guides: readonly Guide[]): TransformSnapGuide[] => [
-  ...visibleGuides(guides),
-  { id: "grid-x", axis: "x", position: 0, grid: SNAP_GRID_SIZE },
-  { id: "grid-y", axis: "y", position: 0, grid: SNAP_GRID_SIZE },
-];
+const effectiveGridSize = (snapSettings: SnapSettings): number =>
+  Math.abs(snapSettings.gridSize);
+
+const snapDisabled = (snapSettings: SnapSettings, overrideDisabled: boolean): boolean =>
+  overrideDisabled || !snapSettings.enabled;
+
+const objectSnapCandidates = (
+  candidateBounds: readonly BBox[],
+  snapSettings: SnapSettings,
+): readonly BBox[] => (snapSettings.toObjects ? candidateBounds : []);
+
+const guideSnapCandidates = (
+  guides: readonly Guide[],
+  snapSettings: SnapSettings,
+): Guide[] => (snapSettings.toGuides ? visibleGuides(guides) : []);
+
+const gridSnapDelta = (
+  value: number,
+  snapSettings: SnapSettings,
+): number => {
+  const gridSize = effectiveGridSize(snapSettings);
+  return snapSettings.toGrid && gridSize > MATRIX_EPSILON
+    ? snapToGrid(value, gridSize) - value
+    : 0;
+};
+
+const transformSnapGuides = (
+  guides: readonly Guide[],
+  snapSettings: SnapSettings,
+): TransformSnapGuide[] => {
+  const candidates: TransformSnapGuide[] = snapSettings.toGuides
+    ? [...visibleGuides(guides)]
+    : [];
+  const gridSize = effectiveGridSize(snapSettings);
+  if (snapSettings.toGrid && gridSize > MATRIX_EPSILON) {
+    candidates.push(
+      { id: "grid-x", axis: "x", position: 0, grid: gridSize },
+      { id: "grid-y", axis: "y", position: 0, grid: gridSize },
+    );
+  }
+  return candidates;
+};
 
 const computeMoveGesture = (
   drag: MoveDragState,
   currentScreen: Vec2,
   viewport: EditorViewport,
-  snappingDisabled: boolean,
+  snapSettings: SnapSettings,
+  overrideSnappingDisabled: boolean,
 ): MoveGesture => {
   const rawDx = (currentScreen.x - drag.startScreen.x) / viewport.zoom;
   const rawDy = (currentScreen.y - drag.startScreen.y) / viewport.zoom;
 
-  if (snappingDisabled || isEmpty(drag.initialBounds)) {
+  if (snapDisabled(snapSettings, overrideSnappingDisabled) || isEmpty(drag.initialBounds)) {
     return {
       dx: rawDx,
       dy: rawDy,
@@ -518,12 +555,12 @@ const computeMoveGesture = (
   const movedBounds = translateBBox(drag.initialBounds, rawDx, rawDy);
   const snap = computeSnap(
     movedBounds,
-    drag.candidateBounds,
+    objectSnapCandidates(drag.candidateBounds, snapSettings),
     SNAP_THRESHOLD_SCREEN_PX / viewport.zoom,
-    visibleGuides(drag.originalDoc.guides),
+    guideSnapCandidates(drag.originalDoc.guides, snapSettings),
   );
-  const gridDx = snapToGrid(movedBounds.minX, SNAP_GRID_SIZE) - movedBounds.minX;
-  const gridDy = snapToGrid(movedBounds.minY, SNAP_GRID_SIZE) - movedBounds.minY;
+  const gridDx = gridSnapDelta(movedBounds.minX, snapSettings);
+  const gridDy = gridSnapDelta(movedBounds.minY, snapSettings);
   const snapDx = snap.guidesX.length > 0 ? snap.dx : gridDx;
   const snapDy = snap.guidesY.length > 0 ? snap.dy : gridDy;
 
@@ -689,10 +726,11 @@ const computeScaleGesture = (
   currentWorld: Vec2,
   viewport: EditorViewport,
   constrained: boolean,
-  snappingDisabled: boolean,
+  snapSettings: SnapSettings,
+  overrideSnappingDisabled: boolean,
 ): TransformGesture => {
   const rawMatrix = scaleGestureMatrix(drag, currentWorld, constrained);
-  if (snappingDisabled || isEmpty(drag.initialBounds)) {
+  if (snapDisabled(snapSettings, overrideSnappingDisabled) || isEmpty(drag.initialBounds)) {
     return {
       matrix: rawMatrix,
       guides: emptySnapGuides(),
@@ -702,9 +740,9 @@ const computeScaleGesture = (
   const movedBounds = transformBBox(drag.initialBounds, rawMatrix);
   const snap = computeTransformSnap(
     movedBounds,
-    drag.candidateBounds,
+    objectSnapCandidates(drag.candidateBounds, snapSettings),
     SNAP_THRESHOLD_SCREEN_PX / viewport.zoom,
-    transformSnapGuides(drag.originalDoc.guides),
+    transformSnapGuides(drag.originalDoc.guides, snapSettings),
   );
   const xEdge = activeScaleXEdge(drag.handleId);
   const yEdge = activeScaleYEdge(drag.handleId);
@@ -955,6 +993,48 @@ const drawDocumentGuides = (
   ctx.restore();
 };
 
+const drawGridOverlay = (
+  ctx: CanvasRenderingContext2D,
+  viewport: EditorViewport,
+  size: Size,
+  dpr: number,
+  gridSize: number,
+): void => {
+  const spacing = Math.abs(gridSize);
+  if (spacing <= MATRIX_EPSILON || size.width <= 0 || size.height <= 0) {
+    return;
+  }
+
+  const worldTopLeft = screenToWorld({ x: 0, y: 0 }, viewport);
+  const worldBottomRight = screenToWorld({ x: size.width, y: size.height }, viewport);
+  const minX = Math.min(worldTopLeft.x, worldBottomRight.x);
+  const maxX = Math.max(worldTopLeft.x, worldBottomRight.x);
+  const minY = Math.min(worldTopLeft.y, worldBottomRight.y);
+  const maxY = Math.max(worldTopLeft.y, worldBottomRight.y);
+  const firstX = Math.ceil(minX / spacing) * spacing;
+  const firstY = Math.ceil(minY / spacing) * spacing;
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.strokeStyle = "rgba(15, 23, 42, 0.08)";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
+
+  ctx.beginPath();
+  for (let x = firstX; x <= maxX + MATRIX_EPSILON; x += spacing) {
+    const screenX = worldToScreen({ x, y: 0 }, viewport).x;
+    ctx.moveTo(Math.round(screenX) + 0.5, 0);
+    ctx.lineTo(Math.round(screenX) + 0.5, size.height);
+  }
+  for (let y = firstY; y <= maxY + MATRIX_EPSILON; y += spacing) {
+    const screenY = worldToScreen({ x: 0, y }, viewport).y;
+    ctx.moveTo(0, Math.round(screenY) + 0.5);
+    ctx.lineTo(size.width, Math.round(screenY) + 0.5);
+  }
+  ctx.stroke();
+  ctx.restore();
+};
+
 const transformableSelection = (doc: Document, selection: readonly NodeId[]): NodeId[] =>
   selection.filter((id) => {
     const node = doc.nodes[id];
@@ -1197,7 +1277,8 @@ const computeNodeAnchorGesture = (
   drag: NodeAnchorDragState,
   currentScreen: Vec2,
   viewport: EditorViewport,
-  snappingDisabled: boolean,
+  snapSettings: SnapSettings,
+  overrideSnappingDisabled: boolean,
 ): NodeAnchorGesture | null => {
   const anchorWorld = originalAnchorWorldPoint(drag);
   if (anchorWorld === null) {
@@ -1208,7 +1289,7 @@ const computeNodeAnchorGesture = (
     x: anchorWorld.x + (currentScreen.x - drag.startScreen.x) / viewport.zoom,
     y: anchorWorld.y + (currentScreen.y - drag.startScreen.y) / viewport.zoom,
   };
-  if (snappingDisabled) {
+  if (snapDisabled(snapSettings, overrideSnappingDisabled)) {
     return {
       localDelta: worldDeltaToNodeLocal(drag, subVec2(rawWorldPoint, anchorWorld)),
       guides: emptySnapGuides(),
@@ -1218,12 +1299,12 @@ const computeNodeAnchorGesture = (
   const moving = pointBBox(rawWorldPoint);
   const snap = computeSnap(
     moving,
-    drag.anchorSnapCandidateBounds,
+    objectSnapCandidates(drag.anchorSnapCandidateBounds, snapSettings),
     SNAP_THRESHOLD_SCREEN_PX / viewport.zoom,
-    visibleGuides(drag.originalDoc.guides),
+    guideSnapCandidates(drag.originalDoc.guides, snapSettings),
   );
-  const gridDx = snapToGrid(rawWorldPoint.x, SNAP_GRID_SIZE) - rawWorldPoint.x;
-  const gridDy = snapToGrid(rawWorldPoint.y, SNAP_GRID_SIZE) - rawWorldPoint.y;
+  const gridDx = gridSnapDelta(rawWorldPoint.x, snapSettings);
+  const gridDy = gridSnapDelta(rawWorldPoint.y, snapSettings);
   const snapDx = snap.guidesX.length > 0 ? snap.dx : gridDx;
   const snapDy = snap.guidesY.length > 0 ? snap.dy : gridDy;
   const snappedWorldPoint = {
@@ -1540,7 +1621,8 @@ const applyNodeEditGesture = (
   currentScreen: Vec2,
   viewport: EditorViewport,
   freeHandle: boolean,
-  snappingDisabled: boolean,
+  snapSettings: SnapSettings,
+  overrideSnappingDisabled: boolean,
 ): NodeEditGestureResult => {
   const originalNode = drag.originalDoc.nodes[drag.nodeId];
   if (!originalNode || originalNode.type !== "path") {
@@ -1553,7 +1635,7 @@ const applyNodeEditGesture = (
   }
 
   const anchorGesture = drag.mode === "node-anchor"
-    ? computeNodeAnchorGesture(drag, currentScreen, viewport, snappingDisabled)
+    ? computeNodeAnchorGesture(drag, currentScreen, viewport, snapSettings, overrideSnappingDisabled)
     : null;
   if (drag.mode === "node-anchor" && anchorGesture === null) {
     return { changed: false, guides: emptySnapGuides() };
@@ -2147,7 +2229,7 @@ export default function CanvasView() {
         }
 
         const dpr = getDpr();
-        const { doc, selection, viewport } = editorStore.getState();
+        const { doc, selection, viewport, snapSettings, showGrid } = editorStore.getState();
         const renderViewport: EditorViewport = {
           zoom: viewport.zoom * dpr,
           pan: {
@@ -2157,6 +2239,9 @@ export default function CanvasView() {
         };
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         renderDocument(ctx, doc, renderViewport);
+        if (showGrid) {
+          drawGridOverlay(ctx, viewport, size, dpr, snapSettings.gridSize);
+        }
         const activeTool = editorStore.getState().activeTool;
         drawDocumentGuides(ctx, doc.guides, viewport, size, dpr);
         if (activeTool !== "node") {
@@ -2744,7 +2829,14 @@ export default function CanvasView() {
     }
 
     if (drag.mode === "node-anchor" || drag.mode === "node-handle") {
-      const gesture = applyNodeEditGesture(drag, point, state.viewport, event.altKey, event.ctrlKey || event.metaKey);
+      const gesture = applyNodeEditGesture(
+        drag,
+        point,
+        state.viewport,
+        event.altKey,
+        state.snapSettings,
+        event.ctrlKey || event.metaKey,
+      );
       snapGuidesRef.current = gesture.guides;
       dragRef.current = {
         ...drag,
@@ -2760,7 +2852,7 @@ export default function CanvasView() {
 
     if (drag.mode === "scale" || drag.mode === "rotate") {
       const currentWorld = screenToWorld(point, state.viewport);
-      const snappingDisabled = event.ctrlKey || event.metaKey;
+      const snappingDisabled = snapDisabled(state.snapSettings, event.ctrlKey || event.metaKey);
       let gesture: TransformGesture;
       if (drag.mode === "rotate") {
         const rotateGesture = rotateGestureMatrix(drag, currentWorld, event.shiftKey, snappingDisabled);
@@ -2770,7 +2862,14 @@ export default function CanvasView() {
           screenPoint: point,
         };
       } else {
-        gesture = computeScaleGesture(drag, currentWorld, state.viewport, event.shiftKey, snappingDisabled);
+        gesture = computeScaleGesture(
+          drag,
+          currentWorld,
+          state.viewport,
+          event.shiftKey,
+          state.snapSettings,
+          event.ctrlKey || event.metaKey,
+        );
         rotationReadoutRef.current = null;
       }
       const changed = applyTransformGesture(drag, currentWorld, event.shiftKey, gesture.matrix);
@@ -2807,7 +2906,13 @@ export default function CanvasView() {
         return;
       }
 
-      const gesture = computeMoveGesture(drag, point, state.viewport, event.ctrlKey || event.metaKey);
+      const gesture = computeMoveGesture(
+        drag,
+        point,
+        state.viewport,
+        state.snapSettings,
+        event.ctrlKey || event.metaKey,
+      );
       const changed = applyMoveGesture(drag, gesture.dx, gesture.dy);
       snapGuidesRef.current = gesture.guides;
       dragRef.current = {
@@ -2890,14 +2995,28 @@ export default function CanvasView() {
         };
       });
     } else if (drag.mode === "node-anchor" || drag.mode === "node-handle") {
-      applyNodeEditGesture(drag, point, state.viewport, event.altKey, event.ctrlKey || event.metaKey);
+      applyNodeEditGesture(
+        drag,
+        point,
+        state.viewport,
+        event.altKey,
+        state.snapSettings,
+        event.ctrlKey || event.metaKey,
+      );
       if (nodeEditChangedFromOriginal(drag)) {
         commitNodeEditGesture(drag);
       }
     } else if (drag.mode === "scale" || drag.mode === "rotate") {
-      const snappingDisabled = event.ctrlKey || event.metaKey;
+      const snappingDisabled = snapDisabled(state.snapSettings, event.ctrlKey || event.metaKey);
       const gesture = drag.mode === "scale"
-        ? computeScaleGesture(drag, currentWorld, state.viewport, event.shiftKey, snappingDisabled)
+        ? computeScaleGesture(
+            drag,
+            currentWorld,
+            state.viewport,
+            event.shiftKey,
+            state.snapSettings,
+            event.ctrlKey || event.metaKey,
+          )
         : rotateGestureMatrix(drag, currentWorld, event.shiftKey, snappingDisabled);
       const changed = applyTransformGesture(drag, currentWorld, event.shiftKey, gesture.matrix);
       if (drag.changed || changed) {
@@ -2905,7 +3024,13 @@ export default function CanvasView() {
       }
     } else if (drag.mode === "move") {
       if (moved) {
-        const gesture = computeMoveGesture(drag, point, state.viewport, event.ctrlKey || event.metaKey);
+        const gesture = computeMoveGesture(
+          drag,
+          point,
+          state.viewport,
+          state.snapSettings,
+          event.ctrlKey || event.metaKey,
+        );
         const changed = applyMoveGesture(drag, gesture.dx, gesture.dy);
         if (drag.changed || changed) {
           commitTransformGesture(drag);
