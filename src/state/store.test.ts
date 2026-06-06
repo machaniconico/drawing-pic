@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { BBox } from "../core/geometry/bbox";
 import type { Matrix } from "../core/geometry/matrix";
+import { selectionBounds } from "../core/model/bounds";
 import { createRect } from "../core/model/factory";
 import type { Document, NodeId } from "../core/model/types";
 import { canRedo, canUndo, createHistory } from "./history";
@@ -21,6 +23,13 @@ const expectMatrixCloseTo = (actual: Matrix | undefined, expected: Matrix): void
   expect(actual?.d).toBeCloseTo(expected.d, 9);
   expect(actual?.e).toBeCloseTo(expected.e, 9);
   expect(actual?.f).toBeCloseTo(expected.f, 9);
+};
+
+const expectBoundsCloseTo = (actual: BBox, expected: BBox): void => {
+  expect(actual.minX).toBeCloseTo(expected.minX, 9);
+  expect(actual.minY).toBeCloseTo(expected.minY, 9);
+  expect(actual.maxX).toBeCloseTo(expected.maxX, 9);
+  expect(actual.maxY).toBeCloseTo(expected.maxY, 9);
 };
 
 describe("editorStore", () => {
@@ -220,6 +229,95 @@ describe("editorStore", () => {
 
     expect(editorStore.getState().doc).toBe(beforeDoc);
     expect(editorStore.getState().doc.nodes[rect.id]?.transform).toEqual(beforeTransform);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
+  it("sets selection position and undoes it as one history step", () => {
+    const left = createRect(10, 20, 10, 20);
+    const right = createRect(35, 30, 15, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+    editorStore.getState().setSelection([left.id, right.id]);
+    const beforeDoc = editorStore.getState().doc;
+    const beforeBounds = selectionBounds(beforeDoc, [left.id, right.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().setSelectionPosition(100, 200);
+
+    expectBoundsCloseTo(selectionBounds(editorStore.getState().doc, [left.id, right.id]), {
+      minX: 100,
+      minY: 200,
+      maxX: 140,
+      maxY: 220,
+    });
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expectBoundsCloseTo(selectionBounds(editorStore.getState().doc, [left.id, right.id]), beforeBounds);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("sets selection size and undoes it as one history step", () => {
+    const left = createRect(10, 20, 10, 20);
+    const right = createRect(35, 30, 15, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+    editorStore.getState().setSelection([left.id, right.id]);
+    const beforeDoc = editorStore.getState().doc;
+    const beforeBounds = selectionBounds(beforeDoc, [left.id, right.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().setSelectionSize(80, 40);
+
+    expectBoundsCloseTo(selectionBounds(editorStore.getState().doc, [left.id, right.id]), {
+      minX: 10,
+      minY: 20,
+      maxX: 90,
+      maxY: 60,
+    });
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expectBoundsCloseTo(selectionBounds(editorStore.getState().doc, [left.id, right.id]), beforeBounds);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("does not push history for empty selection, empty numeric op maps, or NaN numeric transforms", () => {
+    const rect = createRect(10, 20, 30, 40);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().clearSelection();
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().setSelectionPosition(100, 200);
+    editorStore.getState().setSelectionSize(80, 40);
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    const missingId: NodeId = "missing-node";
+    editorStore.setState({ selection: [missingId] });
+
+    editorStore.getState().setSelectionPosition(100, 200);
+    editorStore.getState().setSelectionSize(80, 40);
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    editorStore.getState().setSelection([rect.id]);
+
+    editorStore.getState().setSelectionPosition(Number.NaN, 200);
+    editorStore.getState().setSelectionPosition(100, Number.NaN);
+    editorStore.getState().setSelectionSize(Number.NaN, 40);
+    editorStore.getState().setSelectionSize(80, Number.NaN);
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.nodes[rect.id]?.transform).toEqual(rect.transform);
     expect(editorStore.getState().history.past).toHaveLength(0);
     expect(canUndo(editorStore.getState().history)).toBe(false);
   });

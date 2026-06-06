@@ -16,7 +16,9 @@ import {
   findNodeParent,
   flipNodes as computeFlipNodes,
   groupSelection as computeGroupSelection,
+  moveSelectionTo as computeMoveSelectionTo,
   rotateNodes90 as computeRotateNodes90,
+  resizeSelectionTo as computeResizeSelectionTo,
   sendBackward as computeSendBackward,
   sendToBack as computeSendToBack,
   topLevelNodeIds,
@@ -93,6 +95,8 @@ export interface EditorActions {
   removeNodes: (ids: NodeId[]) => void;
   updateNode: (id: NodeId, patch: Partial<SceneNode>) => void;
   moveSelection: (dx: number, dy: number) => void;
+  setSelectionPosition: (x: number, y: number) => void;
+  setSelectionSize: (width: number, height: number) => void;
   alignNodes: (edge: AlignEdge) => void;
   distributeNodes: (axis: DistributeAxis) => void;
   flipSelection: (axis: FlipAxis) => void;
@@ -466,6 +470,26 @@ export const editorStore = createStore<EditorStore>()((set) => ({
         moved = true;
       }
       return moved;
+    });
+  },
+
+  setSelectionPosition: (x, y) => {
+    withDocHistory(set, (state) => {
+      if (state.selection.length === 0 || Number.isNaN(x) || Number.isNaN(y)) {
+        return false;
+      }
+
+      return applyMatrixPatches(state.doc, computeMoveSelectionTo(state.doc, state.selection, x, y));
+    });
+  },
+
+  setSelectionSize: (width, height) => {
+    withDocHistory(set, (state) => {
+      if (state.selection.length === 0 || Number.isNaN(width) || Number.isNaN(height)) {
+        return false;
+      }
+
+      return applyMatrixPatches(state.doc, computeResizeSelectionTo(state.doc, state.selection, width, height));
     });
   },
 
