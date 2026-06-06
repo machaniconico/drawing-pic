@@ -16,6 +16,7 @@ import {
   fromRect,
   height as bboxHeight,
   isEmpty,
+  transform as transformBBox,
   width as bboxWidth,
   type BBox,
 } from "../core/geometry/bbox";
@@ -25,7 +26,15 @@ import { corner, createEllipse, createPath, createRect, createText } from "../co
 import { hitTest } from "../core/model/hittest";
 import { deleteAnchor, insertAnchor, moveAnchor, moveHandle, setAnchorType, type HandleSide } from "../core/model/pathEdit";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
-import { computeSnap, snapToGrid, type SnapAlignmentLine } from "../core/model/snapping";
+import {
+  computeSnap,
+  computeTransformSnap,
+  snapToGrid,
+  type SnapAlignmentLine,
+  type TransformSnapEdgeResult,
+  type TransformSnapGuide,
+  type TransformSnapResult,
+} from "../core/model/snapping";
 import { isContainer, type Anchor, type Document, type Guide, type NodeId, type PathNode, type SceneNode, type TextNode } from "../core/model/types";
 import { renderDocument } from "../render/canvasRenderer";
 import { nodesInRect } from "../state/selectors";
@@ -77,6 +86,8 @@ interface TransformDragBase extends BaseDragState {
 interface ScaleDragState extends TransformDragBase {
   mode: "scale";
   anchorWorld: Vec2;
+  initialBounds: BBox;
+  candidateBounds: BBox[];
   handleId: ResizeHandleId;
   handleStartWorld: Vec2;
 }
@@ -117,6 +128,7 @@ interface NodeEditDragBase extends BaseDragState {
 
 interface NodeAnchorDragState extends NodeEditDragBase {
   mode: "node-anchor";
+  anchorSnapCandidateBounds: BBox[];
 }
 
 interface NodeHandleDragState extends NodeEditDragBase {
@@ -166,6 +178,21 @@ interface SnapGuides {
 interface MoveGesture {
   dx: number;
   dy: number;
+  guides: SnapGuides;
+}
+
+interface TransformGesture {
+  matrix: Matrix;
+  guides: SnapGuides;
+}
+
+interface NodeAnchorGesture {
+  localDelta: Vec2;
+  guides: SnapGuides;
+}
+
+interface NodeEditGestureResult {
+  changed: boolean;
   guides: SnapGuides;
 }
 
@@ -442,6 +469,14 @@ const collectSnapCandidateBounds = (doc: Document, selection: readonly NodeId[])
   return bounds;
 };
 
+const pointBBox = (point: Vec2): BBox => fromRect(point.x, point.y, 0, 0);
+
+const transformSnapGuides = (guides: readonly Guide[]): TransformSnapGuide[] => [
+  ...guides,
+  { id: "grid-x", axis: "x", position: 0, grid: SNAP_GRID_SIZE },
+  { id: "grid-y", axis: "y", position: 0, grid: SNAP_GRID_SIZE },
+];
+
 const computeMoveGesture = (
   drag: MoveDragState,
   currentScreen: Vec2,
@@ -480,6 +515,182 @@ const computeMoveGesture = (
       alignmentGuidesX: snap.alignmentGuidesX,
       alignmentGuidesY: snap.alignmentGuidesY,
     },
+  };
+};
+
+type XTransformEdge = "minX" | "maxX";
+type YTransformEdge = "minY" | "maxY";
+
+const activeScaleXEdge = (handleId: ResizeHandleId): XTransformEdge | null => {
+  const direction = RESIZE_HANDLE_DIRECTIONS[handleId];
+  if (direction.x < 0) {
+    return "minX";
+  }
+  if (direction.x > 0) {
+    return "maxX";
+  }
+  return null;
+};
+
+const activeScaleYEdge = (handleId: ResizeHandleId): YTransformEdge | null => {
+  const direction = RESIZE_HANDLE_DIRECTIONS[handleId];
+  if (direction.y < 0) {
+    return "minY";
+  }
+  if (direction.y > 0) {
+    return "maxY";
+  }
+  return null;
+};
+
+const hasTransformSnapMatch = (edge: TransformSnapEdgeResult): boolean =>
+  edge.guide !== null || edge.alignmentGuides.length > 0;
+
+const mergeSnapAlignmentLines = (lines: readonly SnapAlignmentLine[]): SnapAlignmentLine[] => {
+  const merged: SnapAlignmentLine[] = [];
+  for (const line of lines) {
+    const existing = merged.find((candidate) => Math.abs(candidate.position - line.position) <= MATRIX_EPSILON);
+    if (existing === undefined) {
+      merged.push({ ...line });
+      continue;
+    }
+
+    existing.spanMin = Math.min(existing.spanMin, line.spanMin);
+    existing.spanMax = Math.max(existing.spanMax, line.spanMax);
+  }
+  return merged;
+};
+
+const transformSnapGuidesForActiveEdges = (
+  snap: TransformSnapResult,
+  xEdge: XTransformEdge | null,
+  yEdge: YTransformEdge | null,
+): SnapGuides => {
+  const alignmentGuidesX = xEdge === null ? [] : snap[xEdge].alignmentGuides;
+  const alignmentGuidesY = yEdge === null ? [] : snap[yEdge].alignmentGuides;
+  return {
+    guidesX: xEdge === null || snap[xEdge].guide === null ? [] : [snap[xEdge].guide],
+    guidesY: yEdge === null || snap[yEdge].guide === null ? [] : [snap[yEdge].guide],
+    alignmentGuidesX: mergeSnapAlignmentLines(alignmentGuidesX),
+    alignmentGuidesY: mergeSnapAlignmentLines(alignmentGuidesY),
+  };
+};
+
+const scaledPointerAxisForEdge = (
+  drag: ScaleDragState,
+  movedBounds: BBox,
+  edge: XTransformEdge | YTransformEdge,
+  correction: number,
+): number | null => {
+  const axis = edge === "minX" || edge === "maxX" ? "x" : "y";
+  const initialEdge = drag.initialBounds[edge];
+  const anchor = drag.anchorWorld[axis];
+  const pointerStart = drag.handleStartWorld[axis];
+  const edgeDenominator = initialEdge - anchor;
+  const pointerDenominator = pointerStart - anchor;
+  if (Math.abs(edgeDenominator) < SCALE_EPSILON || Math.abs(pointerDenominator) < SCALE_EPSILON) {
+    return null;
+  }
+
+  const scale = (movedBounds[edge] + correction - anchor) / edgeDenominator;
+  return anchor + scale * pointerDenominator;
+};
+
+const scaleFromEdgeCorrection = (
+  drag: ScaleDragState,
+  movedBounds: BBox,
+  edge: XTransformEdge | YTransformEdge,
+  correction: number,
+): number | null => {
+  const axis = edge === "minX" || edge === "maxX" ? "x" : "y";
+  const initialEdge = drag.initialBounds[edge];
+  const anchor = drag.anchorWorld[axis];
+  const denominator = initialEdge - anchor;
+  if (Math.abs(denominator) < SCALE_EPSILON) {
+    return null;
+  }
+
+  return (movedBounds[edge] + correction - anchor) / denominator;
+};
+
+const correctedScalePointer = (
+  drag: ScaleDragState,
+  currentWorld: Vec2,
+  movedBounds: BBox,
+  snap: TransformSnapResult,
+  constrained: boolean,
+): Vec2 => {
+  const xEdge = activeScaleXEdge(drag.handleId);
+  const yEdge = activeScaleYEdge(drag.handleId);
+
+  if (constrained) {
+    const candidates: Array<{ scale: number; correctionDistance: number }> = [];
+    if (xEdge !== null && hasTransformSnapMatch(snap[xEdge])) {
+      const scale = scaleFromEdgeCorrection(drag, movedBounds, xEdge, snap[xEdge].correction);
+      if (scale !== null) {
+        candidates.push({ scale, correctionDistance: Math.abs(snap[xEdge].correction) });
+      }
+    }
+    if (yEdge !== null && hasTransformSnapMatch(snap[yEdge])) {
+      const scale = scaleFromEdgeCorrection(drag, movedBounds, yEdge, snap[yEdge].correction);
+      if (scale !== null) {
+        candidates.push({ scale, correctionDistance: Math.abs(snap[yEdge].correction) });
+      }
+    }
+
+    const candidate = candidates.reduce<{ scale: number; correctionDistance: number } | null>(
+      (best, next) => (best === null || next.correctionDistance < best.correctionDistance ? next : best),
+      null,
+    );
+    return candidate === null
+      ? currentWorld
+      : {
+          x: drag.anchorWorld.x + candidate.scale * (drag.handleStartWorld.x - drag.anchorWorld.x),
+          y: drag.anchorWorld.y + candidate.scale * (drag.handleStartWorld.y - drag.anchorWorld.y),
+        };
+  }
+
+  let corrected = currentWorld;
+  if (xEdge !== null && snap[xEdge].correction !== 0) {
+    const x = scaledPointerAxisForEdge(drag, movedBounds, xEdge, snap[xEdge].correction);
+    corrected = { ...corrected, x: x ?? corrected.x + snap[xEdge].correction };
+  }
+  if (yEdge !== null && snap[yEdge].correction !== 0) {
+    const y = scaledPointerAxisForEdge(drag, movedBounds, yEdge, snap[yEdge].correction);
+    corrected = { ...corrected, y: y ?? corrected.y + snap[yEdge].correction };
+  }
+
+  return corrected;
+};
+
+const computeScaleGesture = (
+  drag: ScaleDragState,
+  currentWorld: Vec2,
+  viewport: EditorViewport,
+  constrained: boolean,
+  snappingDisabled: boolean,
+): TransformGesture => {
+  const rawMatrix = scaleGestureMatrix(drag, currentWorld, constrained);
+  if (snappingDisabled || isEmpty(drag.initialBounds)) {
+    return {
+      matrix: rawMatrix,
+      guides: emptySnapGuides(),
+    };
+  }
+
+  const movedBounds = transformBBox(drag.initialBounds, rawMatrix);
+  const snap = computeTransformSnap(
+    movedBounds,
+    drag.candidateBounds,
+    SNAP_THRESHOLD_SCREEN_PX / viewport.zoom,
+    transformSnapGuides(drag.originalDoc.guides),
+  );
+  const xEdge = activeScaleXEdge(drag.handleId);
+  const yEdge = activeScaleYEdge(drag.handleId);
+  const snappedWorld = correctedScalePointer(drag, currentWorld, movedBounds, snap, constrained);
+  return {
+    matrix: scaleGestureMatrix(drag, snappedWorld, constrained),
+    guides: transformSnapGuidesForActiveEdges(snap, xEdge, yEdge),
   };
 };
 
@@ -772,6 +983,35 @@ const getEditablePathNode = (
   return { id, node, worldTransform: nodeWorldTransform(doc, id) };
 };
 
+const collectAnchorSnapCandidateBounds = (
+  doc: Document,
+  draggedNodeId: NodeId,
+  draggedTarget: SelectedPathAnchor,
+): BBox[] => {
+  const bounds: BBox[] = [];
+  for (const node of Object.values(doc.nodes)) {
+    if (node.type !== "path" || node.locked || !node.visible) {
+      continue;
+    }
+
+    const worldTransform = nodeWorldTransform(doc, node.id);
+    for (const [subpathIndex, subpath] of node.subpaths.entries()) {
+      for (const [anchorIndex, anchor] of subpath.anchors.entries()) {
+        if (
+          node.id === draggedNodeId &&
+          subpathIndex === draggedTarget.subpathIndex &&
+          anchorIndex === draggedTarget.anchorIndex
+        ) {
+          continue;
+        }
+
+        bounds.push(pointBBox(apply(worldTransform, anchor.point)));
+      }
+    }
+  }
+  return bounds;
+};
+
 const isValidSelectedAnchor = (node: PathNode, anchor: SelectedPathAnchor | null): anchor is SelectedPathAnchor => {
   if (anchor === null) {
     return false;
@@ -835,6 +1075,71 @@ const screenDeltaToNodeLocal = (
   };
   const invertedWorld = invert(drag.nodeWorldTransform);
   return invertedWorld === null ? worldDelta : applyVector(invertedWorld, worldDelta);
+};
+
+const originalAnchorWorldPoint = (drag: NodeAnchorDragState): Vec2 | null => {
+  const originalNode = drag.originalDoc.nodes[drag.nodeId];
+  if (!originalNode || originalNode.type !== "path") {
+    return null;
+  }
+
+  const originalSubpath = originalNode.subpaths[drag.target.subpathIndex];
+  const originalAnchor = originalSubpath?.anchors[drag.target.anchorIndex];
+  return originalAnchor === undefined ? null : apply(drag.nodeWorldTransform, originalAnchor.point);
+};
+
+const worldDeltaToNodeLocal = (drag: NodeEditDragBase, worldDelta: Vec2): Vec2 => {
+  const invertedWorld = invert(drag.nodeWorldTransform);
+  return invertedWorld === null ? worldDelta : applyVector(invertedWorld, worldDelta);
+};
+
+const computeNodeAnchorGesture = (
+  drag: NodeAnchorDragState,
+  currentScreen: Vec2,
+  viewport: EditorViewport,
+  snappingDisabled: boolean,
+): NodeAnchorGesture | null => {
+  const anchorWorld = originalAnchorWorldPoint(drag);
+  if (anchorWorld === null) {
+    return null;
+  }
+
+  const rawWorldPoint = {
+    x: anchorWorld.x + (currentScreen.x - drag.startScreen.x) / viewport.zoom,
+    y: anchorWorld.y + (currentScreen.y - drag.startScreen.y) / viewport.zoom,
+  };
+  if (snappingDisabled) {
+    return {
+      localDelta: worldDeltaToNodeLocal(drag, subVec2(rawWorldPoint, anchorWorld)),
+      guides: emptySnapGuides(),
+    };
+  }
+
+  const moving = pointBBox(rawWorldPoint);
+  const snap = computeSnap(
+    moving,
+    drag.anchorSnapCandidateBounds,
+    SNAP_THRESHOLD_SCREEN_PX / viewport.zoom,
+    drag.originalDoc.guides,
+  );
+  const gridDx = snapToGrid(rawWorldPoint.x, SNAP_GRID_SIZE) - rawWorldPoint.x;
+  const gridDy = snapToGrid(rawWorldPoint.y, SNAP_GRID_SIZE) - rawWorldPoint.y;
+  const snapDx = snap.guidesX.length > 0 ? snap.dx : gridDx;
+  const snapDy = snap.guidesY.length > 0 ? snap.dy : gridDy;
+  const snappedWorldPoint = {
+    x: rawWorldPoint.x + snapDx,
+    y: rawWorldPoint.y + snapDy,
+  };
+
+  return {
+    localDelta: worldDeltaToNodeLocal(drag, subVec2(snappedWorldPoint, anchorWorld)),
+    guides: {
+      guidesX: snap.guidesX,
+      guidesY: snap.guidesY,
+      alignmentGuidesX: snap.alignmentGuidesX,
+      alignmentGuidesY: snap.alignmentGuidesY,
+    },
+  };
 };
 
 type NodeEditHit =
@@ -1044,10 +1349,11 @@ const applyTransformGesture = (
   drag: ScaleDragState | RotateDragState,
   currentWorld: Vec2,
   constrained: boolean,
+  gestureMatrixOverride: Matrix | null = null,
 ): boolean => {
-  const gestureMatrix = drag.mode === "scale"
+  const gestureMatrix = gestureMatrixOverride ?? (drag.mode === "scale"
     ? scaleGestureMatrix(drag, currentWorld, constrained)
-    : rotateGestureMatrix(drag, currentWorld, constrained);
+    : rotateGestureMatrix(drag, currentWorld, constrained));
   let changed = false;
 
   editorStore.setState(
@@ -1127,18 +1433,26 @@ const applyNodeEditGesture = (
   currentScreen: Vec2,
   viewport: EditorViewport,
   freeHandle: boolean,
-): boolean => {
+  snappingDisabled: boolean,
+): NodeEditGestureResult => {
   const originalNode = drag.originalDoc.nodes[drag.nodeId];
   if (!originalNode || originalNode.type !== "path") {
-    return false;
+    return { changed: false, guides: emptySnapGuides() };
   }
 
   const originalSubpath = originalNode.subpaths[drag.target.subpathIndex];
   if (originalSubpath === undefined) {
-    return false;
+    return { changed: false, guides: emptySnapGuides() };
   }
 
-  const localDelta = screenDeltaToNodeLocal(drag, currentScreen, viewport);
+  const anchorGesture = drag.mode === "node-anchor"
+    ? computeNodeAnchorGesture(drag, currentScreen, viewport, snappingDisabled)
+    : null;
+  if (drag.mode === "node-anchor" && anchorGesture === null) {
+    return { changed: false, guides: emptySnapGuides() };
+  }
+
+  const localDelta = anchorGesture?.localDelta ?? screenDeltaToNodeLocal(drag, currentScreen, viewport);
   const nextSubpath =
     drag.mode === "node-anchor"
       ? moveAnchor(originalSubpath, drag.target.anchorIndex, localDelta)
@@ -1169,7 +1483,7 @@ const applyNodeEditGesture = (
     }),
   );
 
-  return changed;
+  return { changed, guides: anchorGesture?.guides ?? emptySnapGuides() };
 };
 
 const nodeEditChangedFromOriginal = (drag: NodeAnchorDragState | NodeHandleDragState): boolean => {
@@ -2065,6 +2379,7 @@ export default function CanvasView() {
             target: editHit.target,
             originalDoc: structuredClone(state.doc) as Document,
             nodeWorldTransform: editable.worldTransform,
+            anchorSnapCandidateBounds: collectAnchorSnapCandidateBounds(state.doc, editable.id, editHit.target),
           };
           scheduleInteractiveDraw();
           return;
@@ -2126,6 +2441,8 @@ export default function CanvasView() {
           originalTransforms,
           selectedIds,
           anchorWorld: getResizeHandlePoint(geometry.bounds, anchorId),
+          initialBounds: geometry.bounds,
+          candidateBounds: collectSnapCandidateBounds(state.doc, state.selection),
           handleId: handleHit.handleId,
           // Use the actual pointer-down world position as the scale reference so
           // the gesture starts at scale=1 wherever the user grabbed (within the
@@ -2285,7 +2602,30 @@ export default function CanvasView() {
     }
 
     if (drag.mode === "node-anchor" || drag.mode === "node-handle") {
-      const changed = applyNodeEditGesture(drag, point, state.viewport, event.altKey);
+      const gesture = applyNodeEditGesture(drag, point, state.viewport, event.altKey, event.ctrlKey || event.metaKey);
+      snapGuidesRef.current = gesture.guides;
+      dragRef.current = {
+        ...drag,
+        lastScreen: point,
+        moved,
+        changed: drag.changed || gesture.changed,
+      };
+      if (!gesture.changed) {
+        scheduleInteractiveDraw();
+      }
+      return;
+    }
+
+    if (drag.mode === "scale" || drag.mode === "rotate") {
+      const currentWorld = screenToWorld(point, state.viewport);
+      const gesture = drag.mode === "scale"
+        ? computeScaleGesture(drag, currentWorld, state.viewport, event.shiftKey, event.ctrlKey || event.metaKey)
+        : {
+            matrix: rotateGestureMatrix(drag, currentWorld, event.shiftKey),
+            guides: emptySnapGuides(),
+          };
+      const changed = applyTransformGesture(drag, currentWorld, event.shiftKey, gesture.matrix);
+      snapGuidesRef.current = gesture.guides;
       dragRef.current = {
         ...drag,
         lastScreen: point,
@@ -2295,18 +2635,6 @@ export default function CanvasView() {
       if (!changed) {
         scheduleInteractiveDraw();
       }
-      return;
-    }
-
-    if (drag.mode === "scale" || drag.mode === "rotate") {
-      const currentWorld = screenToWorld(point, state.viewport);
-      const changed = applyTransformGesture(drag, currentWorld, event.shiftKey);
-      dragRef.current = {
-        ...drag,
-        lastScreen: point,
-        moved,
-        changed: drag.changed || changed,
-      };
       return;
     }
 
@@ -2413,12 +2741,18 @@ export default function CanvasView() {
         };
       });
     } else if (drag.mode === "node-anchor" || drag.mode === "node-handle") {
-      applyNodeEditGesture(drag, point, state.viewport, event.altKey);
+      applyNodeEditGesture(drag, point, state.viewport, event.altKey, event.ctrlKey || event.metaKey);
       if (nodeEditChangedFromOriginal(drag)) {
         commitNodeEditGesture(drag);
       }
     } else if (drag.mode === "scale" || drag.mode === "rotate") {
-      const changed = applyTransformGesture(drag, currentWorld, event.shiftKey);
+      const gesture = drag.mode === "scale"
+        ? computeScaleGesture(drag, currentWorld, state.viewport, event.shiftKey, event.ctrlKey || event.metaKey)
+        : {
+            matrix: rotateGestureMatrix(drag, currentWorld, event.shiftKey),
+            guides: emptySnapGuides(),
+          };
+      const changed = applyTransformGesture(drag, currentWorld, event.shiftKey, gesture.matrix);
       if (drag.changed || changed) {
         commitTransformGesture(drag);
       }
