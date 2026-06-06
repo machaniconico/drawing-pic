@@ -14,14 +14,19 @@ import {
   cloneSubtree,
   distributeNodes as computeDistributeNodes,
   findNodeParent,
+  flipNodes as computeFlipNodes,
   groupSelection as computeGroupSelection,
+  rotateNodes90 as computeRotateNodes90,
   sendBackward as computeSendBackward,
   sendToBack as computeSendToBack,
   topLevelNodeIds,
   ungroupSelection as computeUngroupSelection,
   type AlignEdge,
   type DistributeAxis,
+  type FlipAxis,
   type GroupSelectionResult,
+  type MatrixPatchMap,
+  type Rotate90Direction,
   type TransformPatchMap,
   type UngroupSelectionResult,
   type ZOrderPatch,
@@ -90,6 +95,8 @@ export interface EditorActions {
   moveSelection: (dx: number, dy: number) => void;
   alignNodes: (edge: AlignEdge) => void;
   distributeNodes: (axis: DistributeAxis) => void;
+  flipSelection: (axis: FlipAxis) => void;
+  rotateSelection90: (direction: Rotate90Direction) => void;
   bringToFront: () => void;
   sendToBack: () => void;
   bringForward: () => void;
@@ -208,6 +215,22 @@ const applyTransformPatches = (doc: Document, patches: TransformPatchMap): boole
       e: patch.e,
       f: patch.f,
     };
+    changed = true;
+  }
+
+  return changed;
+};
+
+const applyMatrixPatches = (doc: Document, patches: MatrixPatchMap): boolean => {
+  let changed = false;
+
+  for (const [id, transform] of Object.entries(patches)) {
+    const node = doc.nodes[id];
+    if (!node) {
+      continue;
+    }
+
+    node.transform = transform;
     changed = true;
   }
 
@@ -454,6 +477,26 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     withDocHistory(set, (state) =>
       applyTransformPatches(state.doc, computeDistributeNodes(state.doc, state.selection, axis)),
     );
+  },
+
+  flipSelection: (axis) => {
+    withDocHistory(set, (state) => {
+      if (state.selection.length === 0) {
+        return false;
+      }
+
+      return applyMatrixPatches(state.doc, computeFlipNodes(state.doc, state.selection, axis));
+    });
+  },
+
+  rotateSelection90: (direction) => {
+    withDocHistory(set, (state) => {
+      if (state.selection.length === 0) {
+        return false;
+      }
+
+      return applyMatrixPatches(state.doc, computeRotateNodes90(state.doc, state.selection, direction));
+    });
   },
 
   bringToFront: () => {

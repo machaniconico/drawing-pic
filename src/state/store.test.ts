@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { Matrix } from "../core/geometry/matrix";
 import { createRect } from "../core/model/factory";
 import type { Document, NodeId } from "../core/model/types";
 import { canRedo, canUndo, createHistory } from "./history";
+import { flipNodes, rotateNodes90 } from "./operations";
 import { createEditorStateForTest, editorStore, type SnapTarget } from "./store";
 import { getDocBounds, getSelectedNodes, isSelected } from "./selectors";
 
@@ -10,6 +12,16 @@ const resetStore = (): void => {
 };
 
 const firstLayerId = (doc: Document): NodeId => doc.layerOrder[0]!;
+
+const expectMatrixCloseTo = (actual: Matrix | undefined, expected: Matrix): void => {
+  expect(actual).toBeDefined();
+  expect(actual?.a).toBeCloseTo(expected.a, 9);
+  expect(actual?.b).toBeCloseTo(expected.b, 9);
+  expect(actual?.c).toBeCloseTo(expected.c, 9);
+  expect(actual?.d).toBeCloseTo(expected.d, 9);
+  expect(actual?.e).toBeCloseTo(expected.e, 9);
+  expect(actual?.f).toBeCloseTo(expected.f, 9);
+};
 
 describe("editorStore", () => {
   beforeEach(() => {
@@ -148,6 +160,68 @@ describe("editorStore", () => {
 
     editorStore.getState().undo();
     expect(editorStore.getState().doc.nodes[rect.id]?.name).toBe("Rectangle");
+  });
+
+  it("flips selected node transforms as one undoable history step", () => {
+    const left = createRect(0, 0, 10, 20);
+    const right = createRect(40, 10, 20, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+    editorStore.getState().setSelection([left.id, right.id]);
+
+    const beforeLeft = { ...editorStore.getState().doc.nodes[left.id]!.transform };
+    const beforeRight = { ...editorStore.getState().doc.nodes[right.id]!.transform };
+    const expected = flipNodes(editorStore.getState().doc, editorStore.getState().selection, "horizontal");
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().flipSelection("horizontal");
+
+    expectMatrixCloseTo(editorStore.getState().doc.nodes[left.id]?.transform, expected[left.id]!);
+    expectMatrixCloseTo(editorStore.getState().doc.nodes[right.id]?.transform, expected[right.id]!);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc.nodes[left.id]?.transform).toEqual(beforeLeft);
+    expect(editorStore.getState().doc.nodes[right.id]?.transform).toEqual(beforeRight);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("rotates selected node transforms 90 degrees as one undoable history step", () => {
+    const rect = createRect(10, 20, 30, 40);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+
+    const beforeTransform = { ...editorStore.getState().doc.nodes[rect.id]!.transform };
+    const expected = rotateNodes90(editorStore.getState().doc, editorStore.getState().selection, "cw");
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().rotateSelection90("cw");
+
+    expectMatrixCloseTo(editorStore.getState().doc.nodes[rect.id]?.transform, expected[rect.id]!);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc.nodes[rect.id]?.transform).toEqual(beforeTransform);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("does not push history when flipping or rotating an empty selection", () => {
+    const rect = createRect(3, 4, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().clearSelection();
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+    const beforeTransform = { ...editorStore.getState().doc.nodes[rect.id]!.transform };
+
+    editorStore.getState().flipSelection("vertical");
+    editorStore.getState().rotateSelection90("ccw");
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.nodes[rect.id]?.transform).toEqual(beforeTransform);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
   });
 
   it("removes nodes from parents and clears removed selections", () => {
