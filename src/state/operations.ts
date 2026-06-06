@@ -1,10 +1,12 @@
 import { center, isEmpty, unionAll, type BBox } from "../core/geometry/bbox";
 import { apply, compose, IDENTITY, invert, type Matrix } from "../core/geometry/matrix";
 import { type BooleanOp, flattenNodeToPolygons, polygonBoolean } from "../core/geometry/polygonBoolean";
+import type { Vec2 } from "../core/geometry/vector";
 import { createGroup, newId as createNodeId } from "../core/model/factory";
 import { worldBounds } from "../core/model/bounds";
-import type { Document, GroupNode, NodeId, PathNode, SceneNode, SubPath } from "../core/model/types";
-import { isContainer } from "../core/model/types";
+import { hitTest, type HitTestOptions } from "../core/model/hittest";
+import type { Document, GroupNode, NodeId, Paint, PathNode, SceneNode, Stroke, SubPath } from "../core/model/types";
+import { hasStyle, isContainer } from "../core/model/types";
 
 export type AlignEdge = "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom";
 export type DistributeAxis = "horizontal" | "vertical";
@@ -51,6 +53,11 @@ export interface BooleanSelectionResult {
   removeIds: NodeId[];
 }
 
+export interface SampledStyle {
+  fill: Paint;
+  stroke: Stroke | null;
+}
+
 const uniqueIds = (ids: readonly NodeId[]): NodeId[] => [...new Set(ids)];
 
 const parentEntries = (doc: Document): Array<[NodeId | null, readonly NodeId[]]> => [
@@ -85,6 +92,27 @@ const hasSelectedAncestor = (doc: Document, id: NodeId, selected: ReadonlySet<No
 export const topLevelNodeIds = (doc: Document, ids: readonly NodeId[]): NodeId[] => {
   const selected = new Set(uniqueIds(ids).filter((id) => id in doc.nodes));
   return [...selected].filter((id) => !hasSelectedAncestor(doc, id, selected));
+};
+
+export const sampleStyleAt = (
+  doc: Document,
+  worldPoint: Vec2,
+  opts?: HitTestOptions,
+): SampledStyle | null => {
+  const hitId = hitTest(doc, worldPoint, opts);
+  if (!hitId) {
+    return null;
+  }
+
+  const node = doc.nodes[hitId];
+  if (!node || !hasStyle(node)) {
+    return null;
+  }
+
+  return {
+    fill: node.fill,
+    stroke: node.stroke,
+  };
 };
 
 const nodeWorldBounds = (doc: Document, id: NodeId): BBox => {

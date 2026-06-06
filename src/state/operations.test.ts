@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { canUndo } from "./history";
-import { createDocument, createGroup, createRect } from "../core/model/factory";
+import { createDocument, createGroup, createRect, defaultStroke, rgba, solid } from "../core/model/factory";
 import { worldBounds } from "../core/model/bounds";
 import type { Document, NodeId, SceneNode } from "../core/model/types";
 import { isContainer } from "../core/model/types";
@@ -11,6 +11,7 @@ import {
   cloneSubtree,
   distributeNodes,
   groupSelection,
+  sampleStyleAt,
   sendBackward,
   ungroupSelection,
 } from "./operations";
@@ -50,6 +51,41 @@ const resetStore = (): void => {
 };
 
 describe("selection operations", () => {
+  it("samples the hit node fill and stroke at a world point", () => {
+    const doc = createDocument();
+    const rect = createRect(10, 20, 30, 40);
+    rect.fill = solid(rgba(255, 0, 0));
+    rect.stroke = defaultStroke(rgba(0, 0, 255), 3);
+    addToFirstLayer(doc, [rect]);
+    const beforeSample = structuredClone(doc) as Document;
+
+    const sampled = sampleStyleAt(doc, { x: 15, y: 25 });
+
+    expect(sampled).toEqual({ fill: rect.fill, stroke: rect.stroke });
+    expect(doc).toEqual(beforeSample);
+  });
+
+  it("returns null when sampling empty space", () => {
+    const doc = createDocument();
+    const rect = createRect(10, 20, 30, 40);
+    addToFirstLayer(doc, [rect]);
+
+    expect(sampleStyleAt(doc, { x: 100, y: 100 })).toBeNull();
+  });
+
+  it("samples the top-most hit node style when shapes overlap", () => {
+    const doc = createDocument();
+    const back = createRect(0, 0, 20, 20);
+    const front = createRect(5, 5, 20, 20);
+    back.fill = solid(rgba(255, 0, 0));
+    front.fill = solid(rgba(0, 255, 0));
+    addToFirstLayer(doc, [back, front]);
+
+    const sampled = sampleStyleAt(doc, { x: 10, y: 10 });
+
+    expect(sampled?.fill).toEqual(front.fill);
+  });
+
   it("aligns nodes to the left edge of the selection bounds", () => {
     const doc = createDocument();
     const left = createRect(10, 20, 10, 10);
