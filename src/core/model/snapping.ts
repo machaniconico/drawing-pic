@@ -16,6 +16,27 @@ export interface SnapAlignmentLine {
   spanMax: number;
 }
 
+export interface TransformSnapEdgeResult {
+  correction: number;
+  guide: number | null;
+  alignmentGuides: SnapAlignmentLine[];
+}
+
+export interface TransformSnapResult {
+  minX: TransformSnapEdgeResult;
+  maxX: TransformSnapEdgeResult;
+  minY: TransformSnapEdgeResult;
+  maxY: TransformSnapEdgeResult;
+  alignmentGuidesX: SnapAlignmentLine[];
+  alignmentGuidesY: SnapAlignmentLine[];
+}
+
+export interface GridGuide extends Guide {
+  readonly grid: number;
+}
+
+export type TransformSnapGuide = Guide | GridGuide;
+
 interface AxisSnap {
   delta: number;
   guide: number | null;
@@ -25,6 +46,12 @@ interface AxisSnap {
 interface AxisAnchor {
   position: number;
   box: BBox | null;
+}
+
+interface TransformAxisSnap {
+  correction: number;
+  guide: number | null;
+  match: AxisAnchor | null;
 }
 
 const midpoint = (a: number, b: number): number => (a + b) / 2;
@@ -113,7 +140,15 @@ const objectXAnchors = (box: BBox): AxisAnchor[] =>
 const objectYAnchors = (box: BBox): AxisAnchor[] =>
   yAnchors(box).map((position) => ({ position, box }));
 
-const guideAnchor = (position: number): AxisAnchor => ({ position, box: null });
+const guideAnchor = (position: number): AxisAnchor => ({
+  position,
+  box: null,
+});
+
+const gridAnchor = (position: number): AxisAnchor => ({
+  position,
+  box: null,
+});
 
 const addAlignmentLine = (
   lines: SnapAlignmentLine[],
@@ -171,6 +206,183 @@ const alignmentLinesY = (
   return lines;
 };
 
+const transformEdgeResult = (
+  correction: number,
+  guide: number | null,
+  alignmentGuides: SnapAlignmentLine[],
+): TransformSnapEdgeResult => ({
+  correction,
+  guide,
+  alignmentGuides,
+});
+
+const emptyTransformEdgeResult = (): TransformSnapEdgeResult =>
+  transformEdgeResult(0, null, []);
+
+const isGridGuide = (guide: TransformSnapGuide): guide is GridGuide => "grid" in guide;
+
+const transformGuideAnchors = (
+  guides: readonly TransformSnapGuide[],
+  axis: Guide["axis"],
+): AxisAnchor[] =>
+  guides
+    .filter((guide) => guide.axis === axis && !isGridGuide(guide))
+    .map((guide) => guideAnchor(guide.position));
+
+const gridGuides = (
+  guides: readonly TransformSnapGuide[],
+  axis: Guide["axis"],
+): GridGuide[] =>
+  guides.filter(
+    (guide): guide is GridGuide =>
+      guide.axis === axis && isGridGuide(guide) && Math.abs(guide.grid) > SNAP_EPSILON,
+  );
+
+const transformLineX = (match: AxisAnchor, moved: BBox): SnapAlignmentLine => ({
+  position: match.position,
+  spanMin: match.box === null ? moved.minY : Math.min(moved.minY, match.box.minY),
+  spanMax: match.box === null ? moved.maxY : Math.max(moved.maxY, match.box.maxY),
+});
+
+const transformLineY = (match: AxisAnchor, moved: BBox): SnapAlignmentLine => ({
+  position: match.position,
+  spanMin: match.box === null ? moved.minX : Math.min(moved.minX, match.box.minX),
+  spanMax: match.box === null ? moved.maxX : Math.max(moved.maxX, match.box.maxX),
+});
+
+const mergeAlignmentLines = (
+  edgeResults: readonly TransformSnapEdgeResult[],
+): SnapAlignmentLine[] => {
+  const lines: SnapAlignmentLine[] = [];
+  for (const edgeResult of edgeResults) {
+    for (const line of edgeResult.alignmentGuides) {
+      addAlignmentLine(lines, line.position, line.spanMin, line.spanMax);
+    }
+  }
+  return lines;
+};
+
+const transformedBBoxForEdge = (
+  moving: BBox,
+  edge: "minX" | "maxX" | "minY" | "maxY",
+  correction: number,
+): BBox => ({
+  minX: edge === "minX" ? moving.minX + correction : moving.minX,
+  maxX: edge === "maxX" ? moving.maxX + correction : moving.maxX,
+  minY: edge === "minY" ? moving.minY + correction : moving.minY,
+  maxY: edge === "maxY" ? moving.maxY + correction : moving.maxY,
+});
+
+const axisValuesForEdge = (
+  moving: BBox,
+  edge: "minX" | "maxX" | "minY" | "maxY",
+): readonly number[] => {
+  switch (edge) {
+    case "minX":
+      return [moving.minX, midpoint(moving.minX, moving.maxX)];
+    case "maxX":
+      return [moving.maxX, midpoint(moving.minX, moving.maxX)];
+    case "minY":
+      return [moving.minY, midpoint(moving.minY, moving.maxY)];
+    case "maxY":
+      return [moving.maxY, midpoint(moving.minY, moving.maxY)];
+  }
+};
+
+const correctionForTransformAnchor = (
+  target: number,
+  anchor: number,
+  isCenterAnchor: boolean,
+): number => (isCenterAnchor ? 2 * (target - anchor) : target - anchor);
+
+const nearestGridAnchor = (value: number, guide: GridGuide): AxisAnchor => {
+  const grid = Math.abs(guide.grid);
+  return gridAnchor(guide.position + snapToGrid(value - guide.position, grid));
+};
+
+const computeTransformAxisSnap = (
+  movingAnchors: readonly number[],
+  candidateAnchors: readonly AxisAnchor[],
+  threshold: number,
+  grids: readonly GridGuide[],
+): TransformAxisSnap => {
+  if (threshold < 0) {
+    return { correction: 0, guide: null, match: null };
+  }
+
+  let bestDistance = Infinity;
+  let bestCorrection = 0;
+  let bestMatch: AxisAnchor | null = null;
+
+  for (let movingIndex = 0; movingIndex < movingAnchors.length; movingIndex += 1) {
+    const movingAnchor = movingAnchors[movingIndex];
+    const isCenterAnchor = movingIndex === 1;
+    for (const candidateAnchor of candidateAnchors) {
+      const distance = Math.abs(candidateAnchor.position - movingAnchor);
+      if (distance <= threshold && distance < bestDistance) {
+        bestDistance = distance;
+        bestCorrection = correctionForTransformAnchor(
+          candidateAnchor.position,
+          movingAnchor,
+          isCenterAnchor,
+        );
+        bestMatch = candidateAnchor;
+      }
+    }
+  }
+
+  if (bestMatch !== null) {
+    return { correction: bestCorrection, guide: bestMatch.position, match: bestMatch };
+  }
+
+  for (let movingIndex = 0; movingIndex < movingAnchors.length; movingIndex += 1) {
+    const movingAnchor = movingAnchors[movingIndex];
+    const isCenterAnchor = movingIndex === 1;
+    for (const guide of grids) {
+      const candidateAnchor = nearestGridAnchor(movingAnchor, guide);
+      const distance = Math.abs(candidateAnchor.position - movingAnchor);
+      if (distance <= threshold && distance < bestDistance) {
+        bestDistance = distance;
+        bestCorrection = correctionForTransformAnchor(
+          candidateAnchor.position,
+          movingAnchor,
+          isCenterAnchor,
+        );
+        bestMatch = candidateAnchor;
+      }
+    }
+  }
+
+  return bestMatch === null
+    ? { correction: 0, guide: null, match: null }
+    : { correction: bestCorrection, guide: bestMatch.position, match: bestMatch };
+};
+
+const computeTransformEdgeSnap = (
+  moving: BBox,
+  edge: "minX" | "maxX" | "minY" | "maxY",
+  candidateAnchors: readonly AxisAnchor[],
+  threshold: number,
+  grids: readonly GridGuide[],
+): TransformSnapEdgeResult => {
+  const snap = computeTransformAxisSnap(
+    axisValuesForEdge(moving, edge),
+    candidateAnchors,
+    threshold,
+    grids,
+  );
+  if (snap.match === null) {
+    return emptyTransformEdgeResult();
+  }
+
+  const moved = transformedBBoxForEdge(moving, edge, snap.correction);
+  const alignmentLine =
+    edge === "minX" || edge === "maxX"
+      ? transformLineX(snap.match, moved)
+      : transformLineY(snap.match, moved);
+  return transformEdgeResult(snap.correction, snap.guide, [alignmentLine]);
+};
+
 export const computeSnap = (
   moving: BBox,
   candidates: readonly BBox[],
@@ -205,4 +417,36 @@ export const snapToGrid = (value: number, grid: number): number => {
   }
 
   return Math.round(value / grid) * grid;
+};
+
+export const computeTransformSnap = (
+  moving: BBox,
+  candidates: readonly BBox[],
+  threshold: number,
+  guides: readonly TransformSnapGuide[] = [],
+): TransformSnapResult => {
+  const candidateXAnchors = [
+    ...candidates.flatMap((candidate) => objectXAnchors(candidate)),
+    ...transformGuideAnchors(guides, "x"),
+  ];
+  const candidateYAnchors = [
+    ...candidates.flatMap((candidate) => objectYAnchors(candidate)),
+    ...transformGuideAnchors(guides, "y"),
+  ];
+  const xGrids = gridGuides(guides, "x");
+  const yGrids = gridGuides(guides, "y");
+
+  const minX = computeTransformEdgeSnap(moving, "minX", candidateXAnchors, threshold, xGrids);
+  const maxX = computeTransformEdgeSnap(moving, "maxX", candidateXAnchors, threshold, xGrids);
+  const minY = computeTransformEdgeSnap(moving, "minY", candidateYAnchors, threshold, yGrids);
+  const maxY = computeTransformEdgeSnap(moving, "maxY", candidateYAnchors, threshold, yGrids);
+
+  return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+    alignmentGuidesX: mergeAlignmentLines([minX, maxX]),
+    alignmentGuidesY: mergeAlignmentLines([minY, maxY]),
+  };
 };

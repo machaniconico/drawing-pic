@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fromRect } from "../geometry/bbox";
-import { computeSnap, snapToGrid } from "./snapping";
+import { computeSnap, computeTransformSnap, snapToGrid } from "./snapping";
 
 describe("model snapping", () => {
   it("snaps a moving left edge to a candidate left edge", () => {
@@ -124,6 +124,123 @@ describe("model snapping", () => {
         { position: 5, spanMin: 0, spanMax: 30 },
         { position: 10, spanMin: 0, spanMax: 30 },
       ],
+      alignmentGuidesY: [],
+    });
+  });
+
+  it("computes independent transform edge corrections for object edge snaps", () => {
+    const result = computeTransformSnap(fromRect(8, 50, 10, 10), [fromRect(10, 0, 20, 20)], 3);
+
+    expect(result.minX).toEqual({
+      correction: 2,
+      guide: 10,
+      alignmentGuides: [{ position: 10, spanMin: 0, spanMax: 60 }],
+    });
+    expect(result.maxX).toEqual({
+      correction: 2,
+      guide: 20,
+      alignmentGuides: [{ position: 20, spanMin: 0, spanMax: 60 }],
+    });
+    expect(result.minY.correction).toBe(0);
+    expect(result.maxY.correction).toBe(0);
+    expect(result.alignmentGuidesX).toEqual([
+      { position: 10, spanMin: 0, spanMax: 60 },
+      { position: 20, spanMin: 0, spanMax: 60 },
+    ]);
+    expect(result.alignmentGuidesY).toEqual([]);
+  });
+
+  it("computes doubled transform corrections when snapping centers with the opposite edge fixed", () => {
+    const result = computeTransformSnap(
+      fromRect(0, 0, 10, 10),
+      [fromRect(-93, 40, 200, 20)],
+      2.5,
+    );
+
+    expect(result.minX).toEqual({
+      correction: 4,
+      guide: 7,
+      alignmentGuides: [{ position: 7, spanMin: 0, spanMax: 60 }],
+    });
+    expect(result.maxX).toEqual({
+      correction: 4,
+      guide: 7,
+      alignmentGuides: [{ position: 7, spanMin: 0, spanMax: 60 }],
+    });
+    expect(result.alignmentGuidesX).toEqual([{ position: 7, spanMin: 0, spanMax: 60 }]);
+  });
+
+  it("snaps transform edges and centers to ruler guides", () => {
+    const result = computeTransformSnap(
+      fromRect(10, 58, 10, 20),
+      [],
+      3,
+      [{ id: "guide-y", axis: "y", position: 60 }],
+    );
+
+    expect(result.minY).toEqual({
+      correction: 2,
+      guide: 60,
+      alignmentGuides: [{ position: 60, spanMin: 10, spanMax: 20 }],
+    });
+    expect(result.maxY).toEqual({
+      correction: 0,
+      guide: null,
+      alignmentGuides: [],
+    });
+    expect(result.alignmentGuidesY).toEqual([{ position: 60, spanMin: 10, spanMax: 20 }]);
+  });
+
+  it("falls back to per-axis grid lines when no object or ruler guide snap matches", () => {
+    const result = computeTransformSnap(
+      fromRect(1, 12, 20, 19),
+      [],
+      2.1,
+      [
+        { id: "grid-x", axis: "x", position: 0, grid: 10 },
+        { id: "grid-y", axis: "y", position: 0, grid: 10 },
+      ],
+    );
+
+    expect(result.minX).toEqual({
+      correction: -1,
+      guide: 0,
+      alignmentGuides: [{ position: 0, spanMin: 12, spanMax: 31 }],
+    });
+    expect(result.maxX).toEqual({
+      correction: -1,
+      guide: 20,
+      alignmentGuides: [{ position: 20, spanMin: 12, spanMax: 31 }],
+    });
+    expect(result.minY).toEqual({
+      correction: -3,
+      guide: 20,
+      alignmentGuides: [{ position: 20, spanMin: 1, spanMax: 21 }],
+    });
+    expect(result.maxY).toEqual({
+      correction: -1,
+      guide: 30,
+      alignmentGuides: [{ position: 30, spanMin: 1, spanMax: 21 }],
+    });
+  });
+
+  it("returns zero transform corrections and no alignment lines when nothing is within tolerance", () => {
+    const result = computeTransformSnap(
+      fromRect(100, 100, 10, 10),
+      [fromRect(0, 0, 10, 10)],
+      2,
+      [
+        { id: "guide-x", axis: "x", position: 40 },
+        { id: "grid-y", axis: "y", position: 13, grid: 25 },
+      ],
+    );
+
+    expect(result).toEqual({
+      minX: { correction: 0, guide: null, alignmentGuides: [] },
+      maxX: { correction: 0, guide: null, alignmentGuides: [] },
+      minY: { correction: 0, guide: null, alignmentGuides: [] },
+      maxY: { correction: 0, guide: null, alignmentGuides: [] },
+      alignmentGuidesX: [],
       alignmentGuidesY: [],
     });
   });
