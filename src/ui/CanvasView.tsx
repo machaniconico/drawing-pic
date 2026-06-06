@@ -40,6 +40,7 @@ import { renderDocument } from "../render/canvasRenderer";
 import { nodesInRect } from "../state/selectors";
 import { pushHistory } from "../state/history";
 import { editorStore, useEditorStore, type EditorStore, type EditorViewport } from "../state/store";
+import GuidePrefs from "./GuidePrefs";
 import { Rulers } from "./Rulers";
 import "./CanvasView.css";
 
@@ -218,6 +219,7 @@ const NODE_HANDLE_HIT_RADIUS = 8;
 const NODE_SEGMENT_HIT_TOLERANCE = 6;
 const RULER_SIZE = 24;
 const GUIDE_HIT_SCREEN_PX = 5;
+const DEFAULT_GUIDE_COLOR = "#20d9ff";
 
 const RESIZE_HANDLE_DIRECTIONS: Record<ResizeHandleId, { x: -1 | 0 | 1; y: -1 | 0 | 1 }> = {
   nw: { x: -1, y: -1 },
@@ -471,8 +473,11 @@ const collectSnapCandidateBounds = (doc: Document, selection: readonly NodeId[])
 
 const pointBBox = (point: Vec2): BBox => fromRect(point.x, point.y, 0, 0);
 
+const visibleGuides = (guides: readonly Guide[]): Guide[] =>
+  guides.filter((guide) => guide.hidden !== true);
+
 const transformSnapGuides = (guides: readonly Guide[]): TransformSnapGuide[] => [
-  ...guides,
+  ...visibleGuides(guides),
   { id: "grid-x", axis: "x", position: 0, grid: SNAP_GRID_SIZE },
   { id: "grid-y", axis: "y", position: 0, grid: SNAP_GRID_SIZE },
 ];
@@ -499,7 +504,7 @@ const computeMoveGesture = (
     movedBounds,
     drag.candidateBounds,
     SNAP_THRESHOLD_SCREEN_PX / viewport.zoom,
-    drag.originalDoc.guides,
+    visibleGuides(drag.originalDoc.guides),
   );
   const gridDx = snapToGrid(movedBounds.minX, SNAP_GRID_SIZE) - movedBounds.minX;
   const gridDy = snapToGrid(movedBounds.minY, SNAP_GRID_SIZE) - movedBounds.minY;
@@ -735,6 +740,10 @@ const hitGuide = (
   let nearest: GuideHit | null = null;
 
   for (const guide of doc.guides) {
+    if (guide.hidden === true) {
+      continue;
+    }
+
     const coordinate = guideScreenCoordinate(guide, viewport);
     const distanceToGuide = guide.axis === "x"
       ? Math.abs(point.x - coordinate)
@@ -759,7 +768,7 @@ const isGuideDroppedOnRuler = (axis: Guide["axis"], point: Vec2): boolean =>
 const moveGuideForGesture = (drag: GuideDragState, position: number): boolean => {
   const state = editorStore.getState();
   const current = state.doc.guides.find((guide) => guide.id === drag.guideId);
-  if (current === undefined || current.position === position) {
+  if (current === undefined || current.locked === true || current.position === position) {
     editorStore.setState({ history: drag.originalHistory });
     return false;
   }
@@ -771,7 +780,8 @@ const moveGuideForGesture = (drag: GuideDragState, position: number): boolean =>
 
 const removeGuideForGesture = (drag: GuideDragState): boolean => {
   const state = editorStore.getState();
-  if (!state.doc.guides.some((guide) => guide.id === drag.guideId)) {
+  const current = state.doc.guides.find((guide) => guide.id === drag.guideId);
+  if (current === undefined || current.locked === true) {
     editorStore.setState({ history: drag.originalHistory });
     return false;
   }
@@ -869,13 +879,17 @@ const drawDocumentGuides = (
 
   ctx.save();
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.strokeStyle = "#20d9ff";
-  ctx.globalAlpha = 0.9;
   ctx.lineWidth = 1;
-  ctx.setLineDash([]);
 
   for (const guide of guides) {
+    if (guide.hidden === true) {
+      continue;
+    }
+
     const coordinate = guideScreenCoordinate(guide, viewport);
+    ctx.strokeStyle = guide.color ?? DEFAULT_GUIDE_COLOR;
+    ctx.globalAlpha = guide.locked === true ? 0.42 : 0.9;
+    ctx.setLineDash(guide.locked === true ? [4, 4] : []);
     ctx.beginPath();
     if (guide.axis === "x") {
       ctx.moveTo(coordinate + 0.5, 0);
@@ -1120,7 +1134,7 @@ const computeNodeAnchorGesture = (
     moving,
     drag.anchorSnapCandidateBounds,
     SNAP_THRESHOLD_SCREEN_PX / viewport.zoom,
-    drag.originalDoc.guides,
+    visibleGuides(drag.originalDoc.guides),
   );
   const gridDx = snapToGrid(rawWorldPoint.x, SNAP_GRID_SIZE) - rawWorldPoint.x;
   const gridDy = snapToGrid(rawWorldPoint.y, SNAP_GRID_SIZE) - rawWorldPoint.y;
@@ -1940,12 +1954,19 @@ export default function CanvasView() {
   const [selectedPathAnchor, setSelectedPathAnchorState] = useState<SelectedPathAnchor | null>(null);
   const selectedPathAnchorRef = useRef<SelectedPathAnchor | null>(selectedPathAnchor);
   const [inlineTextEdit, setInlineTextEditState] = useState<InlineTextEdit | null>(null);
+  const [activeGuideId, setActiveGuideId] = useState<NodeId | null>(null);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const activeTool = useEditorStore((state) => state.activeTool);
   const doc = useEditorStore((state) => state.doc);
   const selection = useEditorStore((state) => state.selection);
   const viewport = useEditorStore((state) => state.viewport);
   const previousToolRef = useRef(activeTool);
+
+  useEffect(() => {
+    if (activeGuideId !== null && !doc.guides.some((guide) => guide.id === activeGuideId)) {
+      setActiveGuideId(null);
+    }
+  }, [activeGuideId, doc.guides]);
 
   const setInlineTextEdit = (edit: InlineTextEdit | null): void => {
     inlineTextEditRef.current = edit;
@@ -2227,6 +2248,12 @@ export default function CanvasView() {
       const guideHit = hitGuide(state.doc, state.viewport, point);
       if (guideHit !== null) {
         event.preventDefault();
+        setActiveGuideId(guideHit.id);
+        if (guideHit.locked === true) {
+          scheduleInteractiveDraw();
+          return;
+        }
+
         canvas.setPointerCapture(event.pointerId);
         dragRef.current = {
           mode: "guide",
@@ -2997,7 +3024,8 @@ export default function CanvasView() {
         ref={canvasRef}
         tabIndex={0}
       />
-      <Rulers />
+      <Rulers onGuideActivated={setActiveGuideId} />
+      <GuidePrefs activeGuideId={activeGuideId} />
       {inlineTextEdit !== null && inlineTextStyle !== null ? (
         <textarea
           aria-label="Edit text"

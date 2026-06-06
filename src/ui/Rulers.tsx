@@ -179,7 +179,11 @@ const useElementSize = (): [RefObject<HTMLDivElement>, RulerSize] => {
   return [ref, size];
 };
 
-export function Rulers() {
+interface RulersProps {
+  onGuideActivated?: (id: NodeId) => void;
+}
+
+export function Rulers({ onGuideActivated }: RulersProps) {
   const viewport = useEditorStore((state) => state.viewport);
   const [rootRef, size] = useElementSize();
   const dragRef = useRef<RulerGuideDrag | null>(null);
@@ -210,6 +214,7 @@ export function Rulers() {
       return;
     }
 
+    onGuideActivated?.(id);
     dragRef.current = {
       id,
       axis,

@@ -1,0 +1,101 @@
+.guide-prefs {
+  position: absolute;
+  right: 16px;
+  bottom: 64px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 5px 8px;
+  color: #f2f2f2;
+  background: rgba(37, 37, 38, 0.94);
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.guide-prefs__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 54px;
+  line-height: 1.1;
+}
+
+.guide-prefs__title {
+  color: #dedede;
+  font-weight: 600;
+}
+
+.guide-prefs__position {
+  color: #9f9f9f;
+  font-variant-numeric: tabular-nums;
+}
+
+.guide-prefs__color {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.guide-prefs__color:hover {
+  background: #303033;
+  border-color: #3c3c3c;
+}
+
+.guide-prefs__swatch {
+  width: 16px;
+  height: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 3px;
+}
+
+.guide-prefs__color-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.guide-prefs__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 6px;
+  color: #dedede;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.guide-prefs__toggle:hover {
+  background: #303033;
+  border-color: #3c3c3c;
+}
+
+.guide-prefs__toggle input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: #2d8cf0;
+}
+
+.guide-prefs__color:focus-within,
+.guide-prefs__toggle:focus-within {
+  outline: 2px solid #2d8cf0;
+  outline-offset: 1px;
+}
