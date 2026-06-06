@@ -1,5 +1,5 @@
 import { center, isEmpty, unionAll, type BBox } from "../core/geometry/bbox";
-import { apply, compose, IDENTITY, invert, type Matrix } from "../core/geometry/matrix";
+import { apply, compose, IDENTITY, invert, rotationAround, scaling, translate, type Matrix } from "../core/geometry/matrix";
 import { type BooleanOp, flattenNodeToPolygons, polygonBoolean } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
 import { createGroup, newId as createNodeId } from "../core/model/factory";
@@ -10,6 +10,8 @@ import { hasStyle, isContainer } from "../core/model/types";
 
 export type AlignEdge = "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom";
 export type DistributeAxis = "horizontal" | "vertical";
+export type FlipAxis = "horizontal" | "vertical";
+export type Rotate90Direction = "cw" | "ccw";
 export type ZOrderOperation = "bringToFront" | "sendToBack" | "bringForward" | "sendBackward";
 
 export interface TransformPatch {
@@ -18,6 +20,7 @@ export interface TransformPatch {
 }
 
 export type TransformPatchMap = Record<NodeId, TransformPatch>;
+export type MatrixPatchMap = Record<NodeId, Matrix>;
 
 export interface ZOrderPatch {
   parentId: NodeId | null;
@@ -237,6 +240,87 @@ export const distributeNodes = (
   }
 
   return patches;
+};
+
+const flipAround = (axis: FlipAxis, cx: number, cy: number): Matrix => {
+  const scale = axis === "horizontal" ? scaling(-1, 1) : scaling(1, -1);
+  return compose(translate(cx, cy), compose(scale, translate(-cx, -cy)));
+};
+
+const selectionTransformPatches = (
+  doc: Document,
+  ids: readonly NodeId[],
+  worldOperation: Matrix,
+): MatrixPatchMap => {
+  const patches: MatrixPatchMap = {};
+
+  for (const id of ids) {
+    const node = doc.nodes[id];
+    const parent = findNodeParent(doc, id);
+    if (!node || !parent) {
+      continue;
+    }
+
+    const parentWorld = parentWorldTransform(doc, parent.parentId);
+    const parentInverse = invert(parentWorld);
+    if (!parentInverse) {
+      continue;
+    }
+
+    patches[id] = compose(
+      parentInverse,
+      compose(worldOperation, compose(parentWorld, node.transform)),
+    );
+  }
+
+  return patches;
+};
+
+export const flipNodes = (
+  doc: Document,
+  ids: readonly NodeId[],
+  axis: FlipAxis,
+): MatrixPatchMap => {
+  const targets = usableBounds(doc, topLevelNodeIds(doc, ids));
+  if (targets.length === 0) {
+    return {};
+  }
+
+  const bounds = unionAll(targets.map((target) => target.bounds));
+  if (isEmpty(bounds)) {
+    return {};
+  }
+
+  const pivot = center(bounds);
+  return selectionTransformPatches(
+    doc,
+    targets.map((target) => target.id),
+    flipAround(axis, pivot.x, pivot.y),
+  );
+};
+
+export const rotateNodes90 = (
+  doc: Document,
+  ids: readonly NodeId[],
+  direction: Rotate90Direction,
+): MatrixPatchMap => {
+  const targets = usableBounds(doc, topLevelNodeIds(doc, ids));
+  if (targets.length === 0) {
+    return {};
+  }
+
+  const bounds = unionAll(targets.map((target) => target.bounds));
+  if (isEmpty(bounds)) {
+    return {};
+  }
+
+  const pivot = center(bounds);
+  const angle = direction === "cw" ? Math.PI / 2 : -Math.PI / 2;
+  return selectionTransformPatches(
+    doc,
+    targets.map((target) => target.id),
+    rotationAround(angle, pivot.x, pivot.y),
+  );
 };
 
 const sameOrder = (a: readonly NodeId[], b: readonly NodeId[]): boolean =>

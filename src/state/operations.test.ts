@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { canUndo } from "./history";
+import { apply, compose, IDENTITY, type Matrix } from "../core/geometry/matrix";
 import { createDocument, createGroup, createRect, defaultStroke, rgba, solid } from "../core/model/factory";
 import { worldBounds } from "../core/model/bounds";
 import type { Document, NodeId, SceneNode } from "../core/model/types";
@@ -10,7 +11,9 @@ import {
   bringToFront,
   cloneSubtree,
   distributeNodes,
+  flipNodes,
   groupSelection,
+  rotateNodes90,
   sampleStyleAt,
   sendBackward,
   ungroupSelection,
@@ -48,6 +51,32 @@ const ringArea = (points: readonly { x: number; y: number }[]): number => {
 
 const resetStore = (): void => {
   editorStore.setState(createEditorStateForTest());
+};
+
+const expectMatrixCloseTo = (actual: Matrix, expected: Matrix): void => {
+  expect(actual.a).toBeCloseTo(expected.a, 9);
+  expect(actual.b).toBeCloseTo(expected.b, 9);
+  expect(actual.c).toBeCloseTo(expected.c, 9);
+  expect(actual.d).toBeCloseTo(expected.d, 9);
+  expect(actual.e).toBeCloseTo(expected.e, 9);
+  expect(actual.f).toBeCloseTo(expected.f, 9);
+};
+
+const expectPointCloseTo = (
+  actual: { x: number; y: number },
+  expected: { x: number; y: number },
+): void => {
+  expect(actual.x).toBeCloseTo(expected.x, 9);
+  expect(actual.y).toBeCloseTo(expected.y, 9);
+};
+
+const applyMatrixPatches = (doc: Document, patches: Record<NodeId, Matrix>): void => {
+  for (const [id, transform] of Object.entries(patches)) {
+    const node = doc.nodes[id];
+    if (node) {
+      node.transform = transform;
+    }
+  }
 };
 
 describe("selection operations", () => {
@@ -175,6 +204,86 @@ describe("selection operations", () => {
     expect(patches[first.id]).toBeUndefined();
     expect(patches[middle.id]).toEqual({ e: 50, f: 0 });
     expect(patches[last.id]).toBeUndefined();
+  });
+
+  it("flips selected nodes horizontally twice back to their original transforms", () => {
+    const doc = createDocument();
+    const left = createRect(0, 0, 10, 20);
+    const right = createRect(40, 10, 20, 10);
+    addToFirstLayer(doc, [left, right]);
+    const originalLeft = left.transform;
+    const originalRight = right.transform;
+
+    applyMatrixPatches(doc, flipNodes(doc, [left.id, right.id], "horizontal"));
+    applyMatrixPatches(doc, flipNodes(doc, [left.id, right.id], "horizontal"));
+
+    expectMatrixCloseTo(left.transform, originalLeft);
+    expectMatrixCloseTo(right.transform, originalRight);
+  });
+
+  it("rotates selected nodes clockwise four times back to identity and twice to 180 degrees", () => {
+    const doc = createDocument();
+    const rect = createRect(0, 0, 10, 20);
+    addToFirstLayer(doc, [rect]);
+
+    applyMatrixPatches(doc, rotateNodes90(doc, [rect.id], "cw"));
+    applyMatrixPatches(doc, rotateNodes90(doc, [rect.id], "cw"));
+    expectMatrixCloseTo(rect.transform, { a: -1, b: 0, c: 0, d: -1, e: 10, f: 20 });
+
+    applyMatrixPatches(doc, rotateNodes90(doc, [rect.id], "cw"));
+    applyMatrixPatches(doc, rotateNodes90(doc, [rect.id], "cw"));
+    expectMatrixCloseTo(rect.transform, IDENTITY);
+  });
+
+  it("flips a single node corner to its mirrored corner around the node center", () => {
+    const doc = createDocument();
+    const rect = createRect(10, 20, 30, 40);
+    addToFirstLayer(doc, [rect]);
+
+    const patches = flipNodes(doc, [rect.id], "horizontal");
+    const nextTransform = patches[rect.id]!;
+
+    expectPointCloseTo(apply(nextTransform, { x: 0, y: 0 }), { x: 40, y: 20 });
+    expectPointCloseTo(apply(nextTransform, { x: 30, y: 40 }), { x: 10, y: 60 });
+  });
+
+  it("uses the shared union center when flipping multiple nodes", () => {
+    const doc = createDocument();
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(30, 0, 10, 10);
+    addToFirstLayer(doc, [left, right]);
+
+    const patches = flipNodes(doc, [left.id, right.id], "horizontal");
+
+    expectPointCloseTo(apply(patches[left.id]!, { x: 0, y: 0 }), { x: 40, y: 0 });
+    expectPointCloseTo(apply(patches[right.id]!, { x: 10, y: 10 }), { x: 0, y: 10 });
+  });
+
+  it("converts world flip operations through transformed parent space", () => {
+    const doc = createDocument();
+    const child = createRect(5, 0, 10, 10);
+    const group = createGroup("Group", [child.id]);
+    group.transform = { a: 2, b: 0, c: 0, d: 2, e: 100, f: 50 };
+    addToFirstLayer(doc, [group]);
+    doc.nodes[child.id] = child;
+
+    const patches = flipNodes(doc, [child.id], "horizontal");
+    const childWorldAfter = compose(group.transform, patches[child.id]!);
+
+    expectPointCloseTo(apply(childWorldAfter, { x: 0, y: 0 }), { x: 130, y: 50 });
+    expectPointCloseTo(apply(childWorldAfter, { x: 10, y: 10 }), { x: 110, y: 70 });
+  });
+
+  it("skips transform operations when the parent world transform is singular", () => {
+    const doc = createDocument();
+    const child = createRect(5, 0, 10, 10);
+    const group = createGroup("Group", [child.id]);
+    group.transform = { a: 0, b: 0, c: 0, d: 1, e: 100, f: 50 };
+    addToFirstLayer(doc, [group]);
+    doc.nodes[child.id] = child;
+
+    expect(flipNodes(doc, [child.id], "horizontal")).toEqual({});
+    expect(rotateNodes90(doc, [child.id], "cw")).toEqual({});
   });
 
   it("moves selected children to the front of their parent order", () => {
