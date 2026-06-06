@@ -1,6 +1,7 @@
 import { LayersPanel } from "./LayersPanel";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { AlignPanel } from "./AlignPanel";
+import { TransformActions } from "./TransformActions";
 import { SnapSettings } from "./SnapSettings";
 import { ExportMenu } from "./ExportMenu";
 import { ImportButton } from "./ImportButton";
@@ -47,6 +48,20 @@ export function RightPanel() {
         </header>
         <div className="right-panel__content right-panel__content--align">
           <AlignPanel />
+        </div>
+      </section>
+
+      <div className="right-panel__divider" role="presentation" />
+
+      <section
+        aria-labelledby="right-panel-transform-heading"
+        className="right-panel__section right-panel__section--transform"
+      >
+        <header className="right-panel__header">
+          <h2 id="right-panel-transform-heading">Transform</h2>
+        </header>
+        <div className="right-panel__content right-panel__content--transform">
+          <TransformActions />
         </div>
       </section>
 

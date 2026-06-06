@@ -45,6 +45,7 @@ export default function App() {
   const groupSelection = useEditorStore((state) => state.groupSelection);
   const ungroupSelection = useEditorStore((state) => state.ungroupSelection);
   const moveSelection = useEditorStore((state) => state.moveSelection);
+  const flipSelection = useEditorStore((state) => state.flipSelection);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -54,6 +55,18 @@ export default function App() {
 
       const key = event.key.toLowerCase();
       const hasCommandModifier = event.ctrlKey || event.metaKey;
+
+      if (!hasCommandModifier && !event.altKey && event.shiftKey && key === "h") {
+        event.preventDefault();
+        flipSelection("horizontal");
+        return;
+      }
+
+      if (!hasCommandModifier && !event.altKey && event.shiftKey && key === "v") {
+        event.preventDefault();
+        flipSelection("vertical");
+        return;
+      }
 
       if (hasCommandModifier && key === "z") {
         event.preventDefault();
@@ -172,6 +185,7 @@ export default function App() {
     bringToFront,
     copySelection,
     duplicateSelection,
+    flipSelection,
     groupSelection,
     moveSelection,
     paste,
