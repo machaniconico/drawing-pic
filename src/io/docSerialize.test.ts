@@ -133,6 +133,39 @@ describe("docSerialize", () => {
     expect(deserializeDocument(serializeDocument(doc)).guides).toEqual(doc.guides);
   });
 
+  it("round-trips an explicit background color", () => {
+    const doc = createRichDocument();
+    doc.background = { r: 24, g: 48, b: 96, a: 0.75 };
+
+    expect(deserializeDocument(serializeDocument(doc)).background).toEqual(doc.background);
+  });
+
+  it("omits background when it is not defined", () => {
+    const serialized = serializeDocument(createRichDocument());
+    const parsed = JSON.parse(serialized) as { doc: Record<string, unknown> };
+
+    expect(parsed.doc).not.toHaveProperty("background");
+    expect(serialized).not.toContain('"background"');
+  });
+
+  it("loads legacy v1 documents without background", () => {
+    const doc = createRichDocument();
+    const legacyDoc: Omit<Document, "background"> & { background?: Document["background"] } = { ...doc };
+    delete legacyDoc.background;
+
+    const result = deserializeDocument(JSON.stringify({ version: 1, doc: legacyDoc }));
+
+    expect(result).not.toHaveProperty("background");
+  });
+
+  it("rejects invalid background colors", () => {
+    const doc = createRichDocument();
+
+    expect(() =>
+      deserializeDocument(JSON.stringify({ version: 1, doc: { ...doc, background: { r: 24, g: 48, b: "blue", a: 1 } } })),
+    ).toThrow(/doc.background.b must be a finite number/);
+  });
+
   it("loads legacy v1 documents without guides as an empty guide list", () => {
     const doc = createRichDocument();
     const legacyDoc: Omit<Document, "guides"> & { guides?: Document["guides"] } = { ...doc };

@@ -182,6 +182,8 @@ export interface Document {
   /** アートボードサイズ（px） */
   width: number;
   height: number;
+  /** 明示的なアートボード背景色。undefined/null は背景指定なし。 */
+  background?: RGBA | null;
   /** ルート直下のレイヤー（描画は配列順 = 下→上） */
   layerOrder: NodeId[];
   guides: Guide[];

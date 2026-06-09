@@ -286,6 +286,9 @@ const validateDocument = (value: unknown): Document => {
   requireString(doc.name, "doc.name");
   requireNumber(doc.width, "doc.width");
   requireNumber(doc.height, "doc.height");
+  if ("background" in doc && doc.background !== null) {
+    validateColor(doc.background, "doc.background");
+  }
   const layerOrder = requireStringArray(doc.layerOrder, "doc.layerOrder");
   const guides = validateGuides("guides" in doc ? doc.guides : [], "doc.guides");
 
@@ -479,19 +482,24 @@ const orderSceneNode = (node: SceneNode): SceneNode => {
   }
 };
 
-const orderDocument = (doc: Document): Document => ({
-  id: doc.id,
-  name: doc.name,
-  width: doc.width,
-  height: doc.height,
-  layerOrder: [...doc.layerOrder],
-  guides: doc.guides.map(orderGuide),
-  nodes: Object.fromEntries(
-    Object.keys(doc.nodes)
-      .sort()
-      .map((id) => [id, orderSceneNode(doc.nodes[id]!)]),
-  ),
-});
+const orderDocument = (doc: Document): Document => {
+  const result: Document = {
+    id: doc.id,
+    name: doc.name,
+    width: doc.width,
+    height: doc.height,
+    ...(doc.background !== undefined ? { background: doc.background } : {}),
+    layerOrder: [...doc.layerOrder],
+    guides: doc.guides.map(orderGuide),
+    nodes: Object.fromEntries(
+      Object.keys(doc.nodes)
+        .sort()
+        .map((id) => [id, orderSceneNode(doc.nodes[id]!)]),
+    ),
+  };
+
+  return result;
+};
 
 export const serializeDocument = (doc: Document): string =>
   JSON.stringify({ version: DOC_FORMAT_VERSION, doc: orderDocument(doc) }, null, 2);
