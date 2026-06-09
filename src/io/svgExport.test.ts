@@ -24,6 +24,9 @@ const addNode = (doc: Document, node: SceneNode, parentId = firstLayerId(doc)): 
   }
 };
 
+const setBlendMode = <T extends SceneNode>(node: T, blendMode: GlobalCompositeOperation): T =>
+  Object.assign(node, { blendMode });
+
 describe("documentToSvg", () => {
   it("keeps empty options byte-for-byte equivalent to the default export", () => {
     const doc = createDocument(320, 240, "Back compat");
@@ -34,6 +37,20 @@ describe("documentToSvg", () => {
 
     expect(documentToSvg(doc, undefined)).toBe(svg);
     expect(documentToSvg(doc, {})).toBe(svg);
+  });
+
+  it("omits mix-blend-mode for default and source-over blend modes", () => {
+    const doc = createDocument(320, 240, "Normal blend");
+    const defaultRect = createRect(10, 20, 80, 40);
+    const sourceOverRect = createRect(100, 20, 80, 40);
+    sourceOverRect.blendMode = "source-over";
+    addNode(doc, defaultRect);
+    addNode(doc, sourceOverRect);
+
+    const svg = documentToSvg(doc);
+
+    expect(svg).not.toContain("mix-blend-mode");
+    expect(svg).not.toContain('style="');
   });
 
   it("scales root width and height without changing the document viewBox", () => {
@@ -232,5 +249,43 @@ describe("documentToSvg", () => {
     expect(svg).toContain('<g transform="matrix(1 0 0 1 4 5)" opacity="1">');
     expect(svg).toContain('width="3" height="4"');
     expect(svg).not.toContain('width="20" height="20"');
+  });
+
+  it("emits CSS mix-blend-mode for compatible blend modes on elements and containers", () => {
+    const doc = createDocument(200, 200, "Blend");
+    const group = createGroup("Blending group");
+    group.transform = { ...IDENTITY, e: 4, f: 5 };
+    setBlendMode(group, "screen");
+    const rect = createRect(1, 2, 3, 4);
+    rect.blendMode = "multiply";
+    addNode(doc, group);
+    addNode(doc, rect, group.id);
+
+    const svg = documentToSvg(doc);
+
+    expect(svg).toContain(
+      '<g transform="matrix(1 0 0 1 4 5)" opacity="1" style="mix-blend-mode:screen">',
+    );
+    expect(svg).toContain(
+      '<rect transform="matrix(1 0 0 1 1 2)" opacity="1" style="mix-blend-mode:multiply"',
+    );
+  });
+
+  it("omits mix-blend-mode for Canvas-only composite operations", () => {
+    const doc = createDocument(200, 200, "Canvas-only blends");
+    const lighter = createRect(0, 0, 10, 10);
+    lighter.blendMode = "lighter";
+    const copy = createRect(20, 0, 10, 10);
+    copy.blendMode = "copy";
+    const xor = createRect(40, 0, 10, 10);
+    xor.blendMode = "xor";
+    addNode(doc, lighter);
+    addNode(doc, copy);
+    addNode(doc, xor);
+
+    const svg = documentToSvg(doc);
+
+    expect(svg).not.toContain("mix-blend-mode");
+    expect(svg).not.toContain('style="');
   });
 });

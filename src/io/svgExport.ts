@@ -91,6 +91,37 @@ const transformAttr = ({ a, b, c, d, e, f }: Matrix): string =>
     ].join(" ")})`,
   );
 
+const CSS_BLEND_MODES: Partial<Record<GlobalCompositeOperation, string>> = {
+  "source-over": "normal",
+  multiply: "multiply",
+  screen: "screen",
+  overlay: "overlay",
+  darken: "darken",
+  lighten: "lighten",
+  "color-dodge": "color-dodge",
+  "color-burn": "color-burn",
+  "hard-light": "hard-light",
+  "soft-light": "soft-light",
+  difference: "difference",
+  exclusion: "exclusion",
+  hue: "hue",
+  saturation: "saturation",
+  color: "color",
+  luminosity: "luminosity",
+};
+
+const blendModeAttr = (blendMode: GlobalCompositeOperation | undefined): string => {
+  if (blendMode === undefined) return "";
+
+  const cssBlendMode = CSS_BLEND_MODES[blendMode];
+  return cssBlendMode === undefined || cssBlendMode === "normal"
+    ? ""
+    : attr("style", `mix-blend-mode:${cssBlendMode}`);
+};
+
+const nodeBlendMode = (node: SceneNode): GlobalCompositeOperation | undefined =>
+  (node as { blendMode?: GlobalCompositeOperation }).blendMode;
+
 const pointWithHandle = (point: Vec2, handle: Vec2 | null): Vec2 =>
   handle === null ? point : { x: point.x + handle.x, y: point.y + handle.y };
 
@@ -191,7 +222,9 @@ const strokeAttrs = (stroke: Stroke | null, ctx: SvgContext): string => {
 };
 
 const nodeCommonAttrs = (node: SceneNode): string =>
-  transformAttr(node.transform) + numericAttr("opacity", clamp(node.opacity, 0, 1));
+  transformAttr(node.transform) +
+  numericAttr("opacity", clamp(node.opacity, 0, 1)) +
+  blendModeAttr(nodeBlendMode(node));
 
 const gradientStopAttrs = (stop: GradientStop): string =>
   numericAttr("offset", clamp(stop.offset, 0, 1)) +
