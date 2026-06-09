@@ -325,6 +325,47 @@ export const rotateNodes90 = (
   );
 };
 
+export const rotateNodesAround = (
+  doc: Document,
+  ids: readonly NodeId[],
+  angleRad: number,
+): MatrixPatchMap => {
+  const targets = usableBounds(doc, topLevelNodeIds(doc, ids));
+  if (targets.length === 0) {
+    return {};
+  }
+
+  const bounds = unionAll(targets.map((target) => target.bounds));
+  if (
+    isEmpty(bounds) ||
+    width(bounds) < NUMERIC_TRANSFORM_EPSILON ||
+    height(bounds) < NUMERIC_TRANSFORM_EPSILON
+  ) {
+    return {};
+  }
+
+  const pivot = center(bounds);
+  return selectionTransformPatches(
+    doc,
+    targets.map((target) => target.id),
+    rotationAround(angleRad, pivot.x, pivot.y),
+  );
+};
+
+const normalizeRotationAngle = (angle: number): number => {
+  let normalized = angle;
+  while (normalized <= -Math.PI) {
+    normalized += Math.PI * 2;
+  }
+  while (normalized > Math.PI) {
+    normalized -= Math.PI * 2;
+  }
+  return Object.is(normalized, -0) ? 0 : normalized;
+};
+
+export const nodeRotationAngle = (node: SceneNode): number =>
+  normalizeRotationAngle(Math.atan2(node.transform.b, node.transform.a));
+
 export const moveSelectionTo = (
   doc: Document,
   ids: readonly NodeId[],

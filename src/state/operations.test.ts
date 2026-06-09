@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { canUndo } from "./history";
-import { apply, compose, IDENTITY, type Matrix } from "../core/geometry/matrix";
+import { apply, compose, IDENTITY, invert, rotationAround, type Matrix } from "../core/geometry/matrix";
 import { createDocument, createGroup, createRect, defaultStroke, rgba, solid } from "../core/model/factory";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
 import type { Document, NodeId, SceneNode } from "../core/model/types";
@@ -14,7 +14,9 @@ import {
   flipNodes,
   groupSelection,
   moveSelectionTo,
+  nodeRotationAngle,
   resizeSelectionTo,
+  rotateNodesAround,
   rotateNodes90,
   sampleStyleAt,
   sendBackward,
@@ -245,6 +247,108 @@ describe("selection operations", () => {
     applyMatrixPatches(doc, rotateNodes90(doc, [rect.id], "cw"));
     applyMatrixPatches(doc, rotateNodes90(doc, [rect.id], "cw"));
     expectMatrixCloseTo(rect.transform, IDENTITY);
+  });
+
+  it("rotates a single node around by 90 degrees the same as clockwise rotateNodes90", () => {
+    const doc = createDocument();
+    const rect = createRect(10, 20, 30, 40);
+    addToFirstLayer(doc, [rect]);
+
+    const aroundPatches = rotateNodesAround(doc, [rect.id], Math.PI / 2);
+    const rotate90Patches = rotateNodes90(doc, [rect.id], "cw");
+
+    expectMatrixCloseTo(aroundPatches[rect.id]!, rotate90Patches[rect.id]!);
+  });
+
+  it("reads a node's own normalized rotation angle from its transform", () => {
+    const identity = createRect(0, 0, 10, 10);
+    expect(nodeRotationAngle(identity)).toBe(0);
+
+    const angle = -Math.PI / 3;
+    const rotated = createRect(0, 0, 10, 10);
+    rotated.transform = {
+      a: Math.cos(angle),
+      b: Math.sin(angle),
+      c: -Math.sin(angle),
+      d: Math.cos(angle),
+      e: 5,
+      f: 6,
+    };
+
+    expect(nodeRotationAngle(rotated)).toBeCloseTo(angle, 9);
+
+    rotated.transform = { ...rotated.transform, a: -1, b: -0 };
+    expect(nodeRotationAngle(rotated)).toBeCloseTo(Math.PI, 9);
+  });
+
+  it("uses the shared union center when rotating multiple nodes around an angle", () => {
+    const doc = createDocument();
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(30, 0, 10, 10);
+    addToFirstLayer(doc, [left, right]);
+
+    const patches = rotateNodesAround(doc, [left.id, right.id], Math.PI / 2);
+
+    expectPointCloseTo(apply(patches[left.id]!, { x: 0, y: 0 }), { x: 25, y: -15 });
+    expectPointCloseTo(apply(patches[right.id]!, { x: 10, y: 10 }), { x: 15, y: 25 });
+  });
+
+  it("rotates around by 90 degrees four times back to the original transform", () => {
+    const doc = createDocument();
+    const rect = createRect(12, 34, 20, 30);
+    addToFirstLayer(doc, [rect]);
+    const original = rect.transform;
+
+    for (let index = 0; index < 4; index += 1) {
+      applyMatrixPatches(doc, rotateNodesAround(doc, [rect.id], Math.PI / 2));
+    }
+
+    expectMatrixCloseTo(rect.transform, original);
+  });
+
+  it("returns no rotate-around patches for empty or degenerate selections", () => {
+    const doc = createDocument();
+    const pointRect = createRect(10, 20, 0, 0);
+    addToFirstLayer(doc, [pointRect]);
+
+    expect(rotateNodesAround(doc, [], Math.PI / 4)).toEqual({});
+    expect(rotateNodesAround(doc, [pointRect.id], Math.PI / 4)).toEqual({});
+  });
+
+  it("converts rotate-around operations through rotated parent space", () => {
+    const doc = createDocument();
+    const child = createRect(5, 0, 10, 10);
+    const group = createGroup("Group", [child.id]);
+    const parentAngle = Math.PI / 6;
+    group.transform = {
+      a: Math.cos(parentAngle),
+      b: Math.sin(parentAngle),
+      c: -Math.sin(parentAngle),
+      d: Math.cos(parentAngle),
+      e: 100,
+      f: 50,
+    };
+    addToFirstLayer(doc, [group]);
+    doc.nodes[child.id] = child;
+
+    const bounds = worldBounds(doc, child.id);
+    const pivot = {
+      x: (bounds.minX + bounds.maxX) / 2,
+      y: (bounds.minY + bounds.maxY) / 2,
+    };
+    const angle = Math.PI / 4;
+    const parentInverse = invert(group.transform);
+    if (!parentInverse) {
+      throw new Error("Expected test parent transform to be invertible");
+    }
+
+    const beforeWorld = compose(group.transform, child.transform);
+    const expectedWorld = compose(rotationAround(angle, pivot.x, pivot.y), beforeWorld);
+    const patches = rotateNodesAround(doc, [child.id], angle);
+    const actualWorld = compose(group.transform, patches[child.id]!);
+
+    expectMatrixCloseTo(actualWorld, expectedWorld);
+    expectMatrixCloseTo(patches[child.id]!, compose(parentInverse, expectedWorld));
   });
 
   it("moves a single selected node bbox top-left to the target without resizing it", () => {
