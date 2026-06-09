@@ -10,6 +10,7 @@ import {
   type RGBA,
   type Stroke,
 } from "../core/model/types";
+import { nodeRotationAngle } from "../state/operations";
 import { getSelectedNodes } from "../state/selectors";
 import { useEditorStore } from "../state/store";
 import "./PropertiesPanel.css";
@@ -308,6 +309,7 @@ export function PropertiesPanel() {
   const updateNode = useEditorStore((state) => state.updateNode);
   const setSelectionPosition = useEditorStore((state) => state.setSelectionPosition);
   const setSelectionSize = useEditorStore((state) => state.setSelectionSize);
+  const rotateSelectionBy = useEditorStore((state) => state.rotateSelectionBy);
   const selectedNodes = getSelectedNodes({ doc, selection });
 
   if (selectedNodes.length === 0) {
@@ -325,6 +327,10 @@ export function PropertiesPanel() {
   const boundsAreEmpty = isEmpty(bounds);
   const boundsWidth = bboxWidth(bounds);
   const boundsHeight = bboxHeight(bounds);
+  const singleSelectionRotationDeg =
+    !boundsAreEmpty && selectedNodes.length === 1
+      ? (nodeRotationAngle(selectedNodes[0]) * 180) / Math.PI
+      : null;
 
   const commitSelectionX = (x: number): void => {
     if (boundsAreEmpty) {
@@ -356,6 +362,14 @@ export function PropertiesPanel() {
     }
 
     setSelectionSize(boundsWidth, height);
+  };
+
+  const commitSelectionRotation = (targetDeg: number): void => {
+    if (singleSelectionRotationDeg === null) {
+      return;
+    }
+
+    rotateSelectionBy(((targetDeg - singleSelectionRotationDeg) * Math.PI) / 180);
   };
 
   const geometrySection = (
@@ -398,6 +412,15 @@ export function PropertiesPanel() {
             min={0}
             onCommit={commitSelectionHeight}
             value={boundsAreEmpty ? null : boundsHeight}
+          />
+        </label>
+        <label className="properties-panel__field">
+          <span className="properties-panel__label">R</span>
+          <CommitNumberInput
+            ariaLabel="Selection rotation degrees"
+            disabled={singleSelectionRotationDeg === null}
+            onCommit={commitSelectionRotation}
+            value={singleSelectionRotationDeg}
           />
         </label>
       </div>
