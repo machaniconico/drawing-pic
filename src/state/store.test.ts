@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BBox } from "../core/geometry/bbox";
 import type { Matrix } from "../core/geometry/matrix";
 import { selectionBounds } from "../core/model/bounds";
@@ -6,8 +6,20 @@ import { createRect } from "../core/model/factory";
 import type { Document, NodeId } from "../core/model/types";
 import { canRedo, canUndo, createHistory } from "./history";
 import { flipNodes, rotateNodes90, rotateNodesAround } from "./operations";
-import { createEditorStateForTest, editorStore, type SnapTarget } from "./store";
+import { createEditorStateForTest, editorStore, type SnapSettings, type SnapTarget } from "./store";
 import { getDocBounds, getSelectedNodes, isSelected } from "./selectors";
+
+type PersistedPrefsMockPayload = {
+  snapSettings?: Partial<SnapSettings>;
+  showGrid?: boolean;
+};
+
+const persistMock = vi.hoisted(() => ({
+  loadEditorPrefs: vi.fn<() => PersistedPrefsMockPayload | null>(() => null),
+  saveEditorPrefs: vi.fn(),
+}));
+
+vi.mock("./persist", () => persistMock);
 
 const resetStore = (): void => {
   editorStore.setState(createEditorStateForTest());
@@ -34,6 +46,8 @@ const expectBoundsCloseTo = (actual: BBox, expected: BBox): void => {
 
 describe("editorStore", () => {
   beforeEach(() => {
+    persistMock.loadEditorPrefs.mockReturnValue(null);
+    persistMock.saveEditorPrefs.mockClear();
     resetStore();
   });
 
@@ -152,6 +166,79 @@ describe("editorStore", () => {
       gridSize: 8,
     });
     expect(editorStore.getState().showGrid).toBe(false);
+  });
+
+  it("rehydrates persisted snap settings and grid visibility over current defaults", () => {
+    persistMock.loadEditorPrefs.mockReturnValue({
+      snapSettings: {
+        enabled: false,
+        gridSize: 24,
+      },
+      showGrid: true,
+    });
+
+    const state = createEditorStateForTest();
+
+    expect(state.snapSettings).toEqual({
+      enabled: false,
+      toObjects: true,
+      toGuides: true,
+      toGrid: true,
+      gridSize: 24,
+    });
+    expect(state.showGrid).toBe(true);
+    expect(state.selection).toEqual([]);
+    expect(state.viewport).toEqual({ pan: { x: 0, y: 0 }, zoom: 1 });
+    expect(state.keyObjectId).toBeNull();
+  });
+
+  it("persists updated preferences from each prefs action without pushing history", () => {
+    const cases: ReadonlyArray<{
+      act: () => void;
+      expected: { snapSettings: Record<string, boolean | number>; showGrid: boolean };
+    }> = [
+      {
+        act: () => editorStore.getState().setSnapEnabled(false),
+        expected: {
+          snapSettings: { enabled: false, toObjects: true, toGuides: true, toGrid: true, gridSize: 8 },
+          showGrid: false,
+        },
+      },
+      {
+        act: () => editorStore.getState().setSnapTarget("grid", false),
+        expected: {
+          snapSettings: { enabled: true, toObjects: true, toGuides: true, toGrid: false, gridSize: 8 },
+          showGrid: false,
+        },
+      },
+      {
+        act: () => editorStore.getState().setGridSize(16),
+        expected: {
+          snapSettings: { enabled: true, toObjects: true, toGuides: true, toGrid: true, gridSize: 16 },
+          showGrid: false,
+        },
+      },
+      {
+        act: () => editorStore.getState().setShowGrid(true),
+        expected: {
+          snapSettings: { enabled: true, toObjects: true, toGuides: true, toGrid: true, gridSize: 8 },
+          showGrid: true,
+        },
+      },
+    ];
+
+    for (const { act, expected } of cases) {
+      resetStore();
+      persistMock.saveEditorPrefs.mockClear();
+      const before = editorStore.getState();
+
+      act();
+
+      expect(persistMock.saveEditorPrefs).toHaveBeenCalledTimes(1);
+      expect(persistMock.saveEditorPrefs).toHaveBeenCalledWith(expected);
+      expect(editorStore.getState().history).toBe(before.history);
+      expect(editorStore.getState().doc).toBe(before.doc);
+    }
   });
 
   it("updates snap enabled without touching other editor state", () => {

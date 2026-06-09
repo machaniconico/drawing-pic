@@ -44,6 +44,7 @@ import {
   type History,
 } from "./history";
 import { moveNode, type LayerDropPosition } from "./layerReorder";
+import { loadEditorPrefs, saveEditorPrefs } from "./persist";
 import {
   addGuide as computeAddGuide,
   clearGuides as computeClearGuides,
@@ -144,26 +145,49 @@ const DEFAULT_SNAP_GRID_SIZE = 8;
 const MIN_SNAP_GRID_SIZE = 1;
 const MAX_SNAP_GRID_SIZE = 1024;
 
-const initialState = (): EditorState => ({
-  doc: createDocument(),
-  selection: [],
-  keyObjectId: null,
-  activeTool: "select",
-  viewport: {
-    pan: { x: 0, y: 0 },
-    zoom: 1,
-  },
-  snapSettings: {
-    enabled: true,
-    toObjects: true,
-    toGuides: true,
-    toGrid: true,
-    gridSize: DEFAULT_SNAP_GRID_SIZE,
-  },
-  showGrid: false,
-  history: createHistory<Document>(),
-  clipboard: [],
+const defaultSnapSettings = (): SnapSettings => ({
+  enabled: true,
+  toObjects: true,
+  toGuides: true,
+  toGrid: true,
+  gridSize: DEFAULT_SNAP_GRID_SIZE,
 });
+
+const initialState = (): EditorState => {
+  const snapSettings = defaultSnapSettings();
+  const persistedPrefs = loadEditorPrefs();
+
+  return {
+    doc: createDocument(),
+    selection: [],
+    keyObjectId: null,
+    activeTool: "select",
+    viewport: {
+      pan: { x: 0, y: 0 },
+      zoom: 1,
+    },
+    snapSettings: {
+      ...snapSettings,
+      ...(persistedPrefs?.snapSettings ?? {}),
+    },
+    showGrid: persistedPrefs?.showGrid ?? false,
+    history: createHistory<Document>(),
+    clipboard: [],
+  };
+};
+
+const persistEditorPrefs = (state: EditorStore): void => {
+  saveEditorPrefs({
+    snapSettings: {
+      enabled: state.snapSettings.enabled,
+      toObjects: state.snapSettings.toObjects,
+      toGuides: state.snapSettings.toGuides,
+      toGrid: state.snapSettings.toGrid,
+      gridSize: state.snapSettings.gridSize,
+    },
+    showGrid: state.showGrid,
+  });
+};
 
 const dedupeIds = (ids: NodeId[]): NodeId[] => [...new Set(ids)];
 
@@ -878,6 +902,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     set(
       produce((state: EditorStore) => {
         state.snapSettings.enabled = on;
+        persistEditorPrefs(state);
       }),
     );
   },
@@ -887,15 +912,18 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       produce((state: EditorStore) => {
         if (target === "objects") {
           state.snapSettings.toObjects = on;
+          persistEditorPrefs(state);
           return;
         }
 
         if (target === "guides") {
           state.snapSettings.toGuides = on;
+          persistEditorPrefs(state);
           return;
         }
 
         state.snapSettings.toGrid = on;
+        persistEditorPrefs(state);
       }),
     );
   },
@@ -908,6 +936,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     set(
       produce((state: EditorStore) => {
         state.snapSettings.gridSize = Math.min(MAX_SNAP_GRID_SIZE, Math.max(MIN_SNAP_GRID_SIZE, size));
+        persistEditorPrefs(state);
       }),
     );
   },
@@ -916,6 +945,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     set(
       produce((state: EditorStore) => {
         state.showGrid = on;
+        persistEditorPrefs(state);
       }),
     );
   },
