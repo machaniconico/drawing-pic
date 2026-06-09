@@ -25,6 +25,45 @@ const addNode = (doc: Document, node: SceneNode, parentId = firstLayerId(doc)): 
 };
 
 describe("documentToSvg", () => {
+  it("keeps empty options byte-for-byte equivalent to the default export", () => {
+    const doc = createDocument(320, 240, "Back compat");
+    const rect = createRect(10, 20, 80, 40);
+    addNode(doc, rect);
+
+    const svg = documentToSvg(doc);
+
+    expect(documentToSvg(doc, undefined)).toBe(svg);
+    expect(documentToSvg(doc, {})).toBe(svg);
+  });
+
+  it("scales root width and height without changing the document viewBox", () => {
+    const doc = createDocument(320, 240, "Scaled");
+    const rect = createRect(10, 20, 80, 40);
+    addNode(doc, rect);
+
+    const svg = documentToSvg(doc, { scale: 2 });
+
+    expect(svg).toContain(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 320 240">',
+    );
+  });
+
+  it("crops the SVG viewBox to selected node world bounds", () => {
+    const doc = createDocument(320, 240, "Selection");
+    const unselected = createRect(5, 6, 10, 12);
+    const selected = createRect(40, 50, 20, 30);
+    addNode(doc, unselected);
+    addNode(doc, selected);
+
+    const svg = documentToSvg(doc, { nodeIds: [selected.id] });
+
+    expect(svg).toContain(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="30" viewBox="40 50 20 30">',
+    );
+    expect(svg).toContain('transform="matrix(1 0 0 1 5 6)"');
+    expect(svg).toContain('transform="matrix(1 0 0 1 40 50)"');
+  });
+
   it("exports a rect with transform, opacity, rounded corners, fill, and stroke", () => {
     const doc = createDocument(320, 240, "Rect");
     const rect = createRect(10, 20, 80, 40);

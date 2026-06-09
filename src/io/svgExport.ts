@@ -1,9 +1,17 @@
 import type { Matrix } from "../core/geometry/matrix";
 import type { Vec2 } from "../core/geometry/vector";
+import {
+  height as bboxHeight,
+  isEmpty,
+  width as bboxWidth,
+  type BBox,
+} from "../core/geometry/bbox";
+import { selectionBounds } from "../core/model/bounds";
 import type {
   Anchor,
   Document,
   GradientStop,
+  NodeId,
   Paint,
   PathNode,
   RGBA,
@@ -14,6 +22,11 @@ import type {
 import { isContainer } from "../core/model/types";
 
 type GradientPaint = Extract<Paint, { type: "linear" | "radial" }>;
+
+export interface SvgExportOptions {
+  scale?: number;
+  nodeIds?: readonly NodeId[];
+}
 
 interface GradientReference {
   id: string;
@@ -27,6 +40,9 @@ interface SvgContext {
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
+
+const exportScale = (scale: number | undefined): number =>
+  scale === undefined || !Number.isFinite(scale) ? 1 : clamp(scale, 0.01, 100);
 
 const escapeXml = (value: string): string =>
   value
@@ -285,7 +301,21 @@ const textAnchor = (align: "left" | "center" | "right"): "start" | "middle" | "e
   }
 };
 
-export const documentToSvg = (doc: Document): string => {
+const documentBounds = (doc: Document): BBox => ({
+  minX: 0,
+  minY: 0,
+  maxX: doc.width,
+  maxY: doc.height,
+});
+
+const exportBounds = (doc: Document, nodeIds: readonly NodeId[] | undefined): BBox => {
+  if (nodeIds === undefined || nodeIds.length === 0) return documentBounds(doc);
+
+  const bounds = selectionBounds(doc, nodeIds);
+  return isEmpty(bounds) ? documentBounds(doc) : bounds;
+};
+
+export const documentToSvg = (doc: Document, opts?: SvgExportOptions): string => {
   const ctx: SvgContext = { gradients: [], nextGradientId: 1 };
   const body = doc.layerOrder
     .map((layerId) => doc.nodes[layerId])
@@ -293,9 +323,18 @@ export const documentToSvg = (doc: Document): string => {
     .map((layer) => renderNode(doc, layer, ctx))
     .join("");
   const defs = gradientDefs(ctx.gradients);
+  const bounds = exportBounds(doc, opts?.nodeIds);
+  const scale = exportScale(opts?.scale);
+  const outputWidth = bboxWidth(bounds);
+  const outputHeight = bboxHeight(bounds);
 
   return `<svg${attr("xmlns", "http://www.w3.org/2000/svg")}${numericAttr(
     "width",
-    doc.width,
-  )}${numericAttr("height", doc.height)}${attr("viewBox", `0 0 ${formatNumber(doc.width)} ${formatNumber(doc.height)}`)}>${defs}${body}</svg>`;
+    outputWidth * scale,
+  )}${numericAttr("height", outputHeight * scale)}${attr(
+    "viewBox",
+    `${formatNumber(bounds.minX)} ${formatNumber(bounds.minY)} ${formatNumber(
+      outputWidth,
+    )} ${formatNumber(outputHeight)}`,
+  )}>${defs}${body}</svg>`;
 };
