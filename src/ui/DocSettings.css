@@ -45,11 +45,45 @@
   font-variant-numeric: tabular-nums;
 }
 
+.doc-settings__background-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.doc-settings__color-input {
+  width: 36px;
+  height: 26px;
+  padding: 2px;
+  background: #2b2b2d;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.doc-settings__checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #ededed;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.doc-settings__checkbox {
+  margin: 0;
+  accent-color: #2d8cf0;
+}
+
 .doc-settings__input:hover {
   border-color: #4c4c4c;
 }
 
-.doc-settings__input:focus-visible {
+.doc-settings__input:focus-visible,
+.doc-settings__color-input:focus-visible,
+.doc-settings__checkbox:focus-visible {
   outline: 1px solid rgba(45, 140, 240, 0.7);
   outline-offset: 1px;
   border-color: #2d8cf0;

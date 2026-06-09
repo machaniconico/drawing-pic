@@ -4,7 +4,7 @@ import { createStore } from "zustand/vanilla";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
 import { createDocument } from "../core/model/factory";
-import type { Document, NodeId, SceneNode } from "../core/model/types";
+import type { Document, NodeId, RGBA, SceneNode } from "../core/model/types";
 import { isContainer } from "../core/model/types";
 import {
   alignNodes as computeAlignNodes,
@@ -142,6 +142,7 @@ export interface EditorActions {
   setShowGrid: (on: boolean) => void;
   setDocumentSize: (width: number, height: number) => void;
   setDocumentName: (name: string) => void;
+  setDocumentBackground: (color: RGBA | null) => void;
   loadDocument: (doc: Document) => void;
   undo: () => void;
   redo: () => void;
@@ -374,6 +375,14 @@ const normalizeDocument = (doc: Document): Document => ({
   ...doc,
   guides: Array.isArray(doc.guides) ? doc.guides : [],
 });
+
+const colorsEqual = (left: RGBA | null | undefined, right: RGBA | null): boolean => {
+  if (left == null || right === null) {
+    return left == null && right === null;
+  }
+
+  return left.r === right.r && left.g === right.g && left.b === right.b && left.a === right.a;
+};
 
 const insertRootAfter = (doc: Document, parentId: NodeId | null, sourceId: NodeId, cloneId: NodeId): void => {
   if (parentId === null) {
@@ -1021,6 +1030,17 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       }
 
       state.doc.name = nextName;
+      return true;
+    });
+  },
+
+  setDocumentBackground: (color) => {
+    withDocHistory(set, (state) => {
+      if (colorsEqual(state.doc.background, color)) {
+        return false;
+      }
+
+      state.doc.background = color === null ? null : { ...color };
       return true;
     });
   },

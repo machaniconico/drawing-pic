@@ -220,6 +220,49 @@ describe("editorStore", () => {
     expect(canRedo(editorStore.getState().history)).toBe(true);
   });
 
+  it("sets and clears document background through undoable history", () => {
+    const before = editorStore.getState();
+    const beforeDoc = before.doc;
+    const color = { r: 24, g: 128, b: 220, a: 1 };
+
+    editorStore.getState().setDocumentBackground(color);
+
+    const withBackground = editorStore.getState();
+    expect(withBackground.doc.background).toEqual(color);
+    expect(withBackground.doc.background).not.toBe(color);
+    expect(withBackground.history.past).toHaveLength(before.history.past.length + 1);
+
+    editorStore.getState().setDocumentBackground({ ...color });
+
+    expect(editorStore.getState().doc).toBe(withBackground.doc);
+    expect(editorStore.getState().history.past).toHaveLength(before.history.past.length + 1);
+
+    editorStore.getState().setDocumentBackground(null);
+
+    expect(editorStore.getState().doc.background).toBeNull();
+    expect(editorStore.getState().history.past).toHaveLength(before.history.past.length + 2);
+
+    const clearedDoc = editorStore.getState().doc;
+    editorStore.getState().setDocumentBackground(null);
+
+    expect(editorStore.getState().doc).toBe(clearedDoc);
+    expect(editorStore.getState().history.past).toHaveLength(before.history.past.length + 2);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc.background).toEqual(color);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.background).toBeUndefined();
+
+    editorStore.getState().redo();
+
+    expect(editorStore.getState().doc.background).toEqual(color);
+  });
+
   it("does not push history for document metadata no-op guards", () => {
     const initialDoc = editorStore.getState().doc;
 

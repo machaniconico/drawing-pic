@@ -1,9 +1,31 @@
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { RGBA } from "../core/model/types";
 import { editorStore, useEditorStore } from "../state/store";
 import "./DocSettings.css";
 
 const formatDimension = (value: number): string =>
   Number.isFinite(value) ? String(Math.round(value * 100) / 100) : "";
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
+
+const toHexByte = (value: number): string =>
+  clamp(Math.round(value), 0, 255).toString(16).padStart(2, "0");
+
+const rgbaToHex = (color: RGBA): string =>
+  `#${toHexByte(color.r)}${toHexByte(color.g)}${toHexByte(color.b)}`;
+
+const hexToRgba = (hex: string): RGBA => {
+  const normalized = hex.trim().replace(/^#/, "");
+  const value = /^[0-9a-fA-F]{6}$/.test(normalized) ? normalized : "ffffff";
+
+  return {
+    r: Number.parseInt(value.slice(0, 2), 16),
+    g: Number.parseInt(value.slice(2, 4), 16),
+    b: Number.parseInt(value.slice(4, 6), 16),
+    a: 1,
+  };
+};
 
 interface CommitTextInputProps {
   readonly ariaLabel: string;
@@ -106,6 +128,9 @@ export function DocSettings() {
   const doc = useEditorStore((state) => state.doc);
   const setDocumentName = useEditorStore((state) => state.setDocumentName);
   const setDocumentSize = useEditorStore((state) => state.setDocumentSize);
+  const setDocumentBackground = useEditorStore((state) => state.setDocumentBackground);
+  const backgroundHex = doc.background ? rgbaToHex(doc.background) : "#ffffff";
+  const hasTransparentBackground = doc.background == null;
 
   const commitWidth = (width: number): void => {
     setDocumentSize(width, editorStore.getState().doc.height);
@@ -143,6 +168,34 @@ export function DocSettings() {
             onCommit={commitHeight}
           />
         </label>
+      </div>
+
+      <div className="doc-settings__field">
+        <span className="doc-settings__label">Background</span>
+        <div className="doc-settings__background-row">
+          <input
+            aria-label="Document background color"
+            className="doc-settings__color-input"
+            onChange={(event) => setDocumentBackground(hexToRgba(event.currentTarget.value))}
+            type="color"
+            value={backgroundHex}
+          />
+          <label className="doc-settings__checkbox-label">
+            <input
+              checked={hasTransparentBackground}
+              className="doc-settings__checkbox"
+              onChange={(event) => {
+                if (event.currentTarget.checked) {
+                  setDocumentBackground(null);
+                } else {
+                  setDocumentBackground(hexToRgba(backgroundHex));
+                }
+              }}
+              type="checkbox"
+            />
+            <span>Transparent</span>
+          </label>
+        </div>
       </div>
     </div>
   );
