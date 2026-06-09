@@ -115,6 +115,7 @@ export interface EditorActions {
   sendBackward: () => void;
   groupSelection: () => void;
   ungroupSelection: () => void;
+  toggleClipMask: () => void;
   booleanOp: (op: BooleanOp) => void;
   copySelection: () => void;
   paste: () => void;
@@ -634,6 +635,35 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       }
 
       state.selection = applyUngroupSelectionResults(state.doc, results);
+      clearMissingKeyObject(state);
+      return true;
+    });
+  },
+
+  toggleClipMask: () => {
+    withDocHistory(set, (state) => {
+      if (state.selection.length === 1) {
+        const node = state.doc.nodes[state.selection[0]!];
+        if (!node || node.type !== "group") {
+          return false;
+        }
+
+        node.clip = !node.clip;
+        return true;
+      }
+
+      if (state.selection.length < 2) {
+        return false;
+      }
+
+      const result = computeGroupSelection(state.doc, state.selection);
+      if (!result) {
+        return false;
+      }
+
+      result.group.clip = true;
+      applyGroupSelectionResult(state.doc, result);
+      state.selection = [result.group.id];
       clearMissingKeyObject(state);
       return true;
     });

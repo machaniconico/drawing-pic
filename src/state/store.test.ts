@@ -824,6 +824,90 @@ describe("editorStore", () => {
     expect(editorStore.getState().doc.nodes[rect.id]).toEqual(rect);
   });
 
+  it("makes a clipping mask by grouping two selected top-level nodes", () => {
+    const artwork = createRect(0, 0, 40, 40);
+    const mask = createRect(5, 5, 20, 20);
+    editorStore.getState().addNode(artwork);
+    editorStore.getState().addNode(mask);
+    editorStore.getState().setSelection([artwork.id, mask.id]);
+    const beforeDoc = editorStore.getState().doc;
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().toggleClipMask();
+
+    const [groupId] = editorStore.getState().selection;
+    const group = groupId ? editorStore.getState().doc.nodes[groupId] : undefined;
+    const layer = editorStore.getState().doc.nodes[firstLayerId(editorStore.getState().doc)];
+
+    expect(group?.type).toBe("group");
+    expect(group?.type === "group" ? group.clip : undefined).toBe(true);
+    expect(group?.type === "group" ? group.children : []).toEqual([artwork.id, mask.id]);
+    expect(layer?.type === "layer" ? layer.children : []).toEqual([groupId]);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().selection).toEqual([]);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("toggles the clip flag on a selected group as one undoable history step", () => {
+    const artwork = createRect(0, 0, 40, 40);
+    const mask = createRect(5, 5, 20, 20);
+    editorStore.getState().addNode(artwork);
+    editorStore.getState().addNode(mask);
+    editorStore.getState().setSelection([artwork.id, mask.id]);
+    editorStore.getState().groupSelection();
+    const groupId = editorStore.getState().selection[0]!;
+    const beforeDoc = editorStore.getState().doc;
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().toggleClipMask();
+
+    const clippedGroup = editorStore.getState().doc.nodes[groupId];
+    expect(clippedGroup?.type).toBe("group");
+    expect(clippedGroup?.type === "group" ? clippedGroup.clip : undefined).toBe(true);
+    expect(editorStore.getState().selection).toEqual([groupId]);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    const unclippedGroup = editorStore.getState().doc.nodes[groupId];
+    expect(unclippedGroup?.type === "group" ? unclippedGroup.clip : undefined).toBe(false);
+    expect(editorStore.getState().selection).toEqual([groupId]);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+
+    editorStore.getState().redo();
+    editorStore.getState().toggleClipMask();
+
+    const toggledOffGroup = editorStore.getState().doc.nodes[groupId];
+    expect(toggledOffGroup?.type === "group" ? toggledOffGroup.clip : undefined).toBe(false);
+  });
+
+  it("does not push history when toggling a clip mask with an empty or single non-group selection", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().toggleClipMask();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().selection).toEqual([rect.id]);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    editorStore.getState().clearSelection();
+    editorStore.getState().toggleClipMask();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().selection).toEqual([]);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
   it("caps document history at 100 snapshots", () => {
     for (let i = 0; i < 105; i += 1) {
       editorStore.getState().addNode(createRect(i, i, 10, 10));
