@@ -119,6 +119,21 @@
   font: inherit;
 }
 
+.properties-panel__text-input {
+  width: 132px;
+  min-height: 26px;
+  padding: 3px 6px;
+  color: #f0f0f0;
+  background: #1f1f21;
+  border: 1px solid #454545;
+  border-radius: 4px;
+  font: inherit;
+}
+
+.properties-panel__text-input--wide {
+  width: 100%;
+}
+
 .properties-panel__color:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -157,6 +172,7 @@
 .properties-panel__number:focus,
 .properties-panel__color:focus,
 .properties-panel__select:focus,
+.properties-panel__text-input:focus,
 .properties-panel__button:focus {
   border-color: #2d8cf0;
   outline: 1px solid rgba(45, 140, 240, 0.55);

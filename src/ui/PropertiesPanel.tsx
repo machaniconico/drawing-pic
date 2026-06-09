@@ -860,6 +860,7 @@ export function PropertiesPanel() {
   };
 
   const styledNode = hasStyle(node) ? node : null;
+  const textNode = node.type === "text" ? node : null;
   const gradientFill =
     styledNode !== null && (styledNode.fill.type === "linear" || styledNode.fill.type === "radial")
       ? styledNode.fill
@@ -1319,6 +1320,95 @@ export function PropertiesPanel() {
           </>
         ) : null}
       </section>
+
+      {textNode !== null ? (
+        <section className="properties-panel__section" aria-label="Text">
+          <h3>Text</h3>
+          <label className="properties-panel__row properties-panel__row--stacked">
+            <span className="properties-panel__label">Content</span>
+            <CommitTextInput
+              ariaLabel="Text content"
+              className="properties-panel__text-input properties-panel__text-input--wide"
+              onCommit={(value) => updateNode(textNode.id, { text: value })}
+              value={textNode.text}
+            />
+          </label>
+
+          <label className="properties-panel__row">
+            <span className="properties-panel__label">Font family</span>
+            <CommitTextInput
+              ariaLabel="Font family"
+              className="properties-panel__text-input"
+              onCommit={(value) => updateNode(textNode.id, { fontFamily: value })}
+              value={textNode.fontFamily}
+            />
+          </label>
+
+          <label className="properties-panel__row">
+            <span className="properties-panel__label">Font size</span>
+            <CommitNumberInput
+              ariaLabel="Font size"
+              min={1}
+              onCommit={(value) => updateNode(textNode.id, { fontSize: Math.max(1, value) })}
+              value={textNode.fontSize}
+            />
+          </label>
+
+          <label className="properties-panel__row">
+            <span className="properties-panel__label">Font weight</span>
+            <CommitNumberInput
+              ariaLabel="Font weight"
+              min={1}
+              onCommit={(value) => updateNode(textNode.id, { fontWeight: Math.max(1, value) })}
+              value={textNode.fontWeight}
+            />
+          </label>
+
+          <label className="properties-panel__row">
+            <span className="properties-panel__label">Font style</span>
+            <select
+              aria-label="Font style"
+              className="properties-panel__select"
+              onChange={(event) =>
+                updateNode(textNode.id, {
+                  fontStyle: event.currentTarget.value as "normal" | "italic",
+                })
+              }
+              value={textNode.fontStyle}
+            >
+              <option value="normal">Normal</option>
+              <option value="italic">Italic</option>
+            </select>
+          </label>
+
+          <label className="properties-panel__row">
+            <span className="properties-panel__label">Text align</span>
+            <select
+              aria-label="Text align"
+              className="properties-panel__select"
+              onChange={(event) =>
+                updateNode(textNode.id, {
+                  textAlign: event.currentTarget.value as "left" | "center" | "right",
+                })
+              }
+              value={textNode.textAlign}
+            >
+              <option value="left">Left</option>
+              <option value="center">Center</option>
+              <option value="right">Right</option>
+            </select>
+          </label>
+
+          <label className="properties-panel__row">
+            <span className="properties-panel__label">Letter spacing</span>
+            <CommitNumberInput
+              ariaLabel="Letter spacing"
+              onCommit={(value) => updateNode(textNode.id, { letterSpacing: value })}
+              value={textNode.letterSpacing}
+            />
+          </label>
+        </section>
+      ) : null}
 
       {geometrySection}
     </aside>
