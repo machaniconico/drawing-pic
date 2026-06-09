@@ -3,7 +3,7 @@ import { canUndo } from "./history";
 import { apply, compose, IDENTITY, invert, rotationAround, type Matrix } from "../core/geometry/matrix";
 import { createDocument, createGroup, createRect, defaultStroke, rgba, solid } from "../core/model/factory";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
-import type { Document, NodeId, SceneNode } from "../core/model/types";
+import type { Document, NodeId, Paint, SceneNode, Stroke } from "../core/model/types";
 import { isContainer } from "../core/model/types";
 import {
   alignNodes,
@@ -15,6 +15,8 @@ import {
   flipNodes,
   groupSelection,
   moveSelectionTo,
+  nodesWithMatchingFill,
+  nodesWithMatchingStroke,
   nodeRotationAngle,
   resizeSelectionTo,
   rotateNodesAround,
@@ -137,6 +139,104 @@ describe("selection operations", () => {
     const sampled = sampleStyleAt(doc, { x: 10, y: 10 });
 
     expect(sampled?.fill).toEqual(front.fill);
+  });
+
+  it("selects styled nodes with matching solid fills and leaves the document unchanged", () => {
+    const doc = createDocument();
+    const reference = createRect(0, 0, 10, 10);
+    const match = createRect(20, 0, 10, 10);
+    const differentAlpha = createRect(40, 0, 10, 10);
+    reference.fill = solid(rgba(255, 0, 0, 0.75));
+    match.fill = solid(rgba(255, 0, 0, 0.75));
+    differentAlpha.fill = solid(rgba(255, 0, 0, 1));
+    addToFirstLayer(doc, [reference, match, differentAlpha]);
+    const before = structuredClone(doc) as Document;
+
+    const ids = nodesWithMatchingFill(doc, reference.id);
+
+    expect(ids).toEqual([reference.id, match.id]);
+    expect(doc).toEqual(before);
+  });
+
+  it("selects styled nodes with matching gradient fills by stops and geometry", () => {
+    const doc = createDocument();
+    const gradient: Paint = {
+      type: "linear",
+      start: { x: 0, y: 0 },
+      end: { x: 100, y: 50 },
+      stops: [
+        { offset: 0, color: rgba(255, 0, 0) },
+        { offset: 0.5, color: rgba(0, 255, 0, 0.5) },
+        { offset: 1, color: rgba(0, 0, 255) },
+      ],
+    };
+    const reference = createRect(0, 0, 10, 10);
+    const match = createRect(20, 0, 10, 10);
+    const differentStop = createRect(40, 0, 10, 10);
+    const differentGeometry = createRect(60, 0, 10, 10);
+    reference.fill = gradient;
+    match.fill = structuredClone(gradient) as Paint;
+    differentStop.fill = {
+      ...structuredClone(gradient),
+      stops: [
+        { offset: 0, color: rgba(255, 0, 0) },
+        { offset: 0.75, color: rgba(0, 255, 0, 0.5) },
+        { offset: 1, color: rgba(0, 0, 255) },
+      ],
+    };
+    differentGeometry.fill = { ...structuredClone(gradient), end: { x: 100, y: 51 } };
+    addToFirstLayer(doc, [reference, match, differentStop, differentGeometry]);
+
+    expect(nodesWithMatchingFill(doc, reference.id)).toEqual([reference.id, match.id]);
+  });
+
+  it("selects styled nodes with matching full stroke definitions", () => {
+    const doc = createDocument();
+    const stroke: Stroke = {
+      ...defaultStroke(rgba(12, 34, 56, 0.8), 4),
+      cap: "round",
+      join: "bevel",
+      miterLimit: 6,
+      dash: [2, 3, 5],
+      dashOffset: 1.5,
+      align: "outside",
+    };
+    const reference = createRect(0, 0, 10, 10);
+    const match = createRect(20, 0, 10, 10);
+    const differentDash = createRect(40, 0, 10, 10);
+    const differentAlign = createRect(60, 0, 10, 10);
+    reference.stroke = stroke;
+    match.stroke = structuredClone(stroke) as Stroke;
+    differentDash.stroke = { ...structuredClone(stroke), dash: [2, 3, 6] };
+    differentAlign.stroke = { ...structuredClone(stroke), align: "inside" };
+    addToFirstLayer(doc, [reference, match, differentDash, differentAlign]);
+
+    expect(nodesWithMatchingStroke(doc, reference.id)).toEqual([reference.id, match.id]);
+  });
+
+  it("selects styled nodes with matching null strokes", () => {
+    const doc = createDocument();
+    const reference = createRect(0, 0, 10, 10);
+    const match = createRect(20, 0, 10, 10);
+    const different = createRect(40, 0, 10, 10);
+    reference.stroke = null;
+    match.stroke = null;
+    different.stroke = defaultStroke(rgba(0, 0, 0), 0);
+    addToFirstLayer(doc, [reference, match, different]);
+
+    expect(nodesWithMatchingStroke(doc, reference.id)).toEqual([reference.id, match.id]);
+  });
+
+  it("returns an empty selection for missing or non-styled select-same references", () => {
+    const doc = createDocument();
+    const styled = createRect(0, 0, 10, 10);
+    const group = createGroup("Group");
+    addToFirstLayer(doc, [styled, group]);
+
+    expect(nodesWithMatchingFill(doc, "missing")).toEqual([]);
+    expect(nodesWithMatchingStroke(doc, "missing")).toEqual([]);
+    expect(nodesWithMatchingFill(doc, group.id)).toEqual([]);
+    expect(nodesWithMatchingStroke(doc, group.id)).toEqual([]);
   });
 
   it("aligns nodes to the left edge of the selection bounds", () => {

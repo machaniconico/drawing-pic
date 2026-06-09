@@ -5,7 +5,7 @@ import type { Vec2 } from "../core/geometry/vector";
 import { createGroup, newId as createNodeId } from "../core/model/factory";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
 import { hitTest, type HitTestOptions } from "../core/model/hittest";
-import type { Document, GroupNode, NodeId, Paint, PathNode, SceneNode, Stroke, SubPath } from "../core/model/types";
+import type { Document, GroupNode, NodeId, Paint, PathNode, RGBA, SceneNode, Stroke, SubPath } from "../core/model/types";
 import { hasStyle, isContainer } from "../core/model/types";
 
 export type AlignEdge = "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom";
@@ -118,6 +118,86 @@ export const sampleStyleAt = (
     fill: node.fill,
     stroke: node.stroke,
   };
+};
+
+const rgbaEquals = (a: RGBA, b: RGBA): boolean =>
+  a.r === b.r && a.g === b.g && a.b === b.b && a.a === b.a;
+
+const pointEquals = (a: Vec2, b: Vec2): boolean => a.x === b.x && a.y === b.y;
+
+const gradientStopsEqual = (
+  a: Extract<Paint, { type: "linear" | "radial" }>["stops"],
+  b: Extract<Paint, { type: "linear" | "radial" }>["stops"],
+): boolean =>
+  a.length === b.length &&
+  a.every((stop, index) => {
+    const other = b[index]!;
+    return stop.offset === other.offset && rgbaEquals(stop.color, other.color);
+  });
+
+const paintEquals = (a: Paint, b: Paint): boolean => {
+  if (a.type !== b.type) {
+    return false;
+  }
+
+  switch (a.type) {
+    case "none":
+      return true;
+    case "solid":
+      return rgbaEquals(a.color, (b as Extract<Paint, { type: "solid" }>).color);
+    case "linear": {
+      const other = b as Extract<Paint, { type: "linear" }>;
+      return pointEquals(a.start, other.start) && pointEquals(a.end, other.end) && gradientStopsEqual(a.stops, other.stops);
+    }
+    case "radial": {
+      const other = b as Extract<Paint, { type: "radial" }>;
+      return a.radius === other.radius && pointEquals(a.center, other.center) && gradientStopsEqual(a.stops, other.stops);
+    }
+  }
+};
+
+const numberArrayEquals = (a: readonly number[], b: readonly number[]): boolean =>
+  a.length === b.length && a.every((value, index) => value === b[index]);
+
+const strokeEquals = (a: Stroke | null, b: Stroke | null): boolean => {
+  if (a === null || b === null) {
+    return a === b;
+  }
+
+  return (
+    paintEquals(a.paint, b.paint) &&
+    a.width === b.width &&
+    a.cap === b.cap &&
+    a.join === b.join &&
+    a.miterLimit === b.miterLimit &&
+    numberArrayEquals(a.dash, b.dash) &&
+    a.dashOffset === b.dashOffset &&
+    a.align === b.align
+  );
+};
+
+export const nodesWithMatchingFill = (doc: Document, refId: NodeId): NodeId[] => {
+  const reference = doc.nodes[refId];
+  if (!reference || !hasStyle(reference)) {
+    return [];
+  }
+
+  return Object.values(doc.nodes)
+    .filter(hasStyle)
+    .filter((node) => paintEquals(node.fill, reference.fill))
+    .map((node) => node.id);
+};
+
+export const nodesWithMatchingStroke = (doc: Document, refId: NodeId): NodeId[] => {
+  const reference = doc.nodes[refId];
+  if (!reference || !hasStyle(reference)) {
+    return [];
+  }
+
+  return Object.values(doc.nodes)
+    .filter(hasStyle)
+    .filter((node) => strokeEquals(node.stroke, reference.stroke))
+    .map((node) => node.id);
 };
 
 const nodeWorldBounds = (doc: Document, id: NodeId): BBox => {
