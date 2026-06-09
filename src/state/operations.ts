@@ -62,8 +62,136 @@ export interface SampledStyle {
 }
 
 const NUMERIC_TRANSFORM_EPSILON = 1e-9;
+const CUBIC_ARC_KAPPA = 0.5522847498307936;
 
 const uniqueIds = (ids: readonly NodeId[]): NodeId[] => [...new Set(ids)];
+
+const cornerAnchor = (point: Vec2): SubPath["anchors"][number] => ({
+  point,
+  handleIn: null,
+  handleOut: null,
+});
+
+export const rectToPathSubPath = (
+  width: number,
+  height: number,
+  rx: number,
+  ry: number,
+): SubPath => {
+  if (rx <= 0 && ry <= 0) {
+    return {
+      anchors: [
+        cornerAnchor({ x: 0, y: 0 }),
+        cornerAnchor({ x: width, y: 0 }),
+        cornerAnchor({ x: width, y: height }),
+        cornerAnchor({ x: 0, y: height }),
+      ],
+      closed: true,
+    };
+  }
+
+  const roundedRx = Math.min(Math.abs(rx), Math.abs(width) / 2);
+  const roundedRy = Math.min(Math.abs(ry), Math.abs(height) / 2);
+  const handleX = roundedRx * CUBIC_ARC_KAPPA;
+  const handleY = roundedRy * CUBIC_ARC_KAPPA;
+
+  return {
+    anchors: [
+      {
+        point: { x: roundedRx, y: 0 },
+        handleIn: { x: -handleX, y: 0 },
+        handleOut: null,
+      },
+      {
+        point: { x: width - roundedRx, y: 0 },
+        handleIn: null,
+        handleOut: { x: handleX, y: 0 },
+      },
+      {
+        point: { x: width, y: roundedRy },
+        handleIn: { x: 0, y: -handleY },
+        handleOut: null,
+      },
+      {
+        point: { x: width, y: height - roundedRy },
+        handleIn: null,
+        handleOut: { x: 0, y: handleY },
+      },
+      {
+        point: { x: width - roundedRx, y: height },
+        handleIn: { x: handleX, y: 0 },
+        handleOut: null,
+      },
+      {
+        point: { x: roundedRx, y: height },
+        handleIn: null,
+        handleOut: { x: -handleX, y: 0 },
+      },
+      {
+        point: { x: 0, y: height - roundedRy },
+        handleIn: { x: 0, y: handleY },
+        handleOut: null,
+      },
+      {
+        point: { x: 0, y: roundedRy },
+        handleIn: null,
+        handleOut: { x: 0, y: -handleY },
+      },
+    ],
+    closed: true,
+  };
+};
+
+export const ellipseToPathSubPath = (rx: number, ry: number): SubPath => {
+  const handleX = rx * CUBIC_ARC_KAPPA;
+  const handleY = ry * CUBIC_ARC_KAPPA;
+
+  return {
+    anchors: [
+      {
+        point: { x: rx, y: 0 },
+        handleIn: { x: 0, y: -handleY },
+        handleOut: { x: 0, y: handleY },
+      },
+      {
+        point: { x: 0, y: ry },
+        handleIn: { x: handleX, y: 0 },
+        handleOut: { x: -handleX, y: 0 },
+      },
+      {
+        point: { x: -rx, y: 0 },
+        handleIn: { x: 0, y: handleY },
+        handleOut: { x: 0, y: -handleY },
+      },
+      {
+        point: { x: 0, y: -ry },
+        handleIn: { x: -handleX, y: 0 },
+        handleOut: { x: handleX, y: 0 },
+      },
+    ],
+    closed: true,
+  };
+};
+
+export const convertShapeToPath = (node: SceneNode): PathNode | null => {
+  if (node.type !== "rect" && node.type !== "ellipse") {
+    return null;
+  }
+
+  return {
+    id: node.id,
+    name: node.name,
+    type: "path",
+    transform: node.transform,
+    opacity: node.opacity,
+    visible: node.visible,
+    locked: node.locked,
+    fill: node.fill,
+    stroke: node.stroke,
+    blendMode: node.blendMode,
+    subpaths: [node.type === "rect" ? rectToPathSubPath(node.width, node.height, node.rx, node.ry) : ellipseToPathSubPath(node.rx, node.ry)],
+  };
+};
 
 const parentEntries = (doc: Document): Array<[NodeId | null, readonly NodeId[]]> => [
   [null, doc.layerOrder],

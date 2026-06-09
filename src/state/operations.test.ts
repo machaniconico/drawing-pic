@@ -1,7 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { canUndo } from "./history";
 import { apply, compose, IDENTITY, invert, rotationAround, type Matrix } from "../core/geometry/matrix";
-import { createDocument, createGroup, createRect, defaultStroke, rgba, solid } from "../core/model/factory";
+import {
+  createDocument,
+  createEllipse,
+  createGroup,
+  createImage,
+  createPath,
+  createRect,
+  createText,
+  defaultStroke,
+  rgba,
+  solid,
+} from "../core/model/factory";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
 import type { Document, NodeId, Paint, SceneNode, Stroke } from "../core/model/types";
 import { isContainer } from "../core/model/types";
@@ -10,6 +21,7 @@ import {
   booleanSelection,
   bringToFront,
   cloneSubtree,
+  convertShapeToPath,
   distributeByGap,
   distributeNodes,
   flipNodes,
@@ -60,6 +72,8 @@ const resetStore = (): void => {
   editorStore.setState(createEditorStateForTest());
 };
 
+const KAPPA = 0.5522847498307936;
+
 const expectMatrixCloseTo = (actual: Matrix, expected: Matrix): void => {
   expect(actual.a).toBeCloseTo(expected.a, 9);
   expect(actual.b).toBeCloseTo(expected.b, 9);
@@ -104,6 +118,139 @@ const applyTransformPatches = (doc: Document, patches: Record<NodeId, { e: numbe
     }
   }
 };
+
+describe("convertShapeToPath", () => {
+  it("converts a sharp rect to a closed four-anchor path and preserves shared node fields", () => {
+    const rect = createRect(10, 20, 30, 40);
+    const fill = solid(rgba(12, 34, 56, 0.75));
+    const stroke = defaultStroke(rgba(200, 10, 20), 3);
+    rect.name = "Card";
+    rect.transform = { a: 0.5, b: 0.25, c: -0.125, d: 1.5, e: 10, f: 20 };
+    rect.opacity = 0.4;
+    rect.visible = false;
+    rect.locked = true;
+    rect.fill = fill;
+    rect.stroke = stroke;
+    rect.blendMode = "multiply";
+    const before = structuredClone(rect);
+
+    const path = convertShapeToPath(rect);
+
+    expect(rect).toEqual(before);
+    expect(path).not.toBeNull();
+    if (!path) throw new Error("Expected rect conversion to produce a path");
+
+    expect(path).toMatchObject({
+      id: rect.id,
+      name: "Card",
+      type: "path",
+      opacity: 0.4,
+      visible: false,
+      locked: true,
+      blendMode: "multiply",
+    });
+    expect(path.transform).toBe(rect.transform);
+    expect(path.fill).toBe(fill);
+    expect(path.stroke).toBe(stroke);
+    expect(path.subpaths).toHaveLength(1);
+    expect(path.subpaths[0]?.closed).toBe(true);
+
+    const anchors = path.subpaths[0]?.anchors ?? [];
+    expect(anchors).toHaveLength(4);
+    [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 40 }, { x: 0, y: 40 }].forEach(
+      (point, index) => {
+        expectPointCloseTo(anchors[index]!.point, point);
+        expect(anchors[index]!.handleIn).toBeNull();
+        expect(anchors[index]!.handleOut).toBeNull();
+      },
+    );
+  });
+
+  it("converts a rounded rect to eight anchors with clamped radii and kappa handles", () => {
+    const rect = createRect(0, 0, 120, 80);
+    rect.rx = 90;
+    rect.ry = 70;
+
+    const path = convertShapeToPath(rect);
+
+    expect(path).not.toBeNull();
+    if (!path) throw new Error("Expected rounded rect conversion to produce a path");
+
+    const subpath = path.subpaths[0]!;
+    expect(subpath.closed).toBe(true);
+    expect(subpath.anchors).toHaveLength(8);
+
+    const anchors = subpath.anchors;
+    const rx = 60;
+    const ry = 40;
+    [
+      { x: rx, y: 0 },
+      { x: 120 - rx, y: 0 },
+      { x: 120, y: ry },
+      { x: 120, y: 80 - ry },
+      { x: 120 - rx, y: 80 },
+      { x: rx, y: 80 },
+      { x: 0, y: 80 - ry },
+      { x: 0, y: ry },
+    ].forEach((point, index) => expectPointCloseTo(anchors[index]!.point, point));
+
+    expectPointCloseTo(anchors[1]!.handleOut!, { x: KAPPA * rx, y: 0 });
+    expectPointCloseTo(anchors[2]!.handleIn!, { x: 0, y: -KAPPA * ry });
+    expectPointCloseTo(anchors[3]!.handleOut!, { x: 0, y: KAPPA * ry });
+    expectPointCloseTo(anchors[4]!.handleIn!, { x: KAPPA * rx, y: 0 });
+    expectPointCloseTo(anchors[5]!.handleOut!, { x: -KAPPA * rx, y: 0 });
+    expectPointCloseTo(anchors[6]!.handleIn!, { x: 0, y: KAPPA * ry });
+    expectPointCloseTo(anchors[7]!.handleOut!, { x: 0, y: -KAPPA * ry });
+    expectPointCloseTo(anchors[0]!.handleIn!, { x: -KAPPA * rx, y: 0 });
+  });
+
+  it("converts an ellipse to four clockwise cubic anchors with scaled tangent handles", () => {
+    const ellipse = createEllipse(50, 60, 25, 10);
+
+    const path = convertShapeToPath(ellipse);
+
+    expect(path).not.toBeNull();
+    if (!path) throw new Error("Expected ellipse conversion to produce a path");
+
+    expect(path.id).toBe(ellipse.id);
+    expect(path.transform).toBe(ellipse.transform);
+    expect(path.fill).toBe(ellipse.fill);
+    expect(path.stroke).toBe(ellipse.stroke);
+    expect(path.subpaths).toHaveLength(1);
+    expect(path.subpaths[0]?.closed).toBe(true);
+
+    const anchors = path.subpaths[0]!.anchors;
+    expect(anchors).toHaveLength(4);
+    [{ x: 25, y: 0 }, { x: 0, y: 10 }, { x: -25, y: 0 }, { x: 0, y: -10 }].forEach(
+      (point, index) => expectPointCloseTo(anchors[index]!.point, point),
+    );
+
+    expectPointCloseTo(anchors[0]!.handleIn!, { x: 0, y: -KAPPA * 10 });
+    expectPointCloseTo(anchors[0]!.handleOut!, { x: 0, y: KAPPA * 10 });
+    expectPointCloseTo(anchors[1]!.handleIn!, { x: KAPPA * 25, y: 0 });
+    expectPointCloseTo(anchors[1]!.handleOut!, { x: -KAPPA * 25, y: 0 });
+    expectPointCloseTo(anchors[2]!.handleIn!, { x: 0, y: KAPPA * 10 });
+    expectPointCloseTo(anchors[2]!.handleOut!, { x: 0, y: -KAPPA * 10 });
+    expectPointCloseTo(anchors[3]!.handleIn!, { x: -KAPPA * 25, y: 0 });
+    expectPointCloseTo(anchors[3]!.handleOut!, { x: KAPPA * 25, y: 0 });
+  });
+
+  it("returns null for non-rect and non-ellipse nodes", () => {
+    const doc = createDocument();
+    const layer = doc.nodes[firstLayerId(doc)]!;
+    const nodes: SceneNode[] = [
+      createPath(),
+      createText("Label", { x: 0, y: 0 }),
+      createImage("data:,", 10, 10),
+      createGroup("Group"),
+      layer,
+    ];
+
+    for (const node of nodes) {
+      expect(convertShapeToPath(node)).toBeNull();
+    }
+  });
+});
 
 describe("selection operations", () => {
   it("samples the hit node fill and stroke at a world point", () => {
