@@ -9,6 +9,59 @@
   display: none;
 }
 
+.export-menu__field,
+.export-menu__checkbox {
+  min-width: 0;
+  color: #f2f2f2;
+  font: inherit;
+}
+
+.export-menu__field {
+  display: grid;
+  gap: 4px;
+}
+
+.export-menu__label {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: #c8c8cc;
+}
+
+.export-menu__number-input {
+  min-width: 0;
+  height: 30px;
+  box-sizing: border-box;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  color: #f2f2f2;
+  background: #232326;
+  font: inherit;
+  padding: 0 8px;
+}
+
+.export-menu__number-input:focus-visible {
+  outline: 2px solid #8ab4f8;
+  outline-offset: 2px;
+}
+
+.export-menu__checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  align-self: end;
+  font-weight: 600;
+}
+
+.export-menu__checkbox input {
+  margin: 0;
+}
+
+.export-menu__checkbox:has(input:disabled) {
+  color: #8a8a8d;
+}
+
 .export-menu__button {
   min-width: 0;
   height: 30px;

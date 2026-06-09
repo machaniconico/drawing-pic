@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { deserializeDocument, serializeDocument } from "../io/docSerialize";
 import { documentToPngBlob } from "../io/pngExport";
 import { documentToSvg } from "../io/svgExport";
@@ -23,17 +23,22 @@ const exportFileName = (name: string, extension: "svg" | "png" | "json"): string
 
 export function ExportMenu() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [scale, setScale] = useState(1);
+  const [selectionOnly, setSelectionOnly] = useState(false);
   const doc = useEditorStore((state) => state.doc);
+  const selection = useEditorStore((state) => state.selection);
   const loadDocument = useEditorStore((state) => state.loadDocument);
+  const selectedNodeIds = selectionOnly && selection.length > 0 ? selection : undefined;
+  const exportOptions = { scale, nodeIds: selectedNodeIds };
 
   const handleSvgExport = (): void => {
-    const svg = documentToSvg(doc);
+    const svg = documentToSvg(doc, exportOptions);
     const blob = new Blob([svg], { type: "image/svg+xml" });
     downloadBlob(blob, exportFileName(doc.name, "svg"));
   };
 
   const handlePngExport = (): void => {
-    void documentToPngBlob(doc)
+    void documentToPngBlob(doc, exportOptions)
       .then((blob) => {
         downloadBlob(blob, exportFileName(doc.name, "png"));
       })
@@ -50,6 +55,11 @@ export function ExportMenu() {
 
   const handleJsonOpen = (): void => {
     fileInputRef.current?.click();
+  };
+
+  const handleScaleChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
+    const nextScale = event.currentTarget.valueAsNumber;
+    setScale(Number.isFinite(nextScale) ? Math.max(0.1, nextScale) : 1);
   };
 
   const handleJsonFileChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
@@ -79,6 +89,26 @@ export function ExportMenu() {
       <button className="export-menu__button" type="button" onClick={handleJsonOpen}>
         Open (.json)
       </button>
+      <label className="export-menu__field">
+        <span className="export-menu__label">Scale</span>
+        <input
+          className="export-menu__number-input"
+          type="number"
+          min="0.1"
+          step="0.25"
+          value={scale}
+          onChange={handleScaleChange}
+        />
+      </label>
+      <label className="export-menu__checkbox">
+        <input
+          type="checkbox"
+          checked={selectionOnly && selection.length > 0}
+          disabled={selection.length === 0}
+          onChange={(event) => setSelectionOnly(event.currentTarget.checked)}
+        />
+        <span>Selection only</span>
+      </label>
       <input
         ref={fileInputRef}
         className="export-menu__file-input"
