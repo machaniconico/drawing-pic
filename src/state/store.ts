@@ -18,6 +18,8 @@ import {
   flipNodes as computeFlipNodes,
   groupSelection as computeGroupSelection,
   moveSelectionTo as computeMoveSelectionTo,
+  nodesWithMatchingFill as computeNodesWithMatchingFill,
+  nodesWithMatchingStroke as computeNodesWithMatchingStroke,
   rotateNodesAround as computeRotateNodesAround,
   rotateNodes90 as computeRotateNodes90,
   resizeSelectionTo as computeResizeSelectionTo,
@@ -135,6 +137,8 @@ export interface EditorActions {
   setAllObjectsHidden: (hidden: boolean) => void;
   clearGuides: () => void;
   setSelection: (ids: NodeId[]) => void;
+  selectSameFill: () => void;
+  selectSameStroke: () => void;
   addToSelection: (id: NodeId) => void;
   clearSelection: () => void;
   setKeyObject: (id: NodeId | null) => void;
@@ -1124,6 +1128,38 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     set(
       produce((state: EditorStore) => {
         state.selection = dedupeIds(ids).filter((id) => id in state.doc.nodes);
+        clearMissingKeyObject(state);
+      }),
+    );
+  },
+
+  selectSameFill: () => {
+    set(
+      produce((state: EditorStore) => {
+        const refId = state.selection[0];
+        if (!refId) {
+          return;
+        }
+
+        state.selection = dedupeIds(computeNodesWithMatchingFill(state.doc, refId)).filter(
+          (id) => id in state.doc.nodes,
+        );
+        clearMissingKeyObject(state);
+      }),
+    );
+  },
+
+  selectSameStroke: () => {
+    set(
+      produce((state: EditorStore) => {
+        const refId = state.selection[0];
+        if (!refId) {
+          return;
+        }
+
+        state.selection = dedupeIds(computeNodesWithMatchingStroke(state.doc, refId)).filter(
+          (id) => id in state.doc.nodes,
+        );
         clearMissingKeyObject(state);
       }),
     );

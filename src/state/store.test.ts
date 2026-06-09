@@ -3,7 +3,7 @@ import type { BBox } from "../core/geometry/bbox";
 import type { Matrix } from "../core/geometry/matrix";
 import { selectionBounds } from "../core/model/bounds";
 import { createGroup, createRect } from "../core/model/factory";
-import type { Document, NodeId, Paint } from "../core/model/types";
+import type { Document, NodeId, Paint, Stroke } from "../core/model/types";
 import { canRedo, canUndo, createHistory } from "./history";
 import { flipNodes, rotateNodes90, rotateNodesAround } from "./operations";
 import { createEditorStateForTest, editorStore, type SnapSettings, type SnapTarget } from "./store";
@@ -88,6 +88,87 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(historyDepth);
     expect(editorStore.getState().activeTool).toBe("hand");
     expect(editorStore.getState().viewport).toEqual({ pan: { x: 12, y: 24 }, zoom: 2 });
+  });
+
+  it("selects nodes with the same fill as the first selected node without pushing history", () => {
+    const redFill: Paint = { type: "solid", color: { r: 255, g: 0, b: 0, a: 1 } };
+    const blueFill: Paint = { type: "solid", color: { r: 0, g: 64, b: 255, a: 1 } };
+    const redLeft = createRect(0, 0, 10, 10);
+    const blue = createRect(20, 0, 10, 10);
+    const redRight = createRect(40, 0, 10, 10);
+    redLeft.fill = redFill;
+    blue.fill = blueFill;
+    redRight.fill = { type: "solid", color: { r: 255, g: 0, b: 0, a: 1 } };
+    editorStore.getState().addNode(redLeft);
+    editorStore.getState().addNode(blue);
+    editorStore.getState().addNode(redRight);
+    editorStore.getState().setSelection([redLeft.id, blue.id]);
+    editorStore.getState().setKeyObject(blue.id);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().selectSameFill();
+
+    expect(editorStore.getState().selection).toEqual([redLeft.id, redRight.id]);
+    expect(editorStore.getState().keyObjectId).toBeNull();
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
+  it("selects nodes with the same stroke as the first selected node without pushing history", () => {
+    const matchingStroke: Stroke = {
+      paint: { type: "solid", color: { r: 20, g: 20, b: 20, a: 1 } },
+      width: 3,
+      cap: "round",
+      join: "round",
+      miterLimit: 8,
+      dash: [4, 2],
+      dashOffset: 1,
+      align: "center",
+    };
+    const otherStroke: Stroke = {
+      ...matchingStroke,
+      width: 6,
+      dash: [4, 2],
+    };
+    const strokedLeft = createRect(0, 0, 10, 10);
+    const other = createRect(20, 0, 10, 10);
+    const strokedRight = createRect(40, 0, 10, 10);
+    strokedLeft.stroke = matchingStroke;
+    other.stroke = otherStroke;
+    strokedRight.stroke = {
+      ...matchingStroke,
+      paint: { type: "solid", color: { r: 20, g: 20, b: 20, a: 1 } },
+      dash: [4, 2],
+    };
+    editorStore.getState().addNode(strokedLeft);
+    editorStore.getState().addNode(other);
+    editorStore.getState().addNode(strokedRight);
+    editorStore.getState().setSelection([strokedLeft.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().selectSameStroke();
+
+    expect(editorStore.getState().selection).toEqual([strokedLeft.id, strokedRight.id]);
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
+  it("does nothing when select same fill or stroke runs without a selection", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.setState({ history: createHistory<Document>() });
+    const before = editorStore.getState();
+
+    editorStore.getState().selectSameFill();
+    editorStore.getState().selectSameStroke();
+
+    expect(editorStore.getState().selection).toEqual([]);
+    expect(editorStore.getState().doc).toBe(before.doc);
+    expect(editorStore.getState().history).toBe(before.history);
   });
 
   it("sets key object as non-undoable editor state", () => {
