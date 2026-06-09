@@ -76,6 +76,73 @@ describe("editorStore", () => {
     expect(editorStore.getState().viewport).toEqual({ pan: { x: 12, y: 24 }, zoom: 2 });
   });
 
+  it("sets key object as non-undoable editor state", () => {
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(50, 0, 10, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+    editorStore.getState().setSelection([left.id, right.id]);
+    const historyDepth = editorStore.getState().history.past.length;
+
+    editorStore.getState().setKeyObject(right.id);
+
+    expect(editorStore.getState().keyObjectId).toBe(right.id);
+    expect(editorStore.getState().history.past).toHaveLength(historyDepth);
+
+    editorStore.getState().setKeyObject(null);
+
+    expect(editorStore.getState().keyObjectId).toBeNull();
+    expect(editorStore.getState().history.past).toHaveLength(historyDepth);
+
+    editorStore.getState().setKeyObject(right.id);
+    editorStore.getState().setSelection([left.id]);
+    editorStore.getState().setKeyObject(right.id);
+
+    expect(editorStore.getState().keyObjectId).toBeNull();
+    expect(editorStore.getState().history.past).toHaveLength(historyDepth);
+  });
+
+  it("clears key object when it leaves selection", () => {
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(50, 0, 10, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+
+    editorStore.getState().setSelection([left.id, right.id]);
+    editorStore.getState().setKeyObject(right.id);
+    editorStore.getState().setSelection([left.id]);
+
+    expect(editorStore.getState().keyObjectId).toBeNull();
+
+    editorStore.getState().setSelection([left.id, right.id]);
+    editorStore.getState().setKeyObject(left.id);
+    editorStore.getState().clearSelection();
+
+    expect(editorStore.getState().keyObjectId).toBeNull();
+
+    editorStore.getState().setSelection([left.id, right.id]);
+    editorStore.getState().setKeyObject(right.id);
+    editorStore.getState().removeNodes([right.id]);
+
+    expect(editorStore.getState().selection).toEqual([left.id]);
+    expect(editorStore.getState().keyObjectId).toBeNull();
+  });
+
+  it("clears key object after duplicate replaces the selection", () => {
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(50, 0, 10, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+
+    editorStore.getState().setSelection([left.id, right.id]);
+    editorStore.getState().setKeyObject(right.id);
+    editorStore.getState().duplicateSelection();
+
+    // Selection now points at the freshly cloned nodes; the old key object is gone from it.
+    expect(editorStore.getState().selection).not.toContain(right.id);
+    expect(editorStore.getState().keyObjectId).toBeNull();
+  });
+
   it("defaults snap and grid editor state to current behavior", () => {
     expect(editorStore.getState().snapSettings).toEqual({
       enabled: true,
@@ -258,6 +325,53 @@ describe("editorStore", () => {
     expect(editorStore.getState().doc.nodes[rect.id]?.transform).toEqual(beforeTransform);
     expect(editorStore.getState().history.past).toHaveLength(0);
     expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
+  it("aligns to union bounds without a key object as one undoable step", () => {
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(50, 0, 10, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+    editorStore.getState().setSelection([left.id, right.id]);
+    const beforeDoc = editorStore.getState().doc;
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().alignNodes("left");
+
+    expect(editorStore.getState().doc.nodes[left.id]?.transform.e).toBe(0);
+    expect(editorStore.getState().doc.nodes[right.id]?.transform.e).toBe(0);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.nodes[right.id]?.transform.e).toBe(50);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("aligns to key object bounds and keeps the key fixed as one undoable step", () => {
+    const target = createRect(0, 0, 10, 10);
+    const key = createRect(50, 0, 10, 10);
+    editorStore.getState().addNode(target);
+    editorStore.getState().addNode(key);
+    editorStore.getState().setSelection([target.id, key.id]);
+    editorStore.getState().setKeyObject(key.id);
+    const beforeDoc = editorStore.getState().doc;
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().alignNodes("left");
+
+    expect(editorStore.getState().doc.nodes[target.id]?.transform.e).toBe(50);
+    expect(editorStore.getState().doc.nodes[key.id]?.transform.e).toBe(50);
+    expect(editorStore.getState().keyObjectId).toBe(key.id);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.nodes[target.id]?.transform.e).toBe(0);
+    expect(editorStore.getState().keyObjectId).toBe(key.id);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
   });
 
   it("does not push history for invalid rotateSelectionBy calls", () => {

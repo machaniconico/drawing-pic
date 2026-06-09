@@ -83,6 +83,7 @@ export interface SnapSettings {
 export interface EditorState {
   doc: Document;
   selection: NodeId[];
+  keyObjectId: NodeId | null;
   activeTool: ToolId;
   viewport: EditorViewport;
   snapSettings: SnapSettings;
@@ -124,6 +125,7 @@ export interface EditorActions {
   setSelection: (ids: NodeId[]) => void;
   addToSelection: (id: NodeId) => void;
   clearSelection: () => void;
+  setKeyObject: (id: NodeId | null) => void;
   setActiveTool: (tool: ToolId) => void;
   setPan: (pan: Vec2) => void;
   setZoom: (zoom: number) => void;
@@ -145,6 +147,7 @@ const MAX_SNAP_GRID_SIZE = 1024;
 const initialState = (): EditorState => ({
   doc: createDocument(),
   selection: [],
+  keyObjectId: null,
   activeTool: "select",
   viewport: {
     pan: { x: 0, y: 0 },
@@ -163,6 +166,12 @@ const initialState = (): EditorState => ({
 });
 
 const dedupeIds = (ids: NodeId[]): NodeId[] => [...new Set(ids)];
+
+const clearMissingKeyObject = (state: EditorStore): void => {
+  if (state.keyObjectId !== null && !state.selection.includes(state.keyObjectId)) {
+    state.keyObjectId = null;
+  }
+};
 
 const getDefaultParentId = (doc: Document): NodeId | undefined => doc.layerOrder.at(-1);
 
@@ -439,6 +448,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       }
 
       state.selection = state.selection.filter((id) => !removed.has(id));
+      clearMissingKeyObject(state);
       return true;
     });
   },
@@ -496,7 +506,9 @@ export const editorStore = createStore<EditorStore>()((set) => ({
   },
 
   alignNodes: (edge) => {
-    withDocHistory(set, (state) => applyTransformPatches(state.doc, computeAlignNodes(state.doc, state.selection, edge)));
+    withDocHistory(set, (state) =>
+      applyTransformPatches(state.doc, computeAlignNodes(state.doc, state.selection, edge, state.keyObjectId)),
+    );
   },
 
   distributeNodes: (axis) => {
@@ -560,6 +572,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
 
       applyGroupSelectionResult(state.doc, result);
       state.selection = [result.group.id];
+      clearMissingKeyObject(state);
       return true;
     });
   },
@@ -572,6 +585,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       }
 
       state.selection = applyUngroupSelectionResults(state.doc, results);
+      clearMissingKeyObject(state);
       return true;
     });
   },
@@ -596,6 +610,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
         delete state.doc.nodes[id];
       }
       state.selection = [result.node.id];
+      clearMissingKeyObject(state);
       return true;
     });
   },
@@ -651,6 +666,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       }
 
       state.selection = pastedRootIds;
+      clearMissingKeyObject(state);
       return pastedRootIds.length > 0;
     });
   },
@@ -688,6 +704,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       }
 
       state.selection = duplicatedRootIds;
+      clearMissingKeyObject(state);
       return duplicatedRootIds.length > 0;
     });
   },
@@ -801,6 +818,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     set(
       produce((state: EditorStore) => {
         state.selection = dedupeIds(ids).filter((id) => id in state.doc.nodes);
+        clearMissingKeyObject(state);
       }),
     );
   },
@@ -819,6 +837,15 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     set(
       produce((state: EditorStore) => {
         state.selection = [];
+        state.keyObjectId = null;
+      }),
+    );
+  },
+
+  setKeyObject: (id) => {
+    set(
+      produce((state: EditorStore) => {
+        state.keyObjectId = id !== null && state.selection.includes(id) ? id : null;
       }),
     );
   },
@@ -898,6 +925,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       produce((state: EditorStore) => {
         state.doc = normalizeDocument(doc);
         state.selection = [];
+        state.keyObjectId = null;
         state.history = createHistory<Document>();
       }),
     );
@@ -918,6 +946,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
         state.history = step.history;
         state.doc = step.snapshot;
         state.selection = state.selection.filter((id) => id in state.doc.nodes);
+        clearMissingKeyObject(state);
       }),
     );
   },
@@ -937,6 +966,7 @@ export const editorStore = createStore<EditorStore>()((set) => ({
         state.history = step.history;
         state.doc = step.snapshot;
         state.selection = state.selection.filter((id) => id in state.doc.nodes);
+        clearMissingKeyObject(state);
       }),
     );
   },
