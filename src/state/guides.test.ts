@@ -6,6 +6,8 @@ import {
   clearGuides,
   moveGuide,
   removeGuide,
+  setAllGuidesHidden,
+  setAllGuidesLocked,
   setGuideColor,
   setGuideHidden,
   setGuideLocked,
@@ -68,6 +70,87 @@ describe("guides", () => {
     ]);
   });
 
+  it("locks all guides while preserving other fields", () => {
+    const doc: Document = {
+      ...createGuideDocument(),
+      guides: [
+        { id: "guide-1", axis: "x", position: 100, color: "#00d8ff", hidden: true },
+        { id: "guide-2", axis: "y", position: 200, color: "#ffcc00", locked: false },
+      ],
+    };
+
+    const next = setAllGuidesLocked(doc, true);
+
+    expect(next).not.toBe(doc);
+    expect(next.guides).toEqual([
+      { id: "guide-1", axis: "x", position: 100, color: "#00d8ff", hidden: true, locked: true },
+      { id: "guide-2", axis: "y", position: 200, color: "#ffcc00", locked: true },
+    ]);
+    expect(doc.guides).toEqual([
+      { id: "guide-1", axis: "x", position: 100, color: "#00d8ff", hidden: true },
+      { id: "guide-2", axis: "y", position: 200, color: "#ffcc00", locked: false },
+    ]);
+  });
+
+  it("unlocks all guides", () => {
+    const doc: Document = {
+      ...createGuideDocument(),
+      guides: [
+        { id: "guide-1", axis: "x", position: 100, locked: true },
+        { id: "guide-2", axis: "y", position: 200, locked: true },
+      ],
+    };
+
+    expect(setAllGuidesLocked(doc, false).guides).toEqual([
+      { id: "guide-1", axis: "x", position: 100, locked: false },
+      { id: "guide-2", axis: "y", position: 200, locked: false },
+    ]);
+  });
+
+  it("hides all guides while preserving other fields", () => {
+    const doc: Document = {
+      ...createGuideDocument(),
+      guides: [
+        { id: "guide-1", axis: "x", position: 100, color: "#00d8ff", locked: true },
+        { id: "guide-2", axis: "y", position: 200, color: "#ffcc00", hidden: false },
+      ],
+    };
+
+    const next = setAllGuidesHidden(doc, true);
+
+    expect(next).not.toBe(doc);
+    expect(next.guides).toEqual([
+      { id: "guide-1", axis: "x", position: 100, color: "#00d8ff", locked: true, hidden: true },
+      { id: "guide-2", axis: "y", position: 200, color: "#ffcc00", hidden: true },
+    ]);
+    expect(doc.guides).toEqual([
+      { id: "guide-1", axis: "x", position: 100, color: "#00d8ff", locked: true },
+      { id: "guide-2", axis: "y", position: 200, color: "#ffcc00", hidden: false },
+    ]);
+  });
+
+  it("shows all guides", () => {
+    const doc: Document = {
+      ...createGuideDocument(),
+      guides: [
+        { id: "guide-1", axis: "x", position: 100, hidden: true },
+        { id: "guide-2", axis: "y", position: 200, hidden: true },
+      ],
+    };
+
+    expect(setAllGuidesHidden(doc, false).guides).toEqual([
+      { id: "guide-1", axis: "x", position: 100, hidden: false },
+      { id: "guide-2", axis: "y", position: 200, hidden: false },
+    ]);
+  });
+
+  it("handles bulk guide updates with an empty guides list", () => {
+    const doc = createDocument();
+
+    expect(setAllGuidesLocked(doc, true).guides).toEqual([]);
+    expect(setAllGuidesHidden(doc, true).guides).toEqual([]);
+  });
+
   it("returns the same document when setting preferences for a missing guide", () => {
     const doc = createGuideDocument();
 
@@ -108,6 +191,8 @@ describe("guides", () => {
     setGuideColor(doc, "guide-1", "#00d8ff");
     setGuideLocked(doc, "guide-1", true);
     setGuideHidden(doc, "guide-1", true);
+    setAllGuidesLocked(doc, true);
+    setAllGuidesHidden(doc, true);
     clearGuides(doc);
 
     expect(doc).toEqual(originalSnapshot);

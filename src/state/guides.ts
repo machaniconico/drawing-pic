@@ -67,6 +67,11 @@ export const setGuideLocked = (doc: Document, id: NodeId, locked: boolean): Docu
   };
 };
 
+export const setAllGuidesLocked = (doc: Document, locked: boolean): Document => ({
+  ...doc,
+  guides: doc.guides.map((guide) => ({ ...guide, locked })),
+});
+
 export const setGuideHidden = (doc: Document, id: NodeId, hidden: boolean): Document => {
   if (!doc.guides.some((guide) => guide.id === id)) {
     return doc;
@@ -77,6 +82,11 @@ export const setGuideHidden = (doc: Document, id: NodeId, hidden: boolean): Docu
     guides: doc.guides.map((guide) => (guide.id === id ? { ...guide, hidden } : guide)),
   };
 };
+
+export const setAllGuidesHidden = (doc: Document, hidden: boolean): Document => ({
+  ...doc,
+  guides: doc.guides.map((guide) => ({ ...guide, hidden })),
+});
 
 export const clearGuides = (doc: Document): Document => {
   if (doc.guides.length === 0) {
