@@ -5,7 +5,7 @@ import { selectionBounds } from "../core/model/bounds";
 import { createRect } from "../core/model/factory";
 import type { Document, NodeId } from "../core/model/types";
 import { canRedo, canUndo, createHistory } from "./history";
-import { flipNodes, rotateNodes90 } from "./operations";
+import { flipNodes, rotateNodes90, rotateNodesAround } from "./operations";
 import { createEditorStateForTest, editorStore, type SnapTarget } from "./store";
 import { getDocBounds, getSelectedNodes, isSelected } from "./selectors";
 
@@ -216,6 +216,33 @@ describe("editorStore", () => {
     expect(canRedo(editorStore.getState().history)).toBe(true);
   });
 
+  it("rotates selected node transforms by radians as one undoable history step", () => {
+    const left = createRect(10, 20, 30, 40);
+    const right = createRect(70, 30, 20, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+    editorStore.getState().setSelection([left.id, right.id]);
+
+    const beforeDoc = editorStore.getState().doc;
+    const beforeLeft = { ...beforeDoc.nodes[left.id]!.transform };
+    const beforeRight = { ...beforeDoc.nodes[right.id]!.transform };
+    const expected = rotateNodesAround(beforeDoc, editorStore.getState().selection, Math.PI / 4);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().rotateSelectionBy(Math.PI / 4);
+
+    expectMatrixCloseTo(editorStore.getState().doc.nodes[left.id]?.transform, expected[left.id]!);
+    expectMatrixCloseTo(editorStore.getState().doc.nodes[right.id]?.transform, expected[right.id]!);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.nodes[left.id]?.transform).toEqual(beforeLeft);
+    expect(editorStore.getState().doc.nodes[right.id]?.transform).toEqual(beforeRight);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
   it("does not push history when flipping or rotating an empty selection", () => {
     const rect = createRect(3, 4, 10, 10);
     editorStore.getState().addNode(rect);
@@ -229,6 +256,48 @@ describe("editorStore", () => {
 
     expect(editorStore.getState().doc).toBe(beforeDoc);
     expect(editorStore.getState().doc.nodes[rect.id]?.transform).toEqual(beforeTransform);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
+  it("does not push history for invalid rotateSelectionBy calls", () => {
+    const rect = createRect(10, 20, 30, 40);
+    editorStore.getState().addNode(rect);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().clearSelection();
+    const beforeEmptySelectionDoc = editorStore.getState().doc;
+    const beforeTransform = { ...beforeEmptySelectionDoc.nodes[rect.id]!.transform };
+
+    editorStore.getState().rotateSelectionBy(Math.PI / 4);
+
+    expect(editorStore.getState().doc).toBe(beforeEmptySelectionDoc);
+    expect(editorStore.getState().doc.nodes[rect.id]?.transform).toEqual(beforeTransform);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+
+    editorStore.getState().setSelection([rect.id]);
+    const beforeInvalidDeltaDoc = editorStore.getState().doc;
+
+    editorStore.getState().rotateSelectionBy(0);
+    editorStore.getState().rotateSelectionBy(Number.NaN);
+    editorStore.getState().rotateSelectionBy(Number.POSITIVE_INFINITY);
+    editorStore.getState().rotateSelectionBy(Number.NEGATIVE_INFINITY);
+
+    expect(editorStore.getState().doc).toBe(beforeInvalidDeltaDoc);
+    expect(editorStore.getState().doc.nodes[rect.id]?.transform).toEqual(beforeTransform);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
+  it("does not push history when rotateSelectionBy produces an empty patch map", () => {
+    const missingId: NodeId = "missing-node";
+    editorStore.setState({ selection: [missingId], history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().rotateSelectionBy(Math.PI / 4);
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
     expect(editorStore.getState().history.past).toHaveLength(0);
     expect(canUndo(editorStore.getState().history)).toBe(false);
   });

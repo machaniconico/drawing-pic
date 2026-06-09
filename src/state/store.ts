@@ -17,6 +17,7 @@ import {
   flipNodes as computeFlipNodes,
   groupSelection as computeGroupSelection,
   moveSelectionTo as computeMoveSelectionTo,
+  rotateNodesAround as computeRotateNodesAround,
   rotateNodes90 as computeRotateNodes90,
   resizeSelectionTo as computeResizeSelectionTo,
   sendBackward as computeSendBackward,
@@ -101,6 +102,7 @@ export interface EditorActions {
   distributeNodes: (axis: DistributeAxis) => void;
   flipSelection: (axis: FlipAxis) => void;
   rotateSelection90: (direction: Rotate90Direction) => void;
+  rotateSelectionBy: (deltaRad: number) => void;
   bringToFront: () => void;
   sendToBack: () => void;
   bringForward: () => void;
@@ -520,6 +522,16 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       }
 
       return applyMatrixPatches(state.doc, computeRotateNodes90(state.doc, state.selection, direction));
+    });
+  },
+
+  rotateSelectionBy: (deltaRad) => {
+    withDocHistory(set, (state) => {
+      if (state.selection.length === 0 || deltaRad === 0 || !Number.isFinite(deltaRad)) {
+        return false;
+      }
+
+      return applyMatrixPatches(state.doc, computeRotateNodesAround(state.doc, state.selection, deltaRad));
     });
   },
 
