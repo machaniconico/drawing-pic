@@ -37,6 +37,7 @@ export default function App() {
   const redo = useEditorStore((state) => state.redo);
   const copySelection = useEditorStore((state) => state.copySelection);
   const paste = useEditorStore((state) => state.paste);
+  const pasteInPlace = useEditorStore((state) => state.pasteInPlace);
   const duplicateSelection = useEditorStore((state) => state.duplicateSelection);
   const bringToFront = useEditorStore((state) => state.bringToFront);
   const sendToBack = useEditorStore((state) => state.sendToBack);
@@ -116,6 +117,12 @@ export default function App() {
       if (hasCommandModifier && key === "c") {
         event.preventDefault();
         copySelection();
+        return;
+      }
+
+      if (hasCommandModifier && event.shiftKey && key === "v") {
+        event.preventDefault();
+        pasteInPlace();
         return;
       }
 
@@ -214,6 +221,7 @@ export default function App() {
     groupSelection,
     moveSelection,
     paste,
+    pasteInPlace,
     redo,
     removeNodes,
     selection,
