@@ -24,6 +24,37 @@
   letter-spacing: 0;
 }
 
+.align-panel__key-object {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.align-panel__key-object-label {
+  flex: 0 0 auto;
+  color: #b8b8b8;
+  font-size: 11px;
+}
+
+.align-panel__key-object-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 3px 6px;
+  color: #dedede;
+  background: #2b2b2d;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  font: inherit;
+}
+
+.align-panel__key-object-select:focus-visible {
+  outline: 1px solid rgba(45, 140, 240, 0.7);
+  outline-offset: 1px;
+  border-color: #2d8cf0;
+}
+
 .align-panel__button-grid {
   display: grid;
   gap: 6px;

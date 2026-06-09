@@ -38,17 +38,22 @@ const distributeActions: DistributeAction[] = [
 ];
 
 export function AlignPanel() {
-  const selectionCount = useEditorStore((state) => state.selection.length);
+  const selection = useEditorStore((state) => state.selection);
+  const nodes = useEditorStore((state) => state.doc.nodes);
+  const keyObjectId = useEditorStore((state) => state.keyObjectId);
   const alignNodes = useEditorStore((state) => state.alignNodes);
   const distributeNodes = useEditorStore((state) => state.distributeNodes);
   const bringToFront = useEditorStore((state) => state.bringToFront);
   const bringForward = useEditorStore((state) => state.bringForward);
   const sendBackward = useEditorStore((state) => state.sendBackward);
   const sendToBack = useEditorStore((state) => state.sendToBack);
+  const setKeyObject = useEditorStore((state) => state.setKeyObject);
 
+  const selectionCount = selection.length;
   const canAlign = selectionCount >= 2;
   const canDistribute = selectionCount >= 3;
   const canArrange = selectionCount >= 1;
+  const activeKeyObjectId = keyObjectId !== null && selection.includes(keyObjectId) ? keyObjectId : "";
   const arrangeActions: ArrangeAction[] = [
     { action: bringToFront, icon: "FF", label: "Bring to Front", title: "Bring selection to front" },
     { action: bringForward, icon: "F", label: "Forward", title: "Bring selection forward" },
@@ -62,6 +67,28 @@ export function AlignPanel() {
         <h3 id="align-panel-align-heading" className="align-panel__group-title">
           ALIGN
         </h3>
+        {canAlign ? (
+          <label className="align-panel__key-object">
+            <span className="align-panel__key-object-label">Align to</span>
+            <select
+              className="align-panel__key-object-select"
+              value={activeKeyObjectId}
+              onChange={(event) => setKeyObject(event.target.value === "" ? null : event.target.value)}
+            >
+              <option value="">Selection (none)</option>
+              {selection.map((id) => {
+                const node = nodes[id];
+                const label = node ? `${node.name} (${id})` : id;
+
+                return (
+                  <option key={id} value={id}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+        ) : null}
         <div className="align-panel__button-grid align-panel__button-grid--align">
           {alignActions.map((item) => (
             <button
