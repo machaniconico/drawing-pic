@@ -274,6 +274,12 @@
   padding: 0;
 }
 
+.properties-panel__select-same {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
 .properties-panel__gradient-geometry {
   display: flex;
   flex-direction: column;

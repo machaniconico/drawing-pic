@@ -410,6 +410,8 @@ export function PropertiesPanel() {
   const setSelectionSize = useEditorStore((state) => state.setSelectionSize);
   const rotateSelectionBy = useEditorStore((state) => state.rotateSelectionBy);
   const applyStyleToSelection = useEditorStore((state) => state.applyStyleToSelection);
+  const selectSameFill = useEditorStore((state) => state.selectSameFill);
+  const selectSameStroke = useEditorStore((state) => state.selectSameStroke);
   const selectedNodes = getSelectedNodes({ doc, selection });
 
   if (selectedNodes.length === 0) {
@@ -1407,6 +1409,23 @@ export function PropertiesPanel() {
             {stroke !== null && gradientStroke !== null
               ? renderGradientEditor("Stroke", { kind: "stroke", stroke }, gradientStroke)
               : null}
+
+            <div className="properties-panel__select-same">
+              <button
+                className="properties-panel__button"
+                onClick={selectSameFill}
+                type="button"
+              >
+                Select Same Fill
+              </button>
+              <button
+                className="properties-panel__button"
+                onClick={selectSameStroke}
+                type="button"
+              >
+                Select Same Stroke
+              </button>
+            </div>
 
             <label className="properties-panel__row">
               <span className="properties-panel__label">Stroke width</span>
