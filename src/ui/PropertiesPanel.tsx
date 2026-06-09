@@ -412,6 +412,7 @@ export function PropertiesPanel() {
   const applyStyleToSelection = useEditorStore((state) => state.applyStyleToSelection);
   const selectSameFill = useEditorStore((state) => state.selectSameFill);
   const selectSameStroke = useEditorStore((state) => state.selectSameStroke);
+  const convertSelectionToPaths = useEditorStore((state) => state.convertSelectionToPaths);
   const selectedNodes = getSelectedNodes({ doc, selection });
 
   if (selectedNodes.length === 0) {
@@ -1036,6 +1037,7 @@ export function PropertiesPanel() {
   const styledNode = hasStyle(node) ? node : null;
   const rectNode = node.type === "rect" ? node : null;
   const textNode = node.type === "text" ? node : null;
+  const canConvertToPath = node.type === "rect" || node.type === "ellipse";
   const gradientFill =
     styledNode !== null && (styledNode.fill.type === "linear" || styledNode.fill.type === "radial")
       ? styledNode.fill
@@ -1609,6 +1611,18 @@ export function PropertiesPanel() {
               value={textNode.letterSpacing}
             />
           </label>
+        </section>
+      ) : null}
+
+      {canConvertToPath ? (
+        <section className="properties-panel__section" aria-label="Path conversion">
+          <button
+            className="properties-panel__button"
+            onClick={convertSelectionToPaths}
+            type="button"
+          >
+            Convert to Path
+          </button>
         </section>
       ) : null}
 
