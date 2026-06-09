@@ -665,6 +665,71 @@ describe("editorStore", () => {
     expect(editorStore.getState().doc.guides[0]?.hidden).toBe(true);
   });
 
+  it("locks every guide as one undoable history step", () => {
+    const firstId = editorStore.getState().addGuide("x", 80);
+    const secondId = editorStore.getState().addGuide("y", 120);
+    expect(firstId).not.toBeNull();
+    expect(secondId).not.toBeNull();
+    const beforeBulkDoc = editorStore.getState().doc;
+    const historyDepth = editorStore.getState().history.past.length;
+
+    editorStore.getState().setAllGuidesLocked(true);
+
+    expect(editorStore.getState().doc.guides).toEqual([
+      { id: firstId, axis: "x", position: 80, locked: true },
+      { id: secondId, axis: "y", position: 120, locked: true },
+    ]);
+    expect(editorStore.getState().history.past).toHaveLength(historyDepth + 1);
+
+    editorStore.getState().undo();
+    expect(editorStore.getState().doc).toBe(beforeBulkDoc);
+    expect(editorStore.getState().doc.guides).toEqual([
+      { id: firstId, axis: "x", position: 80 },
+      { id: secondId, axis: "y", position: 120 },
+    ]);
+
+    editorStore.getState().redo();
+    expect(editorStore.getState().doc.guides.every((guide) => guide.locked === true)).toBe(true);
+  });
+
+  it("hides every guide as one undoable history step", () => {
+    const firstId = editorStore.getState().addGuide("x", 80);
+    const secondId = editorStore.getState().addGuide("y", 120);
+    expect(firstId).not.toBeNull();
+    expect(secondId).not.toBeNull();
+    const beforeBulkDoc = editorStore.getState().doc;
+    const historyDepth = editorStore.getState().history.past.length;
+
+    editorStore.getState().setAllGuidesHidden(true);
+
+    expect(editorStore.getState().doc.guides).toEqual([
+      { id: firstId, axis: "x", position: 80, hidden: true },
+      { id: secondId, axis: "y", position: 120, hidden: true },
+    ]);
+    expect(editorStore.getState().history.past).toHaveLength(historyDepth + 1);
+
+    editorStore.getState().undo();
+    expect(editorStore.getState().doc).toBe(beforeBulkDoc);
+    expect(editorStore.getState().doc.guides).toEqual([
+      { id: firstId, axis: "x", position: 80 },
+      { id: secondId, axis: "y", position: 120 },
+    ]);
+
+    editorStore.getState().redo();
+    expect(editorStore.getState().doc.guides.every((guide) => guide.hidden === true)).toBe(true);
+  });
+
+  it("does not push history when bulk guide preference actions have no guides", () => {
+    const before = editorStore.getState().doc;
+
+    editorStore.getState().setAllGuidesLocked(true);
+    editorStore.getState().setAllGuidesHidden(true);
+
+    expect(editorStore.getState().doc).toEqual(before);
+    expect(editorStore.getState().doc.guides).toEqual([]);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
   it("does not push history when guide preference actions miss", () => {
     const before = editorStore.getState().doc;
 

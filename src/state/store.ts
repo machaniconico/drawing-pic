@@ -50,6 +50,8 @@ import {
   clearGuides as computeClearGuides,
   moveGuide as computeMoveGuide,
   removeGuide as computeRemoveGuide,
+  setAllGuidesHidden as computeSetAllGuidesHidden,
+  setAllGuidesLocked as computeSetAllGuidesLocked,
   setGuideColor as computeSetGuideColor,
   setGuideHidden as computeSetGuideHidden,
   setGuideLocked as computeSetGuideLocked,
@@ -122,6 +124,8 @@ export interface EditorActions {
   setGuideColor: (id: NodeId, color: string) => void;
   setGuideLocked: (id: NodeId, locked: boolean) => void;
   setGuideHidden: (id: NodeId, hidden: boolean) => void;
+  setAllGuidesLocked: (locked: boolean) => void;
+  setAllGuidesHidden: (hidden: boolean) => void;
   clearGuides: () => void;
   setSelection: (ids: NodeId[]) => void;
   addToSelection: (id: NodeId) => void;
@@ -816,6 +820,40 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     withDocHistory(set, (state) => {
       const sourceDoc = original(state.doc) ?? state.doc;
       const nextDoc = computeSetGuideHidden(sourceDoc, id, hidden);
+      if (nextDoc === sourceDoc) {
+        return false;
+      }
+
+      state.doc = nextDoc;
+      return true;
+    });
+  },
+
+  setAllGuidesLocked: (locked) => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      if (sourceDoc.guides.length === 0) {
+        return false;
+      }
+
+      const nextDoc = computeSetAllGuidesLocked(sourceDoc, locked);
+      if (nextDoc === sourceDoc) {
+        return false;
+      }
+
+      state.doc = nextDoc;
+      return true;
+    });
+  },
+
+  setAllGuidesHidden: (hidden) => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      if (sourceDoc.guides.length === 0) {
+        return false;
+      }
+
+      const nextDoc = computeSetAllGuidesHidden(sourceDoc, hidden);
       if (nextDoc === sourceDoc) {
         return false;
       }
