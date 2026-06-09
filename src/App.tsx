@@ -4,7 +4,13 @@ import { useEditorStore } from "./state/store";
 import CanvasView from "./ui/CanvasView";
 import { RightPanel } from "./ui/RightPanel";
 import Toolbar from "./ui/Toolbar";
-import ZoomControls, { fitCanvasToScreen, resetCanvasZoom } from "./ui/ZoomControls";
+import ZoomControls, {
+  fitCanvasToScreen,
+  resetCanvasZoom,
+  ZOOM_STEP,
+  zoomByFactor,
+  zoomToSelection,
+} from "./ui/ZoomControls";
 
 const KEY_TO_TOOL: Record<string, ToolId> = {
   v: "select",
@@ -111,6 +117,24 @@ export default function App() {
       if (hasCommandModifier && key === "1") {
         event.preventDefault();
         resetCanvasZoom();
+        return;
+      }
+
+      if (hasCommandModifier && (event.key === "=" || event.key === "+")) {
+        event.preventDefault();
+        zoomByFactor(ZOOM_STEP);
+        return;
+      }
+
+      if (hasCommandModifier && (event.key === "-" || event.key === "_")) {
+        event.preventDefault();
+        zoomByFactor(1 / ZOOM_STEP);
+        return;
+      }
+
+      if (hasCommandModifier && key === "9") {
+        event.preventDefault();
+        zoomToSelection();
         return;
       }
 
