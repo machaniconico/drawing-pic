@@ -150,6 +150,10 @@
   width: 58px;
 }
 
+.properties-panel__dash-input {
+  width: 132px;
+}
+
 .properties-panel__number:focus,
 .properties-panel__color:focus,
 .properties-panel__select:focus,

@@ -4,6 +4,8 @@ import { selectionBounds } from "../core/model/bounds";
 import {
   hasStyle,
   type GradientStop,
+  type LineCap,
+  type LineJoin,
   type LinearGradient,
   type Paint,
   type RadialGradient,
@@ -19,6 +21,8 @@ type FillType = Paint["type"];
 type GradientPaint = LinearGradient | RadialGradient;
 
 const FILL_TYPES: readonly FillType[] = ["none", "solid", "linear", "radial"];
+const LINE_CAPS: readonly LineCap[] = ["butt", "round", "square"];
+const LINE_JOINS: readonly LineJoin[] = ["miter", "round", "bevel"];
 
 const FILL_TYPE_LABELS: Record<FillType, string> = {
   none: "None",
@@ -242,6 +246,20 @@ const formatNumber = (value: number): string =>
 const readNumber = (value: number): number | null =>
   Number.isFinite(value) ? value : null;
 
+const formatDashPattern = (dash: readonly number[]): string => dash.join(", ");
+
+const parseDashPattern = (value: string): number[] => {
+  const trimmedValue = value.trim();
+  if (trimmedValue === "") {
+    return [];
+  }
+
+  const parts = trimmedValue.split(/[\s,]+/).filter(Boolean);
+  const dash = parts.map((part) => Number(part));
+
+  return dash.every((part) => Number.isFinite(part) && part >= 0) ? dash : [];
+};
+
 interface CommitNumberInputProps {
   readonly ariaLabel: string;
   readonly disabled?: boolean;
@@ -298,6 +316,48 @@ function CommitNumberInput({
       onKeyDown={commitOnEnter}
       step={1}
       type="number"
+      value={draft}
+    />
+  );
+}
+
+interface CommitTextInputProps {
+  readonly ariaLabel: string;
+  readonly className?: string;
+  readonly onCommit: (value: string) => void;
+  readonly value: string;
+}
+
+function CommitTextInput({
+  ariaLabel,
+  className = "properties-panel__number",
+  onCommit,
+  value,
+}: CommitTextInputProps) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  const commitDraft = (): void => {
+    onCommit(draft);
+  };
+
+  const commitOnEnter = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === "Enter") {
+      event.currentTarget.blur();
+    }
+  };
+
+  return (
+    <input
+      aria-label={ariaLabel}
+      className={className}
+      onBlur={commitDraft}
+      onChange={(event) => setDraft(event.currentTarget.value)}
+      onKeyDown={commitOnEnter}
+      type="text"
       value={draft}
     />
   );
@@ -654,6 +714,73 @@ export function PropertiesPanel() {
     });
   };
 
+  const setStrokeCap = (stroke: Stroke, cap: LineCap): void => {
+    if (!hasStyle(node)) {
+      return;
+    }
+
+    updateNode(node.id, {
+      stroke: {
+        ...stroke,
+        cap,
+      },
+    });
+  };
+
+  const setStrokeJoin = (stroke: Stroke, join: LineJoin): void => {
+    if (!hasStyle(node)) {
+      return;
+    }
+
+    updateNode(node.id, {
+      stroke: {
+        ...stroke,
+        join,
+      },
+    });
+  };
+
+  const setStrokeDash = (stroke: Stroke, value: string): void => {
+    if (!hasStyle(node)) {
+      return;
+    }
+
+    updateNode(node.id, {
+      stroke: {
+        ...stroke,
+        dash: parseDashPattern(value),
+      },
+    });
+  };
+
+  const setStrokeDashOffset = (stroke: Stroke, value: number): void => {
+    const nextDashOffset = readNumber(value);
+    if (!hasStyle(node) || nextDashOffset === null) {
+      return;
+    }
+
+    updateNode(node.id, {
+      stroke: {
+        ...stroke,
+        dashOffset: nextDashOffset,
+      },
+    });
+  };
+
+  const setStrokeMiterLimit = (stroke: Stroke, value: number): void => {
+    const nextMiterLimit = readNumber(value);
+    if (!hasStyle(node) || nextMiterLimit === null) {
+      return;
+    }
+
+    updateNode(node.id, {
+      stroke: {
+        ...stroke,
+        miterLimit: Math.max(1, nextMiterLimit),
+      },
+    });
+  };
+
   const styledNode = hasStyle(node) ? node : null;
   const gradientFill =
     styledNode !== null && (styledNode.fill.type === "linear" || styledNode.fill.type === "radial")
@@ -661,6 +788,7 @@ export function PropertiesPanel() {
       : null;
   const linearFill = styledNode?.fill.type === "linear" ? styledNode.fill : null;
   const radialFill = styledNode?.fill.type === "radial" ? styledNode.fill : null;
+  const stroke = styledNode?.stroke ?? null;
 
   return (
     <aside className="properties-panel" aria-label="Properties">
@@ -945,13 +1073,13 @@ export function PropertiesPanel() {
                 <input
                   aria-label="Stroke color"
                   className="properties-panel__color"
-                  disabled={styledNode.stroke === null}
-                  onChange={(event) => setStrokePaint(styledNode.stroke, event.currentTarget.value)}
+                  disabled={stroke === null}
+                  onChange={(event) => setStrokePaint(stroke, event.currentTarget.value)}
                   type="color"
-                  value={styledNode.stroke ? paintHex(styledNode.stroke.paint) : "#000000"}
+                  value={stroke ? paintHex(stroke.paint) : "#000000"}
                 />
                 <span className="properties-panel__readout">
-                  {styledNode.stroke ? paintLabel(styledNode.stroke.paint) : "No stroke"}
+                  {stroke ? paintLabel(stroke.paint) : "No stroke"}
                 </span>
               </span>
             </label>
@@ -961,14 +1089,83 @@ export function PropertiesPanel() {
               <input
                 aria-label="Stroke width"
                 className="properties-panel__number"
-                disabled={styledNode.stroke === null}
+                disabled={stroke === null}
                 min={0}
-                onChange={(event) => setStrokeWidth(styledNode.stroke, event.currentTarget.valueAsNumber)}
+                onChange={(event) => setStrokeWidth(stroke, event.currentTarget.valueAsNumber)}
                 step={0.5}
                 type="number"
-                value={styledNode.stroke?.width ?? 0}
+                value={stroke?.width ?? 0}
               />
             </label>
+
+            {stroke !== null ? (
+              <>
+                <label className="properties-panel__row">
+                  <span className="properties-panel__label">Cap</span>
+                  <select
+                    aria-label="Stroke cap"
+                    className="properties-panel__select"
+                    onChange={(event) =>
+                      setStrokeCap(stroke, event.currentTarget.value as LineCap)
+                    }
+                    value={stroke.cap}
+                  >
+                    {LINE_CAPS.map((cap) => (
+                      <option key={cap} value={cap}>
+                        {cap}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="properties-panel__row">
+                  <span className="properties-panel__label">Join</span>
+                  <select
+                    aria-label="Stroke join"
+                    className="properties-panel__select"
+                    onChange={(event) =>
+                      setStrokeJoin(stroke, event.currentTarget.value as LineJoin)
+                    }
+                    value={stroke.join}
+                  >
+                    {LINE_JOINS.map((join) => (
+                      <option key={join} value={join}>
+                        {join}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="properties-panel__row">
+                  <span className="properties-panel__label">Dash</span>
+                  <CommitTextInput
+                    ariaLabel="Stroke dash pattern"
+                    className="properties-panel__number properties-panel__dash-input"
+                    onCommit={(value) => setStrokeDash(stroke, value)}
+                    value={formatDashPattern(stroke.dash)}
+                  />
+                </label>
+
+                <label className="properties-panel__row">
+                  <span className="properties-panel__label">Dash offset</span>
+                  <CommitNumberInput
+                    ariaLabel="Stroke dash offset"
+                    onCommit={(value) => setStrokeDashOffset(stroke, value)}
+                    value={stroke.dashOffset}
+                  />
+                </label>
+
+                <label className="properties-panel__row">
+                  <span className="properties-panel__label">Miter limit</span>
+                  <CommitNumberInput
+                    ariaLabel="Stroke miter limit"
+                    min={1}
+                    onCommit={(value) => setStrokeMiterLimit(stroke, value)}
+                    value={stroke.miterLimit}
+                  />
+                </label>
+              </>
+            ) : null}
           </>
         ) : null}
       </section>
