@@ -28,6 +28,29 @@ const setBlendMode = <T extends SceneNode>(node: T, blendMode: GlobalCompositeOp
   Object.assign(node, { blendMode });
 
 describe("documentToSvg", () => {
+  it("emits the document background as the first body element when present", () => {
+    const doc = createDocument(320, 240, "Background");
+    doc.background = { r: 12, g: 34, b: 56, a: 0.4 };
+    const rect = createRect(10, 20, 80, 40);
+    addNode(doc, rect);
+
+    const svg = documentToSvg(doc);
+    const background = '<rect x="0" y="0" width="320" height="240" fill="#0c2238" fill-opacity="0.4" />';
+
+    expect(svg).toContain(`viewBox="0 0 320 240">${background}<g`);
+    expect(svg.indexOf(background)).toBeLessThan(svg.indexOf("<g"));
+    expect(svg).toContain('<rect transform="matrix(1 0 0 1 10 20)" opacity="1"');
+  });
+
+  it("keeps transparent export output unchanged when the document background is absent", () => {
+    const doc = createDocument(100, 80, "No background");
+    doc.background = null;
+
+    expect(documentToSvg(doc)).toBe(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80" viewBox="0 0 100 80"><g transform="matrix(1 0 0 1 0 0)" opacity="1"></g></svg>',
+    );
+  });
+
   it("keeps empty options byte-for-byte equivalent to the default export", () => {
     const doc = createDocument(320, 240, "Back compat");
     const rect = createRect(10, 20, 80, 40);

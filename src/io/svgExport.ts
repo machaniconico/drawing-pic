@@ -263,6 +263,18 @@ const gradientDefs = (gradients: readonly GradientReference[]): string => {
   return `<defs>${defs}</defs>`;
 };
 
+const renderBackground = (doc: Document): string => {
+  if (doc.background === null || doc.background === undefined) return "";
+
+  return `<rect${numericAttr("x", 0)}${numericAttr("y", 0)}${numericAttr(
+    "width",
+    doc.width,
+  )}${numericAttr("height", doc.height)}${attr("fill", colorToHex(doc.background))}${attr(
+    "fill-opacity",
+    alpha(doc.background),
+  )} />`;
+};
+
 const renderNode = (doc: Document, node: SceneNode, ctx: SvgContext): string => {
   if (!node.visible) return "";
 
@@ -411,7 +423,7 @@ const exportBounds = (doc: Document, roots: readonly SelectionRoot[]): BBox => {
 export const documentToSvg = (doc: Document, opts?: SvgExportOptions): string => {
   const ctx: SvgContext = { gradients: [], nextGradientId: 1 };
   const selectionRoots = resolveSelectionRoots(doc, opts?.nodeIds);
-  const body =
+  const layers =
     opts?.nodeIds !== undefined && opts.nodeIds.length > 0 && selectionRoots.length > 0
       ? selectionRoots
           .map(
@@ -424,6 +436,7 @@ export const documentToSvg = (doc: Document, opts?: SvgExportOptions): string =>
           .filter((layer): layer is SceneNode => layer !== undefined)
           .map((layer) => renderNode(doc, layer, ctx))
           .join("");
+  const body = renderBackground(doc) + layers;
   const defs = gradientDefs(ctx.gradients);
   const bounds = exportBounds(doc, selectionRoots);
   const scale = exportScale(opts?.scale);

@@ -6,6 +6,7 @@ import type {
   ImageNode,
   Paint,
   PathNode,
+  RGBA,
   RectNode,
   SceneNode,
   Stroke,
@@ -35,17 +36,31 @@ const viewportPan = (viewport: Viewport): Vec2 => ({
   y: viewport.pan?.y ?? viewport.panY ?? viewport.y ?? 0,
 });
 
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
+
+const artboardFill = (background: RGBA | null | undefined): string => {
+  if (background === null || background === undefined) return "#ffffff";
+
+  return `rgba(${clamp(Math.round(background.r), 0, 255)}, ${clamp(
+    Math.round(background.g),
+    0,
+    255,
+  )}, ${clamp(Math.round(background.b), 0, 255)}, ${clamp(background.a, 0, 1)})`;
+};
+
 const drawArtboard = (
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
+  background: RGBA | null | undefined,
 ): void => {
   ctx.save();
   ctx.shadowColor = "rgba(15, 23, 42, 0.18)";
   ctx.shadowBlur = 18;
   ctx.shadowOffsetX = 0;
   ctx.shadowOffsetY = 6;
-  ctx.fillStyle = "#ffffff";
+  ctx.fillStyle = artboardFill(background);
   ctx.fillRect(0, 0, width, height);
   ctx.restore();
 
@@ -267,7 +282,7 @@ export const renderDocument = (
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   ctx.setTransform(zoom, 0, 0, zoom, pan.x, pan.y);
 
-  drawArtboard(ctx, doc.width, doc.height);
+  drawArtboard(ctx, doc.width, doc.height, doc.background);
 
   for (const layerId of doc.layerOrder) {
     const layer = doc.nodes[layerId];
