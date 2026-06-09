@@ -165,6 +165,57 @@ describe("selection operations", () => {
     expect(patches[right.id]).toBeUndefined();
   });
 
+  it("aligns nodes to the left edge of the key object and leaves the key fixed", () => {
+    const doc = createDocument();
+    const target = createRect(10, 20, 10, 10);
+    const key = createRect(40, 5, 20, 20);
+    addToFirstLayer(doc, [target, key]);
+
+    const patches = alignNodes(doc, [target.id, key.id], "left", key.id);
+
+    expect(patches[target.id]).toEqual({ e: 40, f: 20 });
+    expect(patches[key.id]).toBeUndefined();
+  });
+
+  it("aligns nodes to the horizontal center of the key object and leaves the key fixed", () => {
+    const doc = createDocument();
+    const left = createRect(10, 20, 10, 10);
+    const key = createRect(40, 5, 20, 20);
+    const right = createRect(80, 15, 10, 10);
+    addToFirstLayer(doc, [left, key, right]);
+
+    const patches = alignNodes(doc, [left.id, key.id, right.id], "hcenter", key.id);
+
+    expect(patches[left.id]).toEqual({ e: 45, f: 20 });
+    expect(patches[key.id]).toBeUndefined();
+    expect(patches[right.id]).toEqual({ e: 45, f: 15 });
+  });
+
+  it("aligns nodes to the right edge of the key object and leaves the key fixed", () => {
+    const doc = createDocument();
+    const target = createRect(10, 20, 10, 10);
+    const key = createRect(40, 5, 20, 20);
+    addToFirstLayer(doc, [target, key]);
+
+    const patches = alignNodes(doc, [target.id, key.id], "right", key.id);
+
+    expect(patches[target.id]).toEqual({ e: 50, f: 20 });
+    expect(patches[key.id]).toBeUndefined();
+  });
+
+  it("falls back to selection bounds alignment when the key object is absent", () => {
+    const doc = createDocument();
+    const left = createRect(10, 20, 10, 10);
+    const right = createRect(40, 5, 20, 20);
+    const absent = createRect(100, 100, 10, 10);
+    addToFirstLayer(doc, [left, right, absent]);
+
+    const withoutKey = alignNodes(doc, [left.id, right.id], "hcenter");
+    const withAbsentKey = alignNodes(doc, [left.id, right.id], "hcenter", absent.id);
+
+    expect(withAbsentKey).toEqual(withoutKey);
+  });
+
   it("aligns nodes to the top edge of the selection bounds", () => {
     const doc = createDocument();
     const top = createRect(30, 5, 10, 10);

@@ -166,40 +166,46 @@ export const alignNodes = (
   doc: Document,
   ids: readonly NodeId[],
   edge: AlignEdge,
+  keyId?: NodeId | null,
 ): TransformPatchMap => {
   const targets = usableBounds(doc, topLevelNodeIds(doc, ids));
   if (targets.length === 0) {
     return {};
   }
 
-  const union = unionAll(targets.map(({ bounds }) => bounds));
-  if (isEmpty(union)) {
+  const keyTarget = keyId ? targets.find(({ id }) => id === keyId) : undefined;
+  const referenceBounds = keyTarget?.bounds ?? unionAll(targets.map(({ bounds }) => bounds));
+  if (isEmpty(referenceBounds)) {
     return {};
   }
 
-  const unionCenter = center(union);
+  const referenceCenter = center(referenceBounds);
   const patches: TransformPatchMap = {};
 
   for (const { id, bounds } of targets) {
+    if (id === keyTarget?.id) {
+      continue;
+    }
+
     const boundsCenter = center(bounds);
     switch (edge) {
       case "left":
-        patchWithDelta(doc, id, union.minX - bounds.minX, 0, patches);
+        patchWithDelta(doc, id, referenceBounds.minX - bounds.minX, 0, patches);
         break;
       case "hcenter":
-        patchWithDelta(doc, id, unionCenter.x - boundsCenter.x, 0, patches);
+        patchWithDelta(doc, id, referenceCenter.x - boundsCenter.x, 0, patches);
         break;
       case "right":
-        patchWithDelta(doc, id, union.maxX - bounds.maxX, 0, patches);
+        patchWithDelta(doc, id, referenceBounds.maxX - bounds.maxX, 0, patches);
         break;
       case "top":
-        patchWithDelta(doc, id, 0, union.minY - bounds.minY, patches);
+        patchWithDelta(doc, id, 0, referenceBounds.minY - bounds.minY, patches);
         break;
       case "vcenter":
-        patchWithDelta(doc, id, 0, unionCenter.y - boundsCenter.y, patches);
+        patchWithDelta(doc, id, 0, referenceCenter.y - boundsCenter.y, patches);
         break;
       case "bottom":
-        patchWithDelta(doc, id, 0, union.maxY - bounds.maxY, patches);
+        patchWithDelta(doc, id, 0, referenceBounds.maxY - bounds.maxY, patches);
         break;
     }
   }
