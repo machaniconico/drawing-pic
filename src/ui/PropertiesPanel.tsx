@@ -26,6 +26,27 @@ type PaintTarget =
 const FILL_TYPES: readonly FillType[] = ["none", "solid", "linear", "radial"];
 const LINE_CAPS: readonly LineCap[] = ["butt", "round", "square"];
 const LINE_JOINS: readonly LineJoin[] = ["miter", "round", "bevel"];
+const BLEND_MODES = [
+  { label: "Normal", value: "source-over" },
+  { label: "Multiply", value: "multiply" },
+  { label: "Screen", value: "screen" },
+  { label: "Overlay", value: "overlay" },
+  { label: "Darken", value: "darken" },
+  { label: "Lighten", value: "lighten" },
+  { label: "Color Dodge", value: "color-dodge" },
+  { label: "Color Burn", value: "color-burn" },
+  { label: "Hard Light", value: "hard-light" },
+  { label: "Soft Light", value: "soft-light" },
+  { label: "Difference", value: "difference" },
+  { label: "Exclusion", value: "exclusion" },
+  { label: "Hue", value: "hue" },
+  { label: "Saturation", value: "saturation" },
+  { label: "Color", value: "color" },
+  { label: "Luminosity", value: "luminosity" },
+] as const satisfies readonly {
+  readonly label: string;
+  readonly value: GlobalCompositeOperation;
+}[];
 
 const FILL_TYPE_LABELS: Record<FillType, string> = {
   none: "None",
@@ -103,6 +124,11 @@ const paintLabel = (paint: Paint): string => {
 const parseFillType = (value: string): FillType | null => {
   const fillType = value as FillType;
   return FILL_TYPES.includes(fillType) ? fillType : null;
+};
+
+const parseBlendMode = (value: string): GlobalCompositeOperation | null => {
+  const blendMode = value as GlobalCompositeOperation;
+  return BLEND_MODES.some((mode) => mode.value === blendMode) ? blendMode : null;
 };
 
 const defaultGradientStops = (sourceColor: RGBA | null): GradientStop[] => {
@@ -516,6 +542,8 @@ export function PropertiesPanel() {
 
   const node = selectedNodes[0];
   const opacityPercent = Math.round(clamp(node.opacity, 0, 1) * 100);
+  const blendMode =
+    parseBlendMode("blendMode" in node ? String(node.blendMode) : "") ?? "source-over";
 
   const setOpacity = (value: number): void => {
     const nextOpacity = readNumber(value);
@@ -524,6 +552,15 @@ export function PropertiesPanel() {
     }
 
     updateNode(node.id, { opacity: clamp(nextOpacity, 0, 100) / 100 });
+  };
+
+  const setBlendMode = (value: string): void => {
+    const nextBlendMode = parseBlendMode(value);
+    if (nextBlendMode === null) {
+      return;
+    }
+
+    updateNode(node.id, { blendMode: nextBlendMode });
   };
 
   const setFillType = (fillType: FillType): void => {
@@ -1073,6 +1110,22 @@ export function PropertiesPanel() {
               value={opacityPercent}
             />
           </span>
+        </label>
+
+        <label className="properties-panel__row">
+          <span className="properties-panel__label">Blend mode</span>
+          <select
+            aria-label="Blend mode"
+            className="properties-panel__select"
+            onChange={(event) => setBlendMode(event.currentTarget.value)}
+            value={blendMode}
+          >
+            {BLEND_MODES.map((mode) => (
+              <option key={mode.value} value={mode.value}>
+                {mode.label}
+              </option>
+            ))}
+          </select>
         </label>
 
         {styledNode !== null ? (
