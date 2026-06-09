@@ -1,10 +1,12 @@
 import { useCallback } from "react";
+import { isEmpty, type BBox } from "../core/geometry/bbox";
+import { selectionBounds } from "../core/model/bounds";
 import { editorStore, useEditorStore } from "../state/store";
 import "./ZoomControls.css";
 
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 64;
-const ZOOM_STEP = 1.25;
+export const ZOOM_STEP = 1.25;
 const FIT_MARGIN = 0.9;
 const RULER_OFFSET = 24;
 
@@ -39,19 +41,34 @@ const getViewportMetrics = (): ViewportMetrics | null => {
   };
 };
 
-export const fitCanvasToScreen = (): void => {
+export const zoomByFactor = (factor: number): void => {
+  const metrics = getViewportMetrics();
+  const state = editorStore.getState();
+  const nextZoom = clamp(state.viewport.zoom * factor, MIN_ZOOM, MAX_ZOOM);
+
+  if (metrics === null) {
+    state.setZoom(nextZoom);
+    return;
+  }
+
+  const worldCenter = {
+    x: (metrics.centerX - state.viewport.pan.x) / state.viewport.zoom,
+    y: (metrics.centerY - state.viewport.pan.y) / state.viewport.zoom,
+  };
+
+  state.setZoom(nextZoom);
+  editorStore.getState().setPan({
+    x: metrics.centerX - worldCenter.x * nextZoom,
+    y: metrics.centerY - worldCenter.y * nextZoom,
+  });
+};
+
+export const zoomToBounds = (bounds: BBox): void => {
   const metrics = getViewportMetrics();
   if (metrics === null) {
     return;
   }
 
-  const state = editorStore.getState();
-  const bounds = {
-    minX: 0,
-    minY: 0,
-    maxX: state.doc.width,
-    maxY: state.doc.height,
-  };
   const width = bounds.maxX - bounds.minX;
   const height = bounds.maxY - bounds.minY;
 
@@ -65,6 +82,27 @@ export const fitCanvasToScreen = (): void => {
     x: metrics.centerX - ((bounds.minX + bounds.maxX) / 2) * zoom,
     y: metrics.centerY - ((bounds.minY + bounds.maxY) / 2) * zoom,
   });
+};
+
+export const zoomToSelection = (): void => {
+  const state = editorStore.getState();
+  const bounds = selectionBounds(state.doc, state.selection);
+  if (isEmpty(bounds)) {
+    return;
+  }
+
+  zoomToBounds(bounds);
+};
+
+export const fitCanvasToScreen = (): void => {
+  const state = editorStore.getState();
+  const bounds = {
+    minX: 0,
+    minY: 0,
+    maxX: state.doc.width,
+    maxY: state.doc.height,
+  };
+  zoomToBounds(bounds);
 };
 
 export const resetCanvasZoom = (): void => {
@@ -92,27 +130,7 @@ export default function ZoomControls() {
   const zoom = useEditorStore((state) => state.viewport.zoom);
   const zoomLabel = `${Math.round(zoom * 100)}%`;
 
-  const zoomBy = useCallback((factor: number): void => {
-    const metrics = getViewportMetrics();
-    const state = editorStore.getState();
-    const nextZoom = clamp(state.viewport.zoom * factor, MIN_ZOOM, MAX_ZOOM);
-
-    if (metrics === null) {
-      state.setZoom(nextZoom);
-      return;
-    }
-
-    const worldCenter = {
-      x: (metrics.centerX - state.viewport.pan.x) / state.viewport.zoom,
-      y: (metrics.centerY - state.viewport.pan.y) / state.viewport.zoom,
-    };
-
-    state.setZoom(nextZoom);
-    editorStore.getState().setPan({
-      x: metrics.centerX - worldCenter.x * nextZoom,
-      y: metrics.centerY - worldCenter.y * nextZoom,
-    });
-  }, []);
+  const zoomBy = useCallback((factor: number): void => zoomByFactor(factor), []);
 
   return (
     <div className="zoom-controls" aria-label="Zoom controls">
