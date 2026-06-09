@@ -53,6 +53,10 @@ export default function App() {
   const ungroupSelection = useEditorStore((state) => state.ungroupSelection);
   const moveSelection = useEditorStore((state) => state.moveSelection);
   const flipSelection = useEditorStore((state) => state.flipSelection);
+  const lockSelection = useEditorStore((state) => state.lockSelection);
+  const hideSelection = useEditorStore((state) => state.hideSelection);
+  const setAllObjectsLocked = useEditorStore((state) => state.setAllObjectsLocked);
+  const setAllObjectsHidden = useEditorStore((state) => state.setAllObjectsHidden);
   const setSelection = useEditorStore((state) => state.setSelection);
   const clearSelection = useEditorStore((state) => state.clearSelection);
 
@@ -117,6 +121,30 @@ export default function App() {
       if (hasCommandModifier && key === "1") {
         event.preventDefault();
         resetCanvasZoom();
+        return;
+      }
+
+      if (hasCommandModifier && event.altKey && key === "2") {
+        event.preventDefault();
+        setAllObjectsLocked(false);
+        return;
+      }
+
+      if (hasCommandModifier && !event.altKey && key === "2") {
+        event.preventDefault();
+        lockSelection();
+        return;
+      }
+
+      if (hasCommandModifier && event.altKey && key === "3") {
+        event.preventDefault();
+        setAllObjectsHidden(false);
+        return;
+      }
+
+      if (hasCommandModifier && !event.altKey && key === "3") {
+        event.preventDefault();
+        hideSelection();
         return;
       }
 
@@ -243,6 +271,8 @@ export default function App() {
     duplicateSelection,
     flipSelection,
     groupSelection,
+    hideSelection,
+    lockSelection,
     moveSelection,
     paste,
     pasteInPlace,
@@ -251,6 +281,8 @@ export default function App() {
     selection,
     sendBackward,
     sendToBack,
+    setAllObjectsHidden,
+    setAllObjectsLocked,
     setActiveTool,
     setSelection,
     ungroupSelection,
