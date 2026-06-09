@@ -51,12 +51,15 @@ export function AlignPanel() {
   const sendBackward = useEditorStore((state) => state.sendBackward);
   const sendToBack = useEditorStore((state) => state.sendToBack);
   const setKeyObject = useEditorStore((state) => state.setKeyObject);
+  const toggleClipMask = useEditorStore((state) => state.toggleClipMask);
 
   const selectionCount = selection.length;
+  const selectedNode = selectionCount === 1 ? nodes[selection[0]!] : undefined;
   const canAlign = selectionCount >= 2;
   const canDistribute = selectionCount >= 3;
   const canDistributeByGap = canAlign;
   const canArrange = selectionCount >= 1;
+  const canToggleClipMask = selectionCount >= 2 || selectedNode?.type === "group";
   const activeKeyObjectId = keyObjectId !== null && selection.includes(keyObjectId) ? keyObjectId : "";
   const arrangeActions: ArrangeAction[] = [
     { action: bringToFront, icon: "FF", label: "Bring to Front", title: "Bring selection to front" },
@@ -198,6 +201,18 @@ export function AlignPanel() {
               <span className="align-panel__button-label">{item.label}</span>
             </button>
           ))}
+          <button
+            type="button"
+            className="align-panel__button align-panel__button--wide"
+            title="Make or release clipping mask"
+            disabled={!canToggleClipMask}
+            onClick={toggleClipMask}
+          >
+            <span className="align-panel__button-icon" aria-hidden="true">
+              CL
+            </span>
+            <span className="align-panel__button-label">Clip</span>
+          </button>
         </div>
       </section>
     </div>
