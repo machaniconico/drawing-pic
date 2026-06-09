@@ -35,9 +35,16 @@ interface GradientReference {
   paint: GradientPaint;
 }
 
+interface ClipPathReference {
+  id: string;
+  content: string;
+}
+
 interface SvgContext {
   gradients: GradientReference[];
+  clipPaths: ClipPathReference[];
   nextGradientId: number;
+  nextClipPathId: number;
 }
 
 interface SelectionRoot {
@@ -184,6 +191,13 @@ const gradientId = (ctx: SvgContext, paint: GradientPaint): string => {
   return id;
 };
 
+const clipPathId = (ctx: SvgContext, content: string): string => {
+  const id = `svg-export-clip-${ctx.nextClipPathId}`;
+  ctx.nextClipPathId += 1;
+  ctx.clipPaths.push({ id, content });
+  return id;
+};
+
 const paintAttrs = (
   paint: Paint,
   property: "fill" | "stroke",
@@ -263,6 +277,20 @@ const gradientDefs = (gradients: readonly GradientReference[]): string => {
   return `<defs>${defs}</defs>`;
 };
 
+const clipPathDefs = (clipPaths: readonly ClipPathReference[]): string =>
+  clipPaths.map(({ id, content }) => `<clipPath${attr("id", id)}>${content}</clipPath>`).join("");
+
+const documentDefs = (ctx: SvgContext): string => {
+  if (ctx.clipPaths.length === 0) return gradientDefs(ctx.gradients);
+
+  const gradients = gradientDefs(ctx.gradients);
+  const clips = clipPathDefs(ctx.clipPaths);
+
+  if (gradients.length === 0) return `<defs>${clips}</defs>`;
+
+  return gradients.replace("</defs>", `${clips}</defs>`);
+};
+
 const renderBackground = (doc: Document): string => {
   if (doc.background === null || doc.background === undefined) return "";
 
@@ -275,17 +303,72 @@ const renderBackground = (doc: Document): string => {
   )} />`;
 };
 
-const renderNode = (doc: Document, node: SceneNode, ctx: SvgContext): string => {
+const renderClipGeometryNode = (doc: Document, node: SceneNode): string => {
   if (!node.visible) return "";
 
   if (isContainer(node)) {
     const children = node.children
       .map((childId) => doc.nodes[childId])
       .filter((child): child is SceneNode => child !== undefined)
-      .map((child) => renderNode(doc, child, ctx))
+      .map((child) => renderClipGeometryNode(doc, child))
       .join("");
 
-    return `<g${nodeCommonAttrs(node)}>${children}</g>`;
+    return `<g${transformAttr(node.transform)}>${children}</g>`;
+  }
+
+  switch (node.type) {
+    case "rect": {
+      const radiusAttrs =
+        node.rx > 0 || node.ry > 0
+          ? numericAttr("rx", Math.max(0, node.rx)) + numericAttr("ry", Math.max(0, node.ry))
+          : "";
+      return `<rect${transformAttr(node.transform)}${numericAttr("x", 0)}${numericAttr(
+        "y",
+        0,
+      )}${numericAttr("width", node.width)}${numericAttr("height", node.height)}${radiusAttrs} />`;
+    }
+    case "ellipse":
+      return `<ellipse${transformAttr(node.transform)}${numericAttr("cx", 0)}${numericAttr(
+        "cy",
+        0,
+      )}${numericAttr("rx", Math.abs(node.rx))}${numericAttr("ry", Math.abs(node.ry))} />`;
+    case "path":
+      return `<path${transformAttr(node.transform)}${attr("d", pathToD(node))} />`;
+    case "text":
+      return `<text${transformAttr(node.transform)}${attr("font-family", node.fontFamily)}${numericAttr(
+        "font-size",
+        node.fontSize,
+      )}${numericAttr("font-weight", node.fontWeight)}${attr("font-style", node.fontStyle)}${numericAttr(
+        "letter-spacing",
+        node.letterSpacing,
+      )}${attr("text-anchor", textAnchor(node.textAlign))}>${escapeXml(node.text)}</text>`;
+    case "image":
+      return `<rect${transformAttr(node.transform)}${numericAttr("x", 0)}${numericAttr(
+        "y",
+        0,
+      )}${numericAttr("width", node.width)}${numericAttr("height", node.height)} />`;
+  }
+};
+
+const renderNode = (doc: Document, node: SceneNode, ctx: SvgContext): string => {
+  if (!node.visible) return "";
+
+  if (isContainer(node)) {
+    const childNodes = node.children
+      .map((childId) => doc.nodes[childId])
+      .filter((child): child is SceneNode => child !== undefined);
+    const isClipGroup = node.type === "group" && node.clip && childNodes.length >= 2;
+    const renderedChildren = isClipGroup ? childNodes.slice(0, -1) : childNodes;
+    const children = renderedChildren
+      .map((child) => renderNode(doc, child, ctx))
+      .join("");
+    const mask = childNodes[childNodes.length - 1];
+    const clipPath =
+      isClipGroup && mask !== undefined
+        ? attr("clip-path", `url(#${clipPathId(ctx, renderClipGeometryNode(doc, mask))})`)
+        : "";
+
+    return `<g${nodeCommonAttrs(node)}${clipPath}>${children}</g>`;
   }
 
   switch (node.type) {
@@ -421,7 +504,7 @@ const exportBounds = (doc: Document, roots: readonly SelectionRoot[]): BBox => {
 };
 
 export const documentToSvg = (doc: Document, opts?: SvgExportOptions): string => {
-  const ctx: SvgContext = { gradients: [], nextGradientId: 1 };
+  const ctx: SvgContext = { gradients: [], clipPaths: [], nextGradientId: 1, nextClipPathId: 1 };
   const selectionRoots = resolveSelectionRoots(doc, opts?.nodeIds);
   const layers =
     opts?.nodeIds !== undefined && opts.nodeIds.length > 0 && selectionRoots.length > 0
@@ -437,7 +520,7 @@ export const documentToSvg = (doc: Document, opts?: SvgExportOptions): string =>
           .map((layer) => renderNode(doc, layer, ctx))
           .join("");
   const body = renderBackground(doc) + layers;
-  const defs = gradientDefs(ctx.gradients);
+  const defs = documentDefs(ctx);
   const bounds = exportBounds(doc, selectionRoots);
   const scale = exportScale(opts?.scale);
   const outputWidth = bboxWidth(bounds);

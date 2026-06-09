@@ -256,6 +256,65 @@ describe("documentToSvg", () => {
     expect(svg).toContain('fill="url(#svg-export-gradient-1)"');
   });
 
+  it("emits a clipPath for clip groups and does not paint the frontmost mask child", () => {
+    const doc = createDocument(120, 90, "Clip Group");
+    const group = createGroup("Clipped");
+    group.clip = true;
+    group.transform = { ...IDENTITY, e: 10, f: 20 };
+    const clipped = createRect(0, 0, 80, 60);
+    clipped.fill = {
+      type: "linear",
+      start: { x: 0, y: 0 },
+      end: { x: 80, y: 0 },
+      stops: [
+        { offset: 0, color: { r: 255, g: 0, b: 0, a: 1 } },
+        { offset: 1, color: { r: 0, g: 0, b: 255, a: 1 } },
+      ],
+    };
+    clipped.stroke = null;
+    const mask = createRect(5, 6, 20, 30);
+    mask.fill = solid({ r: 0, g: 255, b: 0, a: 0.25 });
+    mask.opacity = 0.4;
+    mask.stroke = defaultStroke({ r: 255, g: 0, b: 0, a: 1 }, 8);
+    addNode(doc, group);
+    addNode(doc, clipped, group.id);
+    addNode(doc, mask, group.id);
+
+    const svg = documentToSvg(doc);
+
+    expect(svg).toContain("<defs>");
+    expect(svg).toContain('<linearGradient id="svg-export-gradient-1"');
+    expect(svg).toContain(
+      '<clipPath id="svg-export-clip-1"><rect transform="matrix(1 0 0 1 5 6)" x="0" y="0" width="20" height="30" /></clipPath>',
+    );
+    expect(svg).toContain(
+      '<g transform="matrix(1 0 0 1 10 20)" opacity="1" clip-path="url(#svg-export-clip-1)">',
+    );
+    expect(svg).toContain(
+      '<rect transform="matrix(1 0 0 1 0 0)" opacity="1" x="0" y="0" width="80" height="60" fill="url(#svg-export-gradient-1)" stroke="none" />',
+    );
+    expect(svg).not.toContain('opacity="0.4" x="0" y="0" width="20" height="30"');
+    expect(svg).not.toContain('fill="#00ff00" fill-opacity="0.25"');
+    expect(svg).not.toContain('stroke-width="8"');
+    expect(svg.indexOf('id="svg-export-gradient-1"')).toBeLessThan(
+      svg.indexOf('id="svg-export-clip-1"'),
+    );
+  });
+
+  it("keeps non-clip group export byte-for-byte unchanged", () => {
+    const doc = createDocument(100, 80, "Non Clip Group");
+    const group = createGroup("Plain group");
+    const bottom = createRect(1, 2, 10, 20);
+    const front = createRect(3, 4, 5, 6);
+    addNode(doc, group);
+    addNode(doc, bottom, group.id);
+    addNode(doc, front, group.id);
+
+    expect(documentToSvg(doc)).toBe(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80" viewBox="0 0 100 80"><g transform="matrix(1 0 0 1 0 0)" opacity="1"><g transform="matrix(1 0 0 1 0 0)" opacity="1"><rect transform="matrix(1 0 0 1 1 2)" opacity="1" x="0" y="0" width="10" height="20" fill="#c8c8c8" fill-opacity="1" stroke="#000000" stroke-opacity="1" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10" /><rect transform="matrix(1 0 0 1 3 4)" opacity="1" x="0" y="0" width="5" height="6" fill="#c8c8c8" fill-opacity="1" stroke="#000000" stroke-opacity="1" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10" /></g></g></svg>',
+    );
+  });
+
   it("skips hidden nodes and preserves group recursion", () => {
     const doc = createDocument(200, 200, "Group");
     const group = createGroup("Group");
