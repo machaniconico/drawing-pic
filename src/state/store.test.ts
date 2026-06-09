@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BBox } from "../core/geometry/bbox";
 import type { Matrix } from "../core/geometry/matrix";
 import { selectionBounds } from "../core/model/bounds";
-import { createRect } from "../core/model/factory";
+import { createGroup, createRect } from "../core/model/factory";
 import type { Document, NodeId, Paint } from "../core/model/types";
 import { canRedo, canUndo, createHistory } from "./history";
 import { flipNodes, rotateNodes90, rotateNodesAround } from "./operations";
@@ -1106,6 +1106,127 @@ describe("editorStore", () => {
     expect(editorStore.getState().doc).toEqual(before);
     expect(editorStore.getState().doc.guides).toEqual([]);
     expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
+  it("locks and unlocks every non-layer object as one undoable history step", () => {
+    const rect = createRect(0, 0, 10, 10);
+    const group = createGroup("Object group");
+    editorStore.getState().addNode(rect);
+    editorStore.getState().addNode(group);
+    const layerId = firstLayerId(editorStore.getState().doc);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeBulkDoc = editorStore.getState().doc;
+
+    editorStore.getState().setAllObjectsLocked(true);
+
+    expect(editorStore.getState().doc.nodes[rect.id]?.locked).toBe(true);
+    expect(editorStore.getState().doc.nodes[group.id]?.locked).toBe(true);
+    expect(editorStore.getState().doc.nodes[layerId]?.locked).toBe(false);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().setAllObjectsLocked(true);
+
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+    expect(editorStore.getState().doc).toBe(beforeBulkDoc);
+    expect(editorStore.getState().doc.nodes[rect.id]?.locked).toBe(false);
+    expect(editorStore.getState().doc.nodes[group.id]?.locked).toBe(false);
+    expect(editorStore.getState().doc.nodes[layerId]?.locked).toBe(false);
+
+    editorStore.getState().setAllObjectsLocked(false);
+
+    expect(editorStore.getState().doc.nodes[rect.id]?.locked).toBe(false);
+    expect(editorStore.getState().doc.nodes[group.id]?.locked).toBe(false);
+    expect(editorStore.getState().doc.nodes[layerId]?.locked).toBe(false);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
+  it("hides and shows every non-layer object as one undoable history step", () => {
+    const rect = createRect(0, 0, 10, 10);
+    const group = createGroup("Object group");
+    editorStore.getState().addNode(rect);
+    editorStore.getState().addNode(group);
+    const layerId = firstLayerId(editorStore.getState().doc);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeBulkDoc = editorStore.getState().doc;
+
+    editorStore.getState().setAllObjectsHidden(true);
+
+    expect(editorStore.getState().doc.nodes[rect.id]?.visible).toBe(false);
+    expect(editorStore.getState().doc.nodes[group.id]?.visible).toBe(false);
+    expect(editorStore.getState().doc.nodes[layerId]?.visible).toBe(true);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().setAllObjectsHidden(true);
+
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+    expect(editorStore.getState().doc).toBe(beforeBulkDoc);
+    expect(editorStore.getState().doc.nodes[rect.id]?.visible).toBe(true);
+    expect(editorStore.getState().doc.nodes[group.id]?.visible).toBe(true);
+    expect(editorStore.getState().doc.nodes[layerId]?.visible).toBe(true);
+
+    editorStore.getState().setAllObjectsHidden(false);
+
+    expect(editorStore.getState().doc.nodes[rect.id]?.visible).toBe(true);
+    expect(editorStore.getState().doc.nodes[group.id]?.visible).toBe(true);
+    expect(editorStore.getState().doc.nodes[layerId]?.visible).toBe(true);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
+  it("does not push history when bulk object actions have no object nodes", () => {
+    const before = editorStore.getState().doc;
+
+    editorStore.getState().setAllObjectsLocked(true);
+    editorStore.getState().setAllObjectsHidden(true);
+
+    expect(editorStore.getState().doc).toBe(before);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
+  it("unlocks every object as a real state transition (lock then unlock)", () => {
+    const rect = createRect(0, 0, 10, 10);
+    const group = createGroup("Object group");
+    editorStore.getState().addNode(rect);
+    editorStore.getState().addNode(group);
+    const layerId = firstLayerId(editorStore.getState().doc);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().setAllObjectsLocked(true);
+    expect(editorStore.getState().doc.nodes[rect.id]?.locked).toBe(true);
+    expect(editorStore.getState().doc.nodes[group.id]?.locked).toBe(true);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    // Unlock-all directly after lock-all (no undo): flags must flip true -> false.
+    editorStore.getState().setAllObjectsLocked(false);
+    expect(editorStore.getState().doc.nodes[rect.id]?.locked).toBe(false);
+    expect(editorStore.getState().doc.nodes[group.id]?.locked).toBe(false);
+    expect(editorStore.getState().doc.nodes[layerId]?.locked).toBe(false);
+    expect(editorStore.getState().history.past).toHaveLength(2);
+  });
+
+  it("shows every object as a real state transition (hide then show)", () => {
+    const rect = createRect(0, 0, 10, 10);
+    const group = createGroup("Object group");
+    editorStore.getState().addNode(rect);
+    editorStore.getState().addNode(group);
+    const layerId = firstLayerId(editorStore.getState().doc);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().setAllObjectsHidden(true);
+    expect(editorStore.getState().doc.nodes[rect.id]?.visible).toBe(false);
+    expect(editorStore.getState().doc.nodes[group.id]?.visible).toBe(false);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    // Show-all directly after hide-all (no undo): visible must flip false -> true.
+    editorStore.getState().setAllObjectsHidden(false);
+    expect(editorStore.getState().doc.nodes[rect.id]?.visible).toBe(true);
+    expect(editorStore.getState().doc.nodes[group.id]?.visible).toBe(true);
+    expect(editorStore.getState().doc.nodes[layerId]?.visible).toBe(true);
+    expect(editorStore.getState().history.past).toHaveLength(2);
   });
 
   it("does not push history when guide preference actions miss", () => {

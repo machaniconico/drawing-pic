@@ -131,6 +131,8 @@ export interface EditorActions {
   setGuideHidden: (id: NodeId, hidden: boolean) => void;
   setAllGuidesLocked: (locked: boolean) => void;
   setAllGuidesHidden: (hidden: boolean) => void;
+  setAllObjectsLocked: (locked: boolean) => void;
+  setAllObjectsHidden: (hidden: boolean) => void;
   clearGuides: () => void;
   setSelection: (ids: NodeId[]) => void;
   addToSelection: (id: NodeId) => void;
@@ -373,6 +375,8 @@ const clipboardDocument = (clipboard: readonly SceneNode[]): Document => ({
   guides: [],
   nodes: Object.fromEntries(clipboard.map((node) => [node.id, node])) as Record<NodeId, SceneNode>,
 });
+
+const objectNodes = (doc: Document): SceneNode[] => Object.values(doc.nodes).filter((node) => node.type !== "layer");
 
 const normalizeDocument = (doc: Document): Document => ({
   ...doc,
@@ -1057,6 +1061,49 @@ export const editorStore = createStore<EditorStore>()((set) => ({
 
       state.doc = nextDoc;
       return true;
+    });
+  },
+
+  setAllObjectsLocked: (locked) => {
+    withDocHistory(set, (state) => {
+      const objects = objectNodes(state.doc);
+      if (objects.length === 0) {
+        return false;
+      }
+
+      let changed = false;
+      for (const node of objects) {
+        if (node.locked === locked) {
+          continue;
+        }
+
+        node.locked = locked;
+        changed = true;
+      }
+
+      return changed;
+    });
+  },
+
+  setAllObjectsHidden: (hidden) => {
+    withDocHistory(set, (state) => {
+      const objects = objectNodes(state.doc);
+      if (objects.length === 0) {
+        return false;
+      }
+
+      const visible = !hidden;
+      let changed = false;
+      for (const node of objects) {
+        if (node.visible === visible) {
+          continue;
+        }
+
+        node.visible = visible;
+        changed = true;
+      }
+
+      return changed;
     });
   },
 
