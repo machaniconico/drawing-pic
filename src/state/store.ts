@@ -135,6 +135,8 @@ export interface EditorActions {
   setAllGuidesHidden: (hidden: boolean) => void;
   setAllObjectsLocked: (locked: boolean) => void;
   setAllObjectsHidden: (hidden: boolean) => void;
+  lockSelection: () => void;
+  hideSelection: () => void;
   clearGuides: () => void;
   setSelection: (ids: NodeId[]) => void;
   selectSameFill: () => void;
@@ -1108,6 +1110,54 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       }
 
       return changed;
+    });
+  },
+
+  lockSelection: () => {
+    withDocHistory(set, (state) => {
+      if (state.selection.length === 0) {
+        return false;
+      }
+
+      let changed = false;
+      for (const id of state.selection) {
+        const node = state.doc.nodes[id];
+        if (!node || node.locked) {
+          continue;
+        }
+
+        node.locked = true;
+        changed = true;
+      }
+
+      return changed;
+    });
+  },
+
+  hideSelection: () => {
+    withDocHistory(set, (state) => {
+      if (state.selection.length === 0) {
+        return false;
+      }
+
+      let changed = false;
+      for (const id of state.selection) {
+        const node = state.doc.nodes[id];
+        if (!node || !node.visible) {
+          continue;
+        }
+
+        node.visible = false;
+        changed = true;
+      }
+
+      if (!changed) {
+        return false;
+      }
+
+      state.selection = [];
+      clearMissingKeyObject(state);
+      return true;
     });
   },
 

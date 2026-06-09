@@ -1257,6 +1257,103 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(0);
   });
 
+  it("locks selected nodes as one undoable history step", () => {
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(20, 0, 10, 10);
+    const unselected = createRect(40, 0, 10, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+    editorStore.getState().addNode(unselected);
+    editorStore.getState().setSelection([left.id, right.id]);
+    editorStore.getState().setKeyObject(right.id);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeLockDoc = editorStore.getState().doc;
+
+    editorStore.getState().lockSelection();
+
+    expect(editorStore.getState().doc.nodes[left.id]?.locked).toBe(true);
+    expect(editorStore.getState().doc.nodes[right.id]?.locked).toBe(true);
+    expect(editorStore.getState().doc.nodes[unselected.id]?.locked).toBe(false);
+    expect(editorStore.getState().selection).toEqual([left.id, right.id]);
+    expect(editorStore.getState().keyObjectId).toBe(right.id);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().lockSelection();
+
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeLockDoc);
+    expect(editorStore.getState().doc.nodes[left.id]?.locked).toBe(false);
+    expect(editorStore.getState().doc.nodes[right.id]?.locked).toBe(false);
+    expect(editorStore.getState().doc.nodes[unselected.id]?.locked).toBe(false);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("hides selected nodes, clears selection, and undoes the document change", () => {
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(20, 0, 10, 10);
+    const unselected = createRect(40, 0, 10, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+    editorStore.getState().addNode(unselected);
+    editorStore.getState().setSelection([left.id, right.id]);
+    editorStore.getState().setKeyObject(right.id);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeHideDoc = editorStore.getState().doc;
+
+    editorStore.getState().hideSelection();
+
+    expect(editorStore.getState().doc.nodes[left.id]?.visible).toBe(false);
+    expect(editorStore.getState().doc.nodes[right.id]?.visible).toBe(false);
+    expect(editorStore.getState().doc.nodes[unselected.id]?.visible).toBe(true);
+    expect(editorStore.getState().selection).toEqual([]);
+    expect(editorStore.getState().keyObjectId).toBeNull();
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().hideSelection();
+
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeHideDoc);
+    expect(editorStore.getState().doc.nodes[left.id]?.visible).toBe(true);
+    expect(editorStore.getState().doc.nodes[right.id]?.visible).toBe(true);
+    expect(editorStore.getState().doc.nodes[unselected.id]?.visible).toBe(true);
+    expect(editorStore.getState().selection).toEqual([]);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("does not push history for empty or unchanged selection lock and hide actions", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeEmptyDoc = editorStore.getState().doc;
+
+    editorStore.getState().lockSelection();
+    editorStore.getState().hideSelection();
+
+    expect(editorStore.getState().doc).toBe(beforeEmptyDoc);
+    expect(editorStore.getState().selection).toEqual([]);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.getState().lockSelection();
+    editorStore.getState().setAllObjectsHidden(true);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeNoChangeDoc = editorStore.getState().doc;
+
+    editorStore.getState().lockSelection();
+    editorStore.getState().hideSelection();
+
+    expect(editorStore.getState().doc).toBe(beforeNoChangeDoc);
+    expect(editorStore.getState().selection).toEqual([rect.id]);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
   it("does not push history when bulk object actions have no object nodes", () => {
     const before = editorStore.getState().doc;
 
