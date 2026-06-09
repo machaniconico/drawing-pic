@@ -860,6 +860,7 @@ export function PropertiesPanel() {
   };
 
   const styledNode = hasStyle(node) ? node : null;
+  const rectNode = node.type === "rect" ? node : null;
   const textNode = node.type === "text" ? node : null;
   const gradientFill =
     styledNode !== null && (styledNode.fill.type === "linear" || styledNode.fill.type === "radial")
@@ -1411,6 +1412,32 @@ export function PropertiesPanel() {
       ) : null}
 
       {geometrySection}
+
+      {rectNode !== null ? (
+        <section className="properties-panel__section" aria-label="Corners">
+          <h3>Corners</h3>
+          <div className="properties-panel__grid">
+            <label className="properties-panel__field">
+              <span className="properties-panel__label">RX</span>
+              <CommitNumberInput
+                ariaLabel="Rectangle corner radius x"
+                min={0}
+                onCommit={(value) => updateNode(rectNode.id, { rx: Math.max(0, value) })}
+                value={rectNode.rx}
+              />
+            </label>
+            <label className="properties-panel__field">
+              <span className="properties-panel__label">RY</span>
+              <CommitNumberInput
+                ariaLabel="Rectangle corner radius y"
+                min={0}
+                onCommit={(value) => updateNode(rectNode.id, { ry: Math.max(0, value) })}
+                value={rectNode.ry}
+              />
+            </label>
+          </div>
+        </section>
+      ) : null}
     </aside>
   );
 }
