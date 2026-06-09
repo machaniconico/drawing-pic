@@ -118,6 +118,7 @@ export interface EditorActions {
   booleanOp: (op: BooleanOp) => void;
   copySelection: () => void;
   paste: () => void;
+  pasteInPlace: () => void;
   duplicateSelection: () => void;
   reorderNode: (dragId: NodeId, targetId: NodeId, position: LayerDropPosition) => void;
   addGuide: (axis: "x" | "y", position: number) => NodeId | null;
@@ -707,6 +708,39 @@ export const editorStore = createStore<EditorStore>()((set) => ({
         const root = state.doc.nodes[clone.rootId];
         if (root) {
           root.transform = { ...root.transform, e: root.transform.e + 12, f: root.transform.f + 12 };
+        }
+
+        targetParent.children.push(clone.rootId);
+        pastedRootIds.push(clone.rootId);
+      }
+
+      state.selection = pastedRootIds;
+      clearMissingKeyObject(state);
+      return pastedRootIds.length > 0;
+    });
+  },
+
+  pasteInPlace: () => {
+    withDocHistory(set, (state) => {
+      const targetParentId = getDefaultParentId(state.doc);
+      const clipboard = original(state.clipboard) ?? state.clipboard;
+      if (!targetParentId || clipboard.length === 0) {
+        return false;
+      }
+
+      const targetParent = state.doc.nodes[targetParentId];
+      if (!targetParent || !isContainer(targetParent)) {
+        return false;
+      }
+
+      const sourceDoc = clipboardDocument(clipboard);
+      const pastedRootIds: NodeId[] = [];
+
+      for (const rootId of clipboardRootIds(clipboard)) {
+        const clone = cloneSubtree(sourceDoc, rootId, undefined, Object.keys(state.doc.nodes));
+        Object.assign(sourceDoc.nodes, clone.nodes);
+        for (const node of Object.values(clone.nodes)) {
+          state.doc.nodes[node.id] = node;
         }
 
         targetParent.children.push(clone.rootId);

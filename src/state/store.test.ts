@@ -450,6 +450,42 @@ describe("editorStore", () => {
     expect(editorStore.getState().doc.nodes[rect.id]?.name).toBe("Rectangle");
   });
 
+  it("pastes copied nodes in place, selects the clones, and undoes as one history step", () => {
+    const rect = createRect(24, 36, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.getState().setKeyObject(rect.id);
+    editorStore.getState().copySelection();
+    const beforePasteDoc = editorStore.getState().doc;
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().pasteInPlace();
+
+    const pastedIds = editorStore.getState().selection;
+    expect(pastedIds).toHaveLength(1);
+    expect(pastedIds[0]).not.toBe(rect.id);
+    expectMatrixCloseTo(editorStore.getState().doc.nodes[pastedIds[0]!]?.transform, rect.transform);
+    expect(editorStore.getState().keyObjectId).toBeNull();
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforePasteDoc);
+    expect(editorStore.getState().doc.nodes[rect.id]).toBeDefined();
+    expect(editorStore.getState().doc.nodes[pastedIds[0]!]).toBeUndefined();
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("does not push history when pasteInPlace has an empty clipboard", () => {
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().pasteInPlace();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
   it("flips selected node transforms as one undoable history step", () => {
     const left = createRect(0, 0, 10, 20);
     const right = createRect(40, 10, 20, 10);
