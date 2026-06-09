@@ -56,6 +56,16 @@ const FILL_TYPE_LABELS: Record<FillType, string> = {
 };
 
 const DEFAULT_COLOR: RGBA = { r: 0, g: 0, b: 0, a: 1 };
+const DEFAULT_STROKE: Stroke = {
+  paint: { type: "solid", color: DEFAULT_COLOR },
+  width: 1,
+  cap: "butt",
+  join: "miter",
+  miterLimit: 4,
+  dash: [],
+  dashOffset: 0,
+  align: "center",
+};
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
@@ -399,6 +409,7 @@ export function PropertiesPanel() {
   const setSelectionPosition = useEditorStore((state) => state.setSelectionPosition);
   const setSelectionSize = useEditorStore((state) => state.setSelectionSize);
   const rotateSelectionBy = useEditorStore((state) => state.rotateSelectionBy);
+  const applyStyleToSelection = useEditorStore((state) => state.applyStyleToSelection);
   const selectedNodes = getSelectedNodes({ doc, selection });
 
   if (selectedNodes.length === 0) {
@@ -520,6 +531,88 @@ export function PropertiesPanel() {
     const sharedOpacity = selectedNodes.every((node) => node.opacity === selectedNodes[0].opacity)
       ? Math.round(selectedNodes[0].opacity * 100)
       : null;
+    const representativeOpacity = Math.round(clamp(selectedNodes[0].opacity, 0, 1) * 100);
+    const styledNodes = selectedNodes.filter(hasStyle);
+    const representativeStyledNode = styledNodes[0] ?? null;
+    const representativeFill = representativeStyledNode?.fill ?? { type: "none" };
+    const representativeFillType =
+      representativeFill.type === "none" || representativeFill.type === "solid"
+        ? representativeFill.type
+        : "mixed";
+    const representativeFillColor = rgbaToHex(
+      primaryPaintColor(representativeFill) ?? DEFAULT_COLOR,
+    );
+    const representativeStroke =
+      styledNodes.find((selectedNode) => selectedNode.stroke !== null)?.stroke ?? DEFAULT_STROKE;
+    const representativeStrokeColor = rgbaToHex(
+      primaryPaintColor(representativeStroke.paint) ?? DEFAULT_COLOR,
+    );
+
+    const setSelectionOpacity = (value: number): void => {
+      const nextOpacity = readNumber(value);
+      if (nextOpacity === null) {
+        return;
+      }
+
+      applyStyleToSelection({ opacity: clamp(nextOpacity, 0, 100) / 100 });
+    };
+
+    const setSelectionFillType = (fillType: "none" | "solid"): void => {
+      applyStyleToSelection({
+        fill:
+          fillType === "none"
+            ? { type: "none" }
+            : {
+                type: "solid",
+                color: cloneRgba(primaryPaintColor(representativeFill) ?? DEFAULT_COLOR),
+              },
+      });
+    };
+
+    const setSelectionFill = (hex: string): void => {
+      applyStyleToSelection({
+        fill: {
+          type: "solid",
+          color: hexToRgba(hex, paintColor(representativeFill)?.a ?? 1),
+        },
+      });
+    };
+
+    const selectionStrokeWith = (paint: Paint, width: number): Stroke => ({
+      ...representativeStroke,
+      paint,
+      width,
+      dash: [...representativeStroke.dash],
+    });
+
+    const setSelectionStrokePaint = (hex: string): void => {
+      applyStyleToSelection({
+        stroke: selectionStrokeWith(
+          {
+            type: "solid",
+            color: hexToRgba(hex, paintColor(representativeStroke.paint)?.a ?? 1),
+          },
+          representativeStroke.width,
+        ),
+      });
+    };
+
+    const setSelectionStrokeWidth = (value: number): void => {
+      const nextWidth = readNumber(value);
+      if (nextWidth === null) {
+        return;
+      }
+
+      applyStyleToSelection({
+        stroke: selectionStrokeWith(
+          {
+            type: "solid",
+            color: cloneRgba(primaryPaintColor(representativeStroke.paint) ?? DEFAULT_COLOR),
+          },
+          Math.max(0, nextWidth),
+        ),
+      });
+    };
 
     return (
       <aside className="properties-panel" aria-label="Properties">
@@ -528,12 +621,91 @@ export function PropertiesPanel() {
         </header>
         <section className="properties-panel__section">
           <div className="properties-panel__selection-count">{selectedNodes.length} objects selected</div>
-          <div className="properties-panel__row">
+          <label className="properties-panel__row properties-panel__row--stacked">
             <span className="properties-panel__label">Opacity</span>
-            <span className="properties-panel__readout">
-              {sharedOpacity === null ? "Mixed" : `${sharedOpacity}%`}
+            <span className="properties-panel__opacity-controls">
+              <input
+                aria-label="Selection opacity"
+                className="properties-panel__range"
+                max={100}
+                min={0}
+                onChange={(event) => setSelectionOpacity(event.currentTarget.valueAsNumber)}
+                type="range"
+                value={representativeOpacity}
+              />
+              <input
+                aria-label="Selection opacity percent"
+                className="properties-panel__number properties-panel__number--compact"
+                max={100}
+                min={0}
+                onChange={(event) => setSelectionOpacity(event.currentTarget.valueAsNumber)}
+                placeholder={sharedOpacity === null ? "Mixed" : undefined}
+                type="number"
+                value={sharedOpacity ?? representativeOpacity}
+              />
             </span>
-          </div>
+          </label>
+          <label className="properties-panel__row">
+            <span className="properties-panel__label">Fill type</span>
+            <select
+              aria-label="Selection fill type"
+              className="properties-panel__select"
+              onChange={(event) => {
+                const fillType = event.currentTarget.value;
+                if (fillType === "none" || fillType === "solid") {
+                  setSelectionFillType(fillType);
+                }
+              }}
+              value={representativeFillType}
+            >
+              {representativeFillType === "mixed" ? (
+                <option disabled value="mixed">
+                  Mixed
+                </option>
+              ) : null}
+              <option value="none">None</option>
+              <option value="solid">Solid</option>
+            </select>
+          </label>
+          <label className="properties-panel__row">
+            <span className="properties-panel__label">Fill</span>
+            <span className="properties-panel__paint-control">
+              <input
+                aria-label="Selection fill color"
+                className="properties-panel__color"
+                disabled={representativeFill.type === "none"}
+                onChange={(event) => setSelectionFill(event.currentTarget.value)}
+                type="color"
+                value={representativeFillColor}
+              />
+              <span className="properties-panel__readout">{paintLabel(representativeFill)}</span>
+            </span>
+          </label>
+          <label className="properties-panel__row">
+            <span className="properties-panel__label">Stroke</span>
+            <span className="properties-panel__paint-control">
+              <input
+                aria-label="Selection stroke color"
+                className="properties-panel__color"
+                onChange={(event) => setSelectionStrokePaint(event.currentTarget.value)}
+                type="color"
+                value={representativeStrokeColor}
+              />
+              <span className="properties-panel__readout">{paintLabel(representativeStroke.paint)}</span>
+            </span>
+          </label>
+          <label className="properties-panel__row">
+            <span className="properties-panel__label">Stroke width</span>
+            <input
+              aria-label="Selection stroke width"
+              className="properties-panel__number"
+              min={0}
+              onChange={(event) => setSelectionStrokeWidth(event.currentTarget.valueAsNumber)}
+              step={0.5}
+              type="number"
+              value={representativeStroke.width}
+            />
+          </label>
         </section>
         {geometrySection}
       </aside>
