@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useEditorStore } from "../state/store";
 import type { AlignEdge, DistributeAxis } from "../state/operations";
 import "./AlignPanel.css";
@@ -38,11 +39,13 @@ const distributeActions: DistributeAction[] = [
 ];
 
 export function AlignPanel() {
+  const [gap, setGap] = useState(0);
   const selection = useEditorStore((state) => state.selection);
   const nodes = useEditorStore((state) => state.doc.nodes);
   const keyObjectId = useEditorStore((state) => state.keyObjectId);
   const alignNodes = useEditorStore((state) => state.alignNodes);
   const distributeNodes = useEditorStore((state) => state.distributeNodes);
+  const distributeSelectionByGap = useEditorStore((state) => state.distributeSelectionByGap);
   const bringToFront = useEditorStore((state) => state.bringToFront);
   const bringForward = useEditorStore((state) => state.bringForward);
   const sendBackward = useEditorStore((state) => state.sendBackward);
@@ -52,6 +55,7 @@ export function AlignPanel() {
   const selectionCount = selection.length;
   const canAlign = selectionCount >= 2;
   const canDistribute = selectionCount >= 3;
+  const canDistributeByGap = canAlign;
   const canArrange = selectionCount >= 1;
   const activeKeyObjectId = keyObjectId !== null && selection.includes(keyObjectId) ? keyObjectId : "";
   const arrangeActions: ArrangeAction[] = [
@@ -128,6 +132,49 @@ export function AlignPanel() {
               <span className="align-panel__button-label">{item.label}</span>
             </button>
           ))}
+        </div>
+      </section>
+
+      <section className="align-panel__group" aria-labelledby="align-panel-distribute-spacing-heading">
+        <h3 id="align-panel-distribute-spacing-heading" className="align-panel__group-title">
+          DISTRIBUTE SPACING
+        </h3>
+        <label className="align-panel__gap-field">
+          <span className="align-panel__gap-label">Gap</span>
+          <input
+            className="align-panel__gap-input"
+            type="number"
+            min="0"
+            step="1"
+            value={gap}
+            onChange={(event) => setGap(Math.max(0, Number(event.target.value) || 0))}
+          />
+        </label>
+        <div className="align-panel__button-grid align-panel__button-grid--distribute">
+          <button
+            type="button"
+            className="align-panel__button"
+            title="Distribute horizontal spacing by gap"
+            disabled={!canDistributeByGap}
+            onClick={() => distributeSelectionByGap("horizontal", gap)}
+          >
+            <span className="align-panel__button-icon" aria-hidden="true">
+              H
+            </span>
+            <span className="align-panel__button-label">Horizontal</span>
+          </button>
+          <button
+            type="button"
+            className="align-panel__button"
+            title="Distribute vertical spacing by gap"
+            disabled={!canDistributeByGap}
+            onClick={() => distributeSelectionByGap("vertical", gap)}
+          >
+            <span className="align-panel__button-icon" aria-hidden="true">
+              V
+            </span>
+            <span className="align-panel__button-label">Vertical</span>
+          </button>
         </div>
       </section>
 
