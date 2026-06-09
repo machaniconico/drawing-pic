@@ -1356,6 +1356,16 @@ export function PropertiesPanel() {
           </label>
 
           <label className="properties-panel__row">
+            <span className="properties-panel__label">Line height</span>
+            <CommitNumberInput
+              ariaLabel="Line height"
+              min={0}
+              onCommit={(value) => updateNode(textNode.id, { lineHeight: Math.max(0, value) })}
+              value={textNode.lineHeight}
+            />
+          </label>
+
+          <label className="properties-panel__row">
             <span className="properties-panel__label">Font weight</span>
             <CommitNumberInput
               ariaLabel="Font weight"
