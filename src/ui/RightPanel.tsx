@@ -5,6 +5,7 @@ import { TransformActions } from "./TransformActions";
 import { SnapSettings } from "./SnapSettings";
 import { ExportMenu } from "./ExportMenu";
 import { ImportButton } from "./ImportButton";
+import { DocSettings } from "./DocSettings";
 import "./RightPanel.css";
 
 export function RightPanel() {
@@ -20,6 +21,20 @@ export function RightPanel() {
         <div className="right-panel__content right-panel__content--export">
           <ImportButton />
           <ExportMenu />
+        </div>
+      </section>
+
+      <div className="right-panel__divider" role="presentation" />
+
+      <section
+        aria-labelledby="right-panel-document-heading"
+        className="right-panel__section right-panel__section--document"
+      >
+        <header className="right-panel__header">
+          <h2 id="right-panel-document-heading">Document</h2>
+        </header>
+        <div className="right-panel__content right-panel__content--document">
+          <DocSettings />
         </div>
       </section>
 
