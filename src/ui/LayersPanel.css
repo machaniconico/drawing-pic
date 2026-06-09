@@ -152,3 +152,20 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.layers-panel__name-input {
+  min-width: 0;
+  width: 100%;
+  height: 20px;
+  padding: 0 4px;
+  color: #ffffff;
+  background: #1f1f21;
+  border: 1px solid #2d8cf0;
+  border-radius: 3px;
+  font: inherit;
+  line-height: 18px;
+}
+
+.layers-panel__name-input:focus {
+  outline: none;
+}

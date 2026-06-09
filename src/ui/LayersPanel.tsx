@@ -1,5 +1,5 @@
-import type { CSSProperties, DragEvent, MouseEvent } from "react";
-import { useState } from "react";
+import type { CSSProperties, DragEvent, KeyboardEvent, MouseEvent } from "react";
+import { useRef, useState } from "react";
 import { isContainer, type NodeId, type SceneNode } from "../core/model/types";
 import type { LayerDropPosition } from "../state/layerReorder";
 import { useEditorStore } from "../state/store";
@@ -97,6 +97,9 @@ export function LayersPanel() {
   const addToSelection = useEditorStore((state) => state.addToSelection);
   const reorderNode = useEditorStore((state) => state.reorderNode);
   const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(null);
+  const [editingId, setEditingId] = useState<NodeId | null>(null);
+  const [draftName, setDraftName] = useState("");
+  const activeRenameRef = useRef<NodeId | null>(null);
 
   const rows = buildRows(doc.nodes, doc.layerOrder, 0);
 
@@ -117,6 +120,48 @@ export function LayersPanel() {
   const handleToggleLocked = (event: MouseEvent<HTMLButtonElement>, node: SceneNode): void => {
     event.stopPropagation();
     updateNode(node.id, { locked: !node.locked });
+  };
+
+  const beginRename = (event: MouseEvent<HTMLSpanElement>, node: SceneNode): void => {
+    event.stopPropagation();
+    activeRenameRef.current = node.id;
+    setEditingId(node.id);
+    setDraftName(node.name);
+  };
+
+  const commitRename = (id: NodeId): void => {
+    if (activeRenameRef.current !== id) {
+      return;
+    }
+
+    const nextName = draftName.trim();
+    activeRenameRef.current = null;
+    setEditingId(null);
+
+    if (nextName.length === 0) {
+      return;
+    }
+
+    updateNode(id, { name: nextName });
+  };
+
+  const cancelRename = (): void => {
+    activeRenameRef.current = null;
+    setEditingId(null);
+    setDraftName("");
+  };
+
+  const handleNameKeyDown = (event: KeyboardEvent<HTMLInputElement>, id: NodeId): void => {
+    event.stopPropagation();
+
+    if (event.key === "Enter") {
+      commitRename(id);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      cancelRename();
+    }
   };
 
   const handleDragStart = (event: DragEvent<HTMLDivElement>, id: NodeId): void => {
@@ -209,9 +254,28 @@ export function LayersPanel() {
               <span className={`layers-panel__glyph layers-panel__glyph--${node.type}`} aria-hidden="true">
                 {typeGlyphs[node.type]}
               </span>
-              <span className="layers-panel__name" title={node.name}>
-                {node.name}
-              </span>
+              {editingId === id ? (
+                <input
+                  aria-label={`Rename ${node.name}`}
+                  autoFocus
+                  className="layers-panel__name-input"
+                  draggable={false}
+                  onBlur={() => commitRename(id)}
+                  onChange={(event) => setDraftName(event.target.value)}
+                  onClick={(event) => event.stopPropagation()}
+                  onDoubleClick={(event) => event.stopPropagation()}
+                  onDragStart={(event) => event.stopPropagation()}
+                  onFocus={(event) => event.currentTarget.select()}
+                  onKeyDown={(event) => handleNameKeyDown(event, id)}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  type="text"
+                  value={draftName}
+                />
+              ) : (
+                <span className="layers-panel__name" onDoubleClick={(event) => beginRename(event, node)} title={node.name}>
+                  {node.name}
+                </span>
+              )}
             </div>
           );
         })}
