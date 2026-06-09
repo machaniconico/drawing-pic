@@ -96,6 +96,8 @@ export function LayersPanel() {
   const setSelection = useEditorStore((state) => state.setSelection);
   const addToSelection = useEditorStore((state) => state.addToSelection);
   const reorderNode = useEditorStore((state) => state.reorderNode);
+  const setAllObjectsLocked = useEditorStore((state) => state.setAllObjectsLocked);
+  const setAllObjectsHidden = useEditorStore((state) => state.setAllObjectsHidden);
   const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(null);
   const [editingId, setEditingId] = useState<NodeId | null>(null);
   const [draftName, setDraftName] = useState("");
@@ -201,6 +203,20 @@ export function LayersPanel() {
   return (
     <aside className="layers-panel" aria-label="Layers">
       <div className="layers-panel__header">Layers</div>
+      <div className="layers-panel__bulk-bar" aria-label="Bulk layer controls">
+        <button className="layers-panel__bulk-button" onClick={() => setAllObjectsLocked(true)} type="button">
+          Lock All
+        </button>
+        <button className="layers-panel__bulk-button" onClick={() => setAllObjectsLocked(false)} type="button">
+          Unlock All
+        </button>
+        <button className="layers-panel__bulk-button" onClick={() => setAllObjectsHidden(true)} type="button">
+          Hide All
+        </button>
+        <button className="layers-panel__bulk-button" onClick={() => setAllObjectsHidden(false)} type="button">
+          Show All
+        </button>
+      </div>
       <div className="layers-panel__tree" role="tree" aria-label="Document layers">
         {rows.map(({ id, node, depth }) => {
           const selected = selection.includes(id);

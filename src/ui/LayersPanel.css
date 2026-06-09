@@ -19,6 +19,41 @@
   border-bottom: 1px solid #3c3c3c;
 }
 
+.layers-panel__bulk-bar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px 8px;
+  border-bottom: 1px solid #3c3c3c;
+}
+
+.layers-panel__bulk-button {
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  overflow: hidden;
+  color: #dedede;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: #303033;
+  border: 1px solid #4a4a4d;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.layers-panel__bulk-button:hover {
+  color: #ffffff;
+  background: #3a3a3d;
+  border-color: #5a5a5d;
+}
+
+.layers-panel__bulk-button:focus-visible {
+  outline: 1px solid #2d8cf0;
+  outline-offset: 1px;
+}
+
 .layers-panel__tree {
   flex: 1 1 auto;
   min-height: 0;
