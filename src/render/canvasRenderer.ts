@@ -1,5 +1,7 @@
-import { toCanvasArgs } from "../core/geometry/matrix";
+import { isEmpty, transform as transformBBox, unionAll, type BBox } from "../core/geometry/bbox";
+import { invert, toCanvasArgs } from "../core/geometry/matrix";
 import type { Vec2 } from "../core/geometry/vector";
+import { localBounds } from "../core/model/bounds";
 import type {
   Document,
   EllipseNode,
@@ -220,11 +222,105 @@ const drawImage = (
   ctx.drawImage(entry.image, 0, 0, node.width, node.height);
 };
 
+const maskFallbackBounds = (doc: Document, node: SceneNode): BBox => {
+  if (node.type !== "group" && node.type !== "layer") {
+    return localBounds(node);
+  }
+
+  return unionAll(
+    node.children.flatMap((childId) => {
+      const child = doc.nodes[childId];
+      if (child === undefined || !child.visible) return [];
+      return [transformBBox(maskFallbackBounds(doc, child), child.transform)];
+    }),
+  );
+};
+
+const buildClipMaskPath = (
+  ctx: CanvasRenderingContext2D,
+  doc: Document,
+  mask: SceneNode,
+): boolean => {
+  switch (mask.type) {
+    case "rect":
+      roundedRectPath(ctx, mask);
+      return true;
+    case "ellipse":
+      ellipsePath(ctx, mask);
+      return true;
+    case "path":
+      pathNodePath(ctx, mask);
+      return true;
+    case "text":
+    case "image":
+    case "group":
+    case "layer": {
+      const bounds = maskFallbackBounds(doc, mask);
+      if (isEmpty(bounds)) return false;
+
+      ctx.beginPath();
+      ctx.rect(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+      return true;
+    }
+  }
+};
+
 const applyNodeCompositing = (ctx: CanvasRenderingContext2D, node: SceneNode): void => {
   ctx.globalAlpha *= node.opacity;
   if ("blendMode" in node) {
     ctx.globalCompositeOperation = node.blendMode;
   }
+};
+
+const drawChildNodes = (
+  ctx: CanvasRenderingContext2D,
+  doc: Document,
+  childIds: readonly string[],
+  onImageLoad?: () => void,
+): void => {
+  for (const childId of childIds) {
+    const child = doc.nodes[childId];
+    if (child !== undefined) {
+      drawNode(ctx, doc, child, onImageLoad);
+    }
+  }
+};
+
+const drawClippedGroup = (
+  ctx: CanvasRenderingContext2D,
+  doc: Document,
+  node: Extract<SceneNode, { type: "group" }>,
+  onImageLoad?: () => void,
+): void => {
+  const maskId = node.children[node.children.length - 1];
+  const mask = maskId === undefined ? undefined : doc.nodes[maskId];
+  const clippedChildIds = node.children.slice(0, -1);
+
+  if (mask === undefined) {
+    drawChildNodes(ctx, doc, clippedChildIds, onImageLoad);
+    return;
+  }
+
+  ctx.save();
+  ctx.transform(...toCanvasArgs(mask.transform));
+
+  if (!buildClipMaskPath(ctx, doc, mask)) {
+    ctx.restore();
+    drawChildNodes(ctx, doc, clippedChildIds, onImageLoad);
+    return;
+  }
+
+  ctx.clip();
+
+  const inverseMaskTransform = invert(mask.transform);
+  if (inverseMaskTransform === null) {
+    ctx.restore();
+    return;
+  }
+
+  ctx.transform(...toCanvasArgs(inverseMaskTransform));
+  drawChildNodes(ctx, doc, clippedChildIds, onImageLoad);
+  ctx.restore();
 };
 
 const drawNode = (
@@ -241,12 +337,13 @@ const drawNode = (
 
   switch (node.type) {
     case "layer":
+      drawChildNodes(ctx, doc, node.children, onImageLoad);
+      break;
     case "group":
-      for (const childId of node.children) {
-        const child = doc.nodes[childId];
-        if (child !== undefined) {
-          drawNode(ctx, doc, child, onImageLoad);
-        }
+      if (node.clip && node.children.length >= 2) {
+        drawClippedGroup(ctx, doc, node, onImageLoad);
+      } else {
+        drawChildNodes(ctx, doc, node.children, onImageLoad);
       }
       break;
     case "rect":
