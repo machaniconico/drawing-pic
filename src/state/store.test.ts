@@ -543,6 +543,61 @@ describe("editorStore", () => {
     expect(canRedo(editorStore.getState().history)).toBe(true);
   });
 
+  it("distributes selected nodes by horizontal gap as one undoable step", () => {
+    const left = createRect(0, 0, 10, 10);
+    const middle = createRect(30, 20, 10, 10);
+    const right = createRect(100, 40, 10, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(middle);
+    editorStore.getState().addNode(right);
+    editorStore.getState().setSelection([left.id, middle.id, right.id]);
+    const beforeDoc = editorStore.getState().doc;
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().distributeSelectionByGap("horizontal", 5);
+
+    expect(editorStore.getState().doc.nodes[left.id]?.transform.e).toBe(0);
+    expect(editorStore.getState().doc.nodes[middle.id]?.transform.e).toBe(15);
+    expect(editorStore.getState().doc.nodes[right.id]?.transform.e).toBe(30);
+    expect(editorStore.getState().doc.nodes[middle.id]?.transform.f).toBe(20);
+    expect(editorStore.getState().doc.nodes[right.id]?.transform.f).toBe(40);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.nodes[middle.id]?.transform.e).toBe(30);
+    expect(editorStore.getState().doc.nodes[right.id]?.transform.e).toBe(100);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("does not push history when gap distribution returns an empty patch map", () => {
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(40, 0, 10, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+    editorStore.setState({ selection: [left.id], history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+    const beforeLeft = { ...beforeDoc.nodes[left.id]!.transform };
+    const beforeRight = { ...beforeDoc.nodes[right.id]!.transform };
+
+    editorStore.getState().distributeSelectionByGap("horizontal", 5);
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.nodes[left.id]?.transform).toEqual(beforeLeft);
+    expect(editorStore.getState().doc.nodes[right.id]?.transform).toEqual(beforeRight);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    editorStore.getState().setSelection([left.id, right.id]);
+    editorStore.getState().distributeSelectionByGap("horizontal", Number.NaN);
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.nodes[left.id]?.transform).toEqual(beforeLeft);
+    expect(editorStore.getState().doc.nodes[right.id]?.transform).toEqual(beforeRight);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
   it("does not push history for invalid rotateSelectionBy calls", () => {
     const rect = createRect(10, 20, 30, 40);
     editorStore.getState().addNode(rect);

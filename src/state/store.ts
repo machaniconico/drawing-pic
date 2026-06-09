@@ -12,6 +12,7 @@ import {
   bringToFront as computeBringToFront,
   booleanSelection as computeBooleanSelection,
   cloneSubtree,
+  distributeByGap as computeDistributeByGap,
   distributeNodes as computeDistributeNodes,
   findNodeParent,
   flipNodes as computeFlipNodes,
@@ -104,6 +105,7 @@ export interface EditorActions {
   setSelectionSize: (width: number, height: number) => void;
   alignNodes: (edge: AlignEdge) => void;
   distributeNodes: (axis: DistributeAxis) => void;
+  distributeSelectionByGap: (axis: DistributeAxis, gap: number) => void;
   flipSelection: (axis: FlipAxis) => void;
   rotateSelection90: (direction: Rotate90Direction) => void;
   rotateSelectionBy: (deltaRad: number) => void;
@@ -545,6 +547,12 @@ export const editorStore = createStore<EditorStore>()((set) => ({
   distributeNodes: (axis) => {
     withDocHistory(set, (state) =>
       applyTransformPatches(state.doc, computeDistributeNodes(state.doc, state.selection, axis)),
+    );
+  },
+
+  distributeSelectionByGap: (axis, gap) => {
+    withDocHistory(set, (state) =>
+      applyTransformPatches(state.doc, computeDistributeByGap(state.doc, state.selection, axis, gap)),
     );
   },
 
