@@ -10,6 +10,7 @@ import {
   booleanSelection,
   bringToFront,
   cloneSubtree,
+  distributeByGap,
   distributeNodes,
   flipNodes,
   groupSelection,
@@ -89,6 +90,15 @@ const applyMatrixPatches = (doc: Document, patches: Record<NodeId, Matrix>): voi
     const node = doc.nodes[id];
     if (node) {
       node.transform = transform;
+    }
+  }
+};
+
+const applyTransformPatches = (doc: Document, patches: Record<NodeId, { e: number; f: number }>): void => {
+  for (const [id, patch] of Object.entries(patches)) {
+    const node = doc.nodes[id];
+    if (node) {
+      node.transform = { ...node.transform, ...patch };
     }
   }
 };
@@ -269,6 +279,65 @@ describe("selection operations", () => {
     expect(patches[first.id]).toBeUndefined();
     expect(patches[middle.id]).toEqual({ e: 50, f: 0 });
     expect(patches[last.id]).toBeUndefined();
+  });
+
+  it("distributes nodes horizontally by an exact positive gap and leaves the first node fixed", () => {
+    const doc = createDocument();
+    const first = createRect(100, 10, 10, 8);
+    const middle = createRect(20, 30, 20, 12);
+    const last = createRect(60, 50, 5, 16);
+    addToFirstLayer(doc, [first, middle, last]);
+
+    const patches = distributeByGap(doc, [first.id, middle.id, last.id], "horizontal", 7);
+
+    expect(patches[middle.id]).toBeUndefined();
+    expect(patches[last.id]).toEqual({ e: 47, f: 50 });
+    expect(patches[first.id]).toEqual({ e: 59, f: 10 });
+
+    applyTransformPatches(doc, patches);
+    const sorted = [middle, last, first].map((node) => worldBounds(doc, node.id));
+    expect(sorted[0]!.minX).toBeCloseTo(20, 9);
+    expect(sorted[1]!.minX - sorted[0]!.maxX).toBeCloseTo(7, 9);
+    expect(sorted[2]!.minX - sorted[1]!.maxX).toBeCloseTo(7, 9);
+    expect(worldBounds(doc, middle.id).minY).toBeCloseTo(30, 9);
+    expect(worldBounds(doc, last.id).minY).toBeCloseTo(50, 9);
+    expect(worldBounds(doc, first.id).minY).toBeCloseTo(10, 9);
+  });
+
+  it("distributes nodes vertically by a zero gap and only changes the vertical axis", () => {
+    const doc = createDocument();
+    const top = createRect(40, 10, 10, 10);
+    const middle = createRect(80, 100, 12, 20);
+    const bottom = createRect(120, 40, 14, 5);
+    addToFirstLayer(doc, [top, middle, bottom]);
+
+    const patches = distributeByGap(doc, [middle.id, bottom.id, top.id], "vertical", 0);
+
+    expect(patches[top.id]).toBeUndefined();
+    expect(patches[bottom.id]).toEqual({ e: 120, f: 20 });
+    expect(patches[middle.id]).toEqual({ e: 80, f: 25 });
+
+    applyTransformPatches(doc, patches);
+    const sorted = [top, bottom, middle].map((node) => worldBounds(doc, node.id));
+    expect(sorted[1]!.minY - sorted[0]!.maxY).toBeCloseTo(0, 9);
+    expect(sorted[2]!.minY - sorted[1]!.maxY).toBeCloseTo(0, 9);
+    expect(worldBounds(doc, top.id).minX).toBeCloseTo(40, 9);
+    expect(worldBounds(doc, bottom.id).minX).toBeCloseTo(120, 9);
+    expect(worldBounds(doc, middle.id).minX).toBeCloseTo(80, 9);
+  });
+
+  it("returns no exact-gap distribution patches with fewer than two usable nodes or non-finite gaps", () => {
+    const doc = createDocument();
+    const rect = createRect(0, 0, 10, 10);
+    const other = createRect(30, 0, 10, 10);
+    const empty = createRect(20, 20, 0, 0);
+    addToFirstLayer(doc, [rect, other, empty]);
+
+    expect(distributeByGap(doc, [], "horizontal", 10)).toEqual({});
+    expect(distributeByGap(doc, [rect.id], "horizontal", 10)).toEqual({});
+    expect(distributeByGap(doc, [rect.id, empty.id], "horizontal", 10)).toEqual({});
+    expect(distributeByGap(doc, [rect.id, other.id], "vertical", Number.POSITIVE_INFINITY)).toEqual({});
+    expect(distributeByGap(doc, [rect.id, other.id], "vertical", Number.NaN)).toEqual({});
   });
 
   it("flips selected nodes horizontally twice back to their original transforms", () => {

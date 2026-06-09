@@ -250,6 +250,47 @@ export const distributeNodes = (
   return patches;
 };
 
+export const distributeByGap = (
+  doc: Document,
+  ids: readonly NodeId[],
+  axis: DistributeAxis,
+  gap: number,
+): TransformPatchMap => {
+  if (!Number.isFinite(gap)) {
+    return {};
+  }
+
+  const targets = usableBounds(doc, topLevelNodeIds(doc, ids));
+  if (targets.length < 2) {
+    return {};
+  }
+
+  const sorted = [...targets].sort((a, b) =>
+    axis === "horizontal" ? a.bounds.minX - b.bounds.minX : a.bounds.minY - b.bounds.minY,
+  );
+  const patches: TransformPatchMap = {};
+  let runningPrevMax = axis === "horizontal" ? sorted[0]!.bounds.maxX : sorted[0]!.bounds.maxY;
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const target = sorted[index]!;
+    const currentMin = axis === "horizontal" ? target.bounds.minX : target.bounds.minY;
+    const currentMax = axis === "horizontal" ? target.bounds.maxX : target.bounds.maxY;
+    const size = currentMax - currentMin;
+    const newMin = runningPrevMax + gap;
+    const delta = newMin - currentMin;
+
+    if (axis === "horizontal") {
+      patchWithDelta(doc, target.id, delta, 0, patches);
+    } else {
+      patchWithDelta(doc, target.id, 0, delta, patches);
+    }
+
+    runningPrevMax = newMin + size;
+  }
+
+  return patches;
+};
+
 const flipAround = (axis: FlipAxis, cx: number, cy: number): Matrix => {
   const scale = axis === "horizontal" ? scaling(-1, 1) : scaling(1, -1);
   return compose(translate(cx, cy), compose(scale, translate(-cx, -cy)));
