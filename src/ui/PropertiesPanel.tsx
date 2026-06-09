@@ -19,6 +19,9 @@ import "./PropertiesPanel.css";
 
 type FillType = Paint["type"];
 type GradientPaint = LinearGradient | RadialGradient;
+type PaintTarget =
+  | { readonly kind: "fill" }
+  | { readonly kind: "stroke"; readonly stroke: Stroke };
 
 const FILL_TYPES: readonly FillType[] = ["none", "solid", "linear", "radial"];
 const LINE_CAPS: readonly LineCap[] = ["butt", "round", "square"];
@@ -561,15 +564,26 @@ export function PropertiesPanel() {
     });
   };
 
-  const updateGradientFill = (gradient: GradientPaint): void => {
+  const updateGradientPaint = (target: PaintTarget, gradient: GradientPaint): void => {
     if (!hasStyle(node)) {
       return;
     }
 
-    updateNode(node.id, { fill: cloneGradient(gradient) });
+    if (target.kind === "fill") {
+      updateNode(node.id, { fill: cloneGradient(gradient) });
+      return;
+    }
+
+    updateNode(node.id, {
+      stroke: {
+        ...target.stroke,
+        paint: cloneGradient(gradient),
+      },
+    });
   };
 
   const setGradientStopOffset = (
+    target: PaintTarget,
     gradient: GradientPaint,
     stopIndex: number,
     value: number,
@@ -583,10 +597,11 @@ export function PropertiesPanel() {
       index === stopIndex ? { ...stop, offset: clamp(nextOffset, 0, 1) } : stop,
     );
 
-    updateGradientFill(gradientWithStops(gradient, stops));
+    updateGradientPaint(target, gradientWithStops(gradient, stops));
   };
 
   const setGradientStopColor = (
+    target: PaintTarget,
     gradient: GradientPaint,
     stopIndex: number,
     hex: string,
@@ -595,10 +610,11 @@ export function PropertiesPanel() {
       index === stopIndex ? { ...stop, color: hexToRgba(hex, stop.color.a) } : stop,
     );
 
-    updateGradientFill(gradientWithStops(gradient, stops));
+    updateGradientPaint(target, gradientWithStops(gradient, stops));
   };
 
   const setGradientStopAlpha = (
+    target: PaintTarget,
     gradient: GradientPaint,
     stopIndex: number,
     value: number,
@@ -620,23 +636,34 @@ export function PropertiesPanel() {
         : stop,
     );
 
-    updateGradientFill(gradientWithStops(gradient, stops));
+    updateGradientPaint(target, gradientWithStops(gradient, stops));
   };
 
-  const addGradientStop = (gradient: GradientPaint): void => {
-    updateGradientFill(gradientWithStops(gradient, [...gradient.stops, newStopForGap(gradient.stops)]));
+  const addGradientStop = (target: PaintTarget, gradient: GradientPaint): void => {
+    updateGradientPaint(
+      target,
+      gradientWithStops(gradient, [...gradient.stops, newStopForGap(gradient.stops)]),
+    );
   };
 
-  const removeGradientStop = (gradient: GradientPaint, stopIndex: number): void => {
+  const removeGradientStop = (
+    target: PaintTarget,
+    gradient: GradientPaint,
+    stopIndex: number,
+  ): void => {
     const stops = normalizeGradientStops(gradient.stops);
     if (stops.length <= 2) {
       return;
     }
 
-    updateGradientFill(gradientWithStops(gradient, stops.filter((_, index) => index !== stopIndex)));
+    updateGradientPaint(
+      target,
+      gradientWithStops(gradient, stops.filter((_, index) => index !== stopIndex)),
+    );
   };
 
   const setLinearPoint = (
+    target: PaintTarget,
     gradient: LinearGradient,
     point: "start" | "end",
     axis: "x" | "y",
@@ -647,7 +674,7 @@ export function PropertiesPanel() {
       return;
     }
 
-    updateGradientFill({
+    updateGradientPaint(target, {
       type: "linear",
       stops: normalizeGradientStops(gradient.stops),
       start: {
@@ -662,6 +689,7 @@ export function PropertiesPanel() {
   };
 
   const setRadialValue = (
+    target: PaintTarget,
     gradient: RadialGradient,
     valueKey: "center-x" | "center-y" | "radius",
     value: number,
@@ -673,7 +701,7 @@ export function PropertiesPanel() {
 
     const clampedValue = clamp(nextValue, 0, 1);
 
-    updateGradientFill({
+    updateGradientPaint(target, {
       type: "radial",
       stops: normalizeGradientStops(gradient.stops),
       center: {
@@ -681,6 +709,19 @@ export function PropertiesPanel() {
         y: valueKey === "center-y" ? clampedValue : gradient.center.y,
       },
       radius: valueKey === "radius" ? clampedValue : clamp(gradient.radius, 0, 1),
+    });
+  };
+
+  const setStrokeType = (stroke: Stroke | null, strokeType: FillType): void => {
+    if (!hasStyle(node) || stroke === null) {
+      return;
+    }
+
+    updateNode(node.id, {
+      stroke: {
+        ...stroke,
+        paint: paintForFillType(strokeType, stroke.paint),
+      },
     });
   };
 
@@ -786,9 +827,220 @@ export function PropertiesPanel() {
     styledNode !== null && (styledNode.fill.type === "linear" || styledNode.fill.type === "radial")
       ? styledNode.fill
       : null;
-  const linearFill = styledNode?.fill.type === "linear" ? styledNode.fill : null;
-  const radialFill = styledNode?.fill.type === "radial" ? styledNode.fill : null;
   const stroke = styledNode?.stroke ?? null;
+  const gradientStroke =
+    stroke !== null && (stroke.paint.type === "linear" || stroke.paint.type === "radial")
+      ? stroke.paint
+      : null;
+
+  const renderGradientEditor = (
+    paintName: "Fill" | "Stroke",
+    target: PaintTarget,
+    gradient: GradientPaint,
+  ) => {
+    const scopedLabel = (label: string): string =>
+      paintName === "Fill" ? label : `${paintName} ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+
+    return (
+      <div
+        className="properties-panel__gradient-editor"
+        aria-label={`${paintName} gradient stops`}
+      >
+        <div className="properties-panel__subhead">Stops</div>
+        {normalizeGradientStops(gradient.stops).map((stop, index, stops) => (
+          <div className="properties-panel__stop" key={`${index}-${stop.offset}`}>
+            <span className="properties-panel__stop-index">{index + 1}</span>
+            <input
+              aria-label={scopedLabel(`Stop ${index + 1} offset`)}
+              className="properties-panel__range"
+              max={1}
+              min={0}
+              onChange={(event) =>
+                setGradientStopOffset(target, gradient, index, event.currentTarget.valueAsNumber)
+              }
+              step={0.01}
+              type="range"
+              value={formatUnitNumber(stop.offset)}
+            />
+            <input
+              aria-label={scopedLabel(`Stop ${index + 1} offset value`)}
+              className="properties-panel__number properties-panel__number--compact"
+              max={1}
+              min={0}
+              onChange={(event) =>
+                setGradientStopOffset(target, gradient, index, event.currentTarget.valueAsNumber)
+              }
+              step={0.01}
+              type="number"
+              value={formatUnitNumber(stop.offset)}
+            />
+            <input
+              aria-label={scopedLabel(`Stop ${index + 1} color`)}
+              className="properties-panel__color"
+              onChange={(event) =>
+                setGradientStopColor(target, gradient, index, event.currentTarget.value)
+              }
+              type="color"
+              value={rgbaToHex(stop.color)}
+            />
+            <input
+              aria-label={scopedLabel(`Stop ${index + 1} alpha`)}
+              className="properties-panel__number properties-panel__number--compact"
+              max={1}
+              min={0}
+              onChange={(event) =>
+                setGradientStopAlpha(target, gradient, index, event.currentTarget.valueAsNumber)
+              }
+              step={0.01}
+              type="number"
+              value={formatUnitNumber(stop.color.a)}
+            />
+            <button
+              aria-label={scopedLabel(`Remove stop ${index + 1}`)}
+              className="properties-panel__button properties-panel__button--icon"
+              disabled={stops.length <= 2}
+              onClick={() => removeGradientStop(target, gradient, index)}
+              type="button"
+            >
+              -
+            </button>
+          </div>
+        ))}
+        <button
+          className="properties-panel__button"
+          onClick={() => addGradientStop(target, gradient)}
+          type="button"
+        >
+          Add Stop
+        </button>
+
+        {gradient.type === "linear" ? (
+          <div
+            className="properties-panel__gradient-geometry"
+            aria-label={scopedLabel("Linear gradient direction")}
+          >
+            <div className="properties-panel__subhead">Direction</div>
+            <div className="properties-panel__grid">
+              <label className="properties-panel__field">
+                <span className="properties-panel__label">SX</span>
+                <input
+                  aria-label={scopedLabel("Linear gradient start x")}
+                  className="properties-panel__number"
+                  max={1}
+                  min={0}
+                  onChange={(event) =>
+                    setLinearPoint(target, gradient, "start", "x", event.currentTarget.valueAsNumber)
+                  }
+                  step={0.05}
+                  type="number"
+                  value={formatUnitNumber(gradient.start.x)}
+                />
+              </label>
+              <label className="properties-panel__field">
+                <span className="properties-panel__label">SY</span>
+                <input
+                  aria-label={scopedLabel("Linear gradient start y")}
+                  className="properties-panel__number"
+                  max={1}
+                  min={0}
+                  onChange={(event) =>
+                    setLinearPoint(target, gradient, "start", "y", event.currentTarget.valueAsNumber)
+                  }
+                  step={0.05}
+                  type="number"
+                  value={formatUnitNumber(gradient.start.y)}
+                />
+              </label>
+              <label className="properties-panel__field">
+                <span className="properties-panel__label">EX</span>
+                <input
+                  aria-label={scopedLabel("Linear gradient end x")}
+                  className="properties-panel__number"
+                  max={1}
+                  min={0}
+                  onChange={(event) =>
+                    setLinearPoint(target, gradient, "end", "x", event.currentTarget.valueAsNumber)
+                  }
+                  step={0.05}
+                  type="number"
+                  value={formatUnitNumber(gradient.end.x)}
+                />
+              </label>
+              <label className="properties-panel__field">
+                <span className="properties-panel__label">EY</span>
+                <input
+                  aria-label={scopedLabel("Linear gradient end y")}
+                  className="properties-panel__number"
+                  max={1}
+                  min={0}
+                  onChange={(event) =>
+                    setLinearPoint(target, gradient, "end", "y", event.currentTarget.valueAsNumber)
+                  }
+                  step={0.05}
+                  type="number"
+                  value={formatUnitNumber(gradient.end.y)}
+                />
+              </label>
+            </div>
+          </div>
+        ) : (
+          <div
+            className="properties-panel__gradient-geometry"
+            aria-label={scopedLabel("Radial gradient shape")}
+          >
+            <div className="properties-panel__subhead">Radial</div>
+            <div className="properties-panel__grid">
+              <label className="properties-panel__field">
+                <span className="properties-panel__label">CX</span>
+                <input
+                  aria-label={scopedLabel("Radial gradient center x")}
+                  className="properties-panel__number"
+                  max={1}
+                  min={0}
+                  onChange={(event) =>
+                    setRadialValue(target, gradient, "center-x", event.currentTarget.valueAsNumber)
+                  }
+                  step={0.05}
+                  type="number"
+                  value={formatUnitNumber(gradient.center.x)}
+                />
+              </label>
+              <label className="properties-panel__field">
+                <span className="properties-panel__label">CY</span>
+                <input
+                  aria-label={scopedLabel("Radial gradient center y")}
+                  className="properties-panel__number"
+                  max={1}
+                  min={0}
+                  onChange={(event) =>
+                    setRadialValue(target, gradient, "center-y", event.currentTarget.valueAsNumber)
+                  }
+                  step={0.05}
+                  type="number"
+                  value={formatUnitNumber(gradient.center.y)}
+                />
+              </label>
+              <label className="properties-panel__field">
+                <span className="properties-panel__label">R</span>
+                <input
+                  aria-label={scopedLabel("Radial gradient radius")}
+                  className="properties-panel__number"
+                  max={1}
+                  min={0}
+                  onChange={(event) =>
+                    setRadialValue(target, gradient, "radius", event.currentTarget.valueAsNumber)
+                  }
+                  step={0.05}
+                  type="number"
+                  value={formatUnitNumber(gradient.radius)}
+                />
+              </label>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <aside className="properties-panel" aria-label="Properties">
@@ -876,213 +1128,58 @@ export function PropertiesPanel() {
               </div>
             )}
 
-            {gradientFill !== null ? (
-              <div className="properties-panel__gradient-editor" aria-label="Fill gradient stops">
-                <div className="properties-panel__subhead">Stops</div>
-                {normalizeGradientStops(gradientFill.stops).map((stop, index, stops) => (
-                  <div className="properties-panel__stop" key={`${index}-${stop.offset}`}>
-                    <span className="properties-panel__stop-index">{index + 1}</span>
-                    <input
-                      aria-label={`Stop ${index + 1} offset`}
-                      className="properties-panel__range"
-                      max={1}
-                      min={0}
-                      onChange={(event) =>
-                        setGradientStopOffset(gradientFill, index, event.currentTarget.valueAsNumber)
-                      }
-                      step={0.01}
-                      type="range"
-                      value={formatUnitNumber(stop.offset)}
-                    />
-                    <input
-                      aria-label={`Stop ${index + 1} offset value`}
-                      className="properties-panel__number properties-panel__number--compact"
-                      max={1}
-                      min={0}
-                      onChange={(event) =>
-                        setGradientStopOffset(gradientFill, index, event.currentTarget.valueAsNumber)
-                      }
-                      step={0.01}
-                      type="number"
-                      value={formatUnitNumber(stop.offset)}
-                    />
-                    <input
-                      aria-label={`Stop ${index + 1} color`}
-                      className="properties-panel__color"
-                      onChange={(event) =>
-                        setGradientStopColor(gradientFill, index, event.currentTarget.value)
-                      }
-                      type="color"
-                      value={rgbaToHex(stop.color)}
-                    />
-                    <input
-                      aria-label={`Stop ${index + 1} alpha`}
-                      className="properties-panel__number properties-panel__number--compact"
-                      max={1}
-                      min={0}
-                      onChange={(event) =>
-                        setGradientStopAlpha(gradientFill, index, event.currentTarget.valueAsNumber)
-                      }
-                      step={0.01}
-                      type="number"
-                      value={formatUnitNumber(stop.color.a)}
-                    />
-                    <button
-                      aria-label={`Remove stop ${index + 1}`}
-                      className="properties-panel__button properties-panel__button--icon"
-                      disabled={stops.length <= 2}
-                      onClick={() => removeGradientStop(gradientFill, index)}
-                      type="button"
-                    >
-                      -
-                    </button>
-                  </div>
-                ))}
-                <button
-                  className="properties-panel__button"
-                  onClick={() => addGradientStop(gradientFill)}
-                  type="button"
-                >
-                  Add Stop
-                </button>
-
-                {linearFill !== null ? (
-                  <div className="properties-panel__gradient-geometry" aria-label="Linear gradient direction">
-                    <div className="properties-panel__subhead">Direction</div>
-                    <div className="properties-panel__grid">
-                      <label className="properties-panel__field">
-                        <span className="properties-panel__label">SX</span>
-                        <input
-                          aria-label="Linear gradient start x"
-                          className="properties-panel__number"
-                          max={1}
-                          min={0}
-                          onChange={(event) =>
-                            setLinearPoint(linearFill, "start", "x", event.currentTarget.valueAsNumber)
-                          }
-                          step={0.05}
-                          type="number"
-                          value={formatUnitNumber(linearFill.start.x)}
-                        />
-                      </label>
-                      <label className="properties-panel__field">
-                        <span className="properties-panel__label">SY</span>
-                        <input
-                          aria-label="Linear gradient start y"
-                          className="properties-panel__number"
-                          max={1}
-                          min={0}
-                          onChange={(event) =>
-                            setLinearPoint(linearFill, "start", "y", event.currentTarget.valueAsNumber)
-                          }
-                          step={0.05}
-                          type="number"
-                          value={formatUnitNumber(linearFill.start.y)}
-                        />
-                      </label>
-                      <label className="properties-panel__field">
-                        <span className="properties-panel__label">EX</span>
-                        <input
-                          aria-label="Linear gradient end x"
-                          className="properties-panel__number"
-                          max={1}
-                          min={0}
-                          onChange={(event) =>
-                            setLinearPoint(linearFill, "end", "x", event.currentTarget.valueAsNumber)
-                          }
-                          step={0.05}
-                          type="number"
-                          value={formatUnitNumber(linearFill.end.x)}
-                        />
-                      </label>
-                      <label className="properties-panel__field">
-                        <span className="properties-panel__label">EY</span>
-                        <input
-                          aria-label="Linear gradient end y"
-                          className="properties-panel__number"
-                          max={1}
-                          min={0}
-                          onChange={(event) =>
-                            setLinearPoint(linearFill, "end", "y", event.currentTarget.valueAsNumber)
-                          }
-                          step={0.05}
-                          type="number"
-                          value={formatUnitNumber(linearFill.end.y)}
-                        />
-                      </label>
-                    </div>
-                  </div>
-                ) : radialFill !== null ? (
-                  <div className="properties-panel__gradient-geometry" aria-label="Radial gradient shape">
-                    <div className="properties-panel__subhead">Radial</div>
-                    <div className="properties-panel__grid">
-                      <label className="properties-panel__field">
-                        <span className="properties-panel__label">CX</span>
-                        <input
-                          aria-label="Radial gradient center x"
-                          className="properties-panel__number"
-                          max={1}
-                          min={0}
-                          onChange={(event) =>
-                            setRadialValue(radialFill, "center-x", event.currentTarget.valueAsNumber)
-                          }
-                          step={0.05}
-                          type="number"
-                          value={formatUnitNumber(radialFill.center.x)}
-                        />
-                      </label>
-                      <label className="properties-panel__field">
-                        <span className="properties-panel__label">CY</span>
-                        <input
-                          aria-label="Radial gradient center y"
-                          className="properties-panel__number"
-                          max={1}
-                          min={0}
-                          onChange={(event) =>
-                            setRadialValue(radialFill, "center-y", event.currentTarget.valueAsNumber)
-                          }
-                          step={0.05}
-                          type="number"
-                          value={formatUnitNumber(radialFill.center.y)}
-                        />
-                      </label>
-                      <label className="properties-panel__field">
-                        <span className="properties-panel__label">R</span>
-                        <input
-                          aria-label="Radial gradient radius"
-                          className="properties-panel__number"
-                          max={1}
-                          min={0}
-                          onChange={(event) =>
-                            setRadialValue(radialFill, "radius", event.currentTarget.valueAsNumber)
-                          }
-                          step={0.05}
-                          type="number"
-                          value={formatUnitNumber(radialFill.radius)}
-                        />
-                      </label>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+            {gradientFill !== null
+              ? renderGradientEditor("Fill", { kind: "fill" }, gradientFill)
+              : null}
 
             <label className="properties-panel__row">
-              <span className="properties-panel__label">Stroke</span>
-              <span className="properties-panel__paint-control">
-                <input
-                  aria-label="Stroke color"
-                  className="properties-panel__color"
-                  disabled={stroke === null}
-                  onChange={(event) => setStrokePaint(stroke, event.currentTarget.value)}
-                  type="color"
-                  value={stroke ? paintHex(stroke.paint) : "#000000"}
-                />
+              <span className="properties-panel__label">Stroke type</span>
+              <select
+                aria-label="Stroke type"
+                className="properties-panel__select"
+                disabled={stroke === null}
+                onChange={(event) => {
+                  const strokeType = parseFillType(event.currentTarget.value);
+                  if (strokeType !== null) {
+                    setStrokeType(stroke, strokeType);
+                  }
+                }}
+                value={stroke?.paint.type ?? "none"}
+              >
+                {FILL_TYPES.map((strokeType) => (
+                  <option key={strokeType} value={strokeType}>
+                    {FILL_TYPE_LABELS[strokeType]}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {stroke?.paint.type === "solid" ? (
+              <label className="properties-panel__row">
+                <span className="properties-panel__label">Stroke</span>
+                <span className="properties-panel__paint-control">
+                  <input
+                    aria-label="Stroke color"
+                    className="properties-panel__color"
+                    onChange={(event) => setStrokePaint(stroke, event.currentTarget.value)}
+                    type="color"
+                    value={paintHex(stroke.paint)}
+                  />
+                  <span className="properties-panel__readout">{paintLabel(stroke.paint)}</span>
+                </span>
+              </label>
+            ) : (
+              <div className="properties-panel__row">
+                <span className="properties-panel__label">Stroke</span>
                 <span className="properties-panel__readout">
                   {stroke ? paintLabel(stroke.paint) : "No stroke"}
                 </span>
-              </span>
-            </label>
+              </div>
+            )}
+
+            {stroke !== null && gradientStroke !== null
+              ? renderGradientEditor("Stroke", { kind: "stroke", stroke }, gradientStroke)
+              : null}
 
             <label className="properties-panel__row">
               <span className="properties-panel__label">Stroke width</span>
