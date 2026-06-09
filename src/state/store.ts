@@ -4,8 +4,8 @@ import { createStore } from "zustand/vanilla";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
 import { createDocument } from "../core/model/factory";
-import type { Document, NodeId, RGBA, SceneNode } from "../core/model/types";
-import { isContainer } from "../core/model/types";
+import type { Document, NodeId, Paint, RGBA, SceneNode, Stroke } from "../core/model/types";
+import { hasStyle, isContainer } from "../core/model/types";
 import {
   alignNodes as computeAlignNodes,
   bringForward as computeBringForward,
@@ -100,6 +100,7 @@ export interface EditorActions {
   addNode: (node: SceneNode, parentId?: NodeId) => void;
   removeNodes: (ids: NodeId[]) => void;
   updateNode: (id: NodeId, patch: Partial<SceneNode>) => void;
+  applyStyleToSelection: (patch: { opacity?: number; fill?: Paint; stroke?: Stroke | null }) => void;
   moveSelection: (dx: number, dy: number) => void;
   setSelectionPosition: (x: number, y: number) => void;
   setSelectionSize: (width: number, height: number) => void;
@@ -386,6 +387,69 @@ const colorsEqual = (left: RGBA | null | undefined, right: RGBA | null): boolean
   return left.r === right.r && left.g === right.g && left.b === right.b && left.a === right.a;
 };
 
+const paintEqual = (left: Paint, right: Paint): boolean => {
+  if (left.type !== right.type) {
+    return false;
+  }
+
+  if (left.type === "none" && right.type === "none") {
+    return true;
+  }
+
+  if (left.type === "solid" && right.type === "solid") {
+    return colorsEqual(left.color, right.color);
+  }
+
+  if (left.type === "linear" && right.type === "linear") {
+    return (
+      left.start.x === right.start.x &&
+      left.start.y === right.start.y &&
+      left.end.x === right.end.x &&
+      left.end.y === right.end.y &&
+      left.stops.length === right.stops.length &&
+      left.stops.every(
+        (stop, index) =>
+          stop.offset === right.stops[index]?.offset && colorsEqual(stop.color, right.stops[index]?.color ?? null),
+      )
+    );
+  }
+
+  if (left.type === "radial" && right.type === "radial") {
+    return (
+      left.center.x === right.center.x &&
+      left.center.y === right.center.y &&
+      left.radius === right.radius &&
+      left.stops.length === right.stops.length &&
+      left.stops.every(
+        (stop, index) =>
+          stop.offset === right.stops[index]?.offset && colorsEqual(stop.color, right.stops[index]?.color ?? null),
+      )
+    );
+  }
+
+  return false;
+};
+
+const strokeEqual = (left: Stroke | null, right: Stroke | null): boolean => {
+  if (left === null || right === null) {
+    return left === right;
+  }
+
+  return (
+    paintEqual(left.paint, right.paint) &&
+    left.width === right.width &&
+    left.cap === right.cap &&
+    left.join === right.join &&
+    left.miterLimit === right.miterLimit &&
+    left.dashOffset === right.dashOffset &&
+    left.align === right.align &&
+    left.dash.length === right.dash.length &&
+    left.dash.every((dash, index) => dash === right.dash[index])
+  );
+};
+
+const clampOpacity = (opacity: number): number => Math.min(1, Math.max(0, opacity));
+
 const insertRootAfter = (doc: Document, parentId: NodeId | null, sourceId: NodeId, cloneId: NodeId): void => {
   if (parentId === null) {
     const index = doc.layerOrder.indexOf(sourceId);
@@ -506,6 +570,55 @@ export const editorStore = createStore<EditorStore>()((set) => ({
 
       Object.assign(node, patch);
       return true;
+    });
+  },
+
+  applyStyleToSelection: (patch) => {
+    const hasOpacityPatch = patch.opacity !== undefined;
+    const hasFillPatch = patch.fill !== undefined;
+    const hasStrokePatch = patch.stroke !== undefined;
+    if (!hasOpacityPatch && !hasFillPatch && !hasStrokePatch) {
+      return;
+    }
+
+    withDocHistory(set, (state) => {
+      if (state.selection.length === 0) {
+        return false;
+      }
+
+      let changed = false;
+      const opacity = hasOpacityPatch ? clampOpacity(patch.opacity!) : undefined;
+
+      for (const id of state.selection) {
+        const node = state.doc.nodes[id];
+        if (!node) {
+          continue;
+        }
+
+        if (opacity !== undefined && node.opacity !== opacity) {
+          node.opacity = opacity;
+          changed = true;
+        }
+
+        if (!hasStyle(node)) {
+          continue;
+        }
+
+        if (hasFillPatch && patch.fill !== undefined && !paintEqual(node.fill, patch.fill)) {
+          node.fill = structuredClone(patch.fill);
+          changed = true;
+        }
+
+        if (hasStrokePatch) {
+          const stroke = patch.stroke;
+          if (stroke !== undefined && !strokeEqual(node.stroke, stroke)) {
+            node.stroke = stroke === null ? null : structuredClone(stroke);
+            changed = true;
+          }
+        }
+      }
+
+      return changed;
     });
   },
 

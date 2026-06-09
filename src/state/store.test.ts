@@ -3,7 +3,7 @@ import type { BBox } from "../core/geometry/bbox";
 import type { Matrix } from "../core/geometry/matrix";
 import { selectionBounds } from "../core/model/bounds";
 import { createRect } from "../core/model/factory";
-import type { Document, NodeId } from "../core/model/types";
+import type { Document, NodeId, Paint } from "../core/model/types";
 import { canRedo, canUndo, createHistory } from "./history";
 import { flipNodes, rotateNodes90, rotateNodesAround } from "./operations";
 import { createEditorStateForTest, editorStore, type SnapSettings, type SnapTarget } from "./store";
@@ -448,6 +448,84 @@ describe("editorStore", () => {
 
     editorStore.getState().undo();
     expect(editorStore.getState().doc.nodes[rect.id]?.name).toBe("Rectangle");
+  });
+
+  it("applies fill to styled nodes in a mixed selection as one undoable cloned style step", () => {
+    const left = createRect(0, 0, 10, 10);
+    const right = createRect(20, 0, 10, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+    const layerId = firstLayerId(editorStore.getState().doc);
+    const fill: Paint = { type: "solid", color: { r: 10, g: 80, b: 240, a: 0.75 } };
+
+    editorStore.getState().setSelection([left.id, layerId, right.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().applyStyleToSelection({ fill });
+
+    const leftNode = editorStore.getState().doc.nodes[left.id];
+    const rightNode = editorStore.getState().doc.nodes[right.id];
+    const layer = editorStore.getState().doc.nodes[layerId];
+    expect(leftNode?.type).toBe("rect");
+    expect(rightNode?.type).toBe("rect");
+    if (leftNode?.type !== "rect" || rightNode?.type !== "rect") {
+      throw new Error("Expected selected test nodes to be rectangles");
+    }
+
+    expect(leftNode.fill).toEqual(fill);
+    expect(rightNode.fill).toEqual(fill);
+    expect(leftNode.fill).not.toBe(fill);
+    expect(rightNode.fill).not.toBe(fill);
+    expect(leftNode.fill).not.toBe(rightNode.fill);
+    expect(leftNode.fill.type === "solid" ? leftNode.fill.color : null).not.toBe(
+      rightNode.fill.type === "solid" ? rightNode.fill.color : null,
+    );
+    expect("fill" in (layer ?? {})).toBe(false);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("applies clamped opacity to every selected node", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    const layerId = firstLayerId(editorStore.getState().doc);
+    editorStore.getState().setSelection([rect.id, layerId]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().applyStyleToSelection({ opacity: -0.25 });
+
+    expect(editorStore.getState().doc.nodes[rect.id]?.opacity).toBe(0);
+    expect(editorStore.getState().doc.nodes[layerId]?.opacity).toBe(0);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.nodes[rect.id]?.opacity).toBe(1);
+    expect(editorStore.getState().doc.nodes[layerId]?.opacity).toBe(1);
+  });
+
+  it("does not push history for empty or unchanged selection style patches", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().applyStyleToSelection({ fill: { type: "none" } });
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.getState().applyStyleToSelection({});
+    editorStore.getState().applyStyleToSelection({ fill: rect.fill, stroke: rect.stroke, opacity: rect.opacity });
+    editorStore.getState().applyStyleToSelection({ fill: undefined, stroke: undefined, opacity: undefined });
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
   });
 
   it("pastes copied nodes in place, selects the clones, and undoes as one history step", () => {
