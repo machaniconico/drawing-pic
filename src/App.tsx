@@ -46,6 +46,8 @@ export default function App() {
   const ungroupSelection = useEditorStore((state) => state.ungroupSelection);
   const moveSelection = useEditorStore((state) => state.moveSelection);
   const flipSelection = useEditorStore((state) => state.flipSelection);
+  const setSelection = useEditorStore((state) => state.setSelection);
+  const clearSelection = useEditorStore((state) => state.clearSelection);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -55,6 +57,27 @@ export default function App() {
 
       const key = event.key.toLowerCase();
       const hasCommandModifier = event.ctrlKey || event.metaKey;
+
+      if (hasCommandModifier && key === "a") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          clearSelection();
+        } else {
+          const selectableIds = doc.layerOrder.flatMap((layerId) => {
+            const layer = doc.nodes[layerId];
+            if (layer?.type !== "layer") {
+              return [];
+            }
+
+            return layer.children.filter((id) => {
+              const node = doc.nodes[id];
+              return node !== undefined && node.type !== "layer" && !node.locked;
+            });
+          });
+          setSelection(selectableIds);
+        }
+        return;
+      }
 
       if (!hasCommandModifier && !event.altKey && event.shiftKey && key === "h") {
         event.preventDefault();
@@ -183,7 +206,9 @@ export default function App() {
   }, [
     bringForward,
     bringToFront,
+    clearSelection,
     copySelection,
+    doc,
     duplicateSelection,
     flipSelection,
     groupSelection,
@@ -195,6 +220,7 @@ export default function App() {
     sendBackward,
     sendToBack,
     setActiveTool,
+    setSelection,
     ungroupSelection,
     undo,
   ]);
