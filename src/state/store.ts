@@ -12,6 +12,7 @@ import {
   bringToFront as computeBringToFront,
   booleanSelection as computeBooleanSelection,
   cloneSubtree,
+  convertShapeToPath as computeConvertShapeToPath,
   distributeByGap as computeDistributeByGap,
   distributeNodes as computeDistributeNodes,
   findNodeParent,
@@ -120,6 +121,7 @@ export interface EditorActions {
   ungroupSelection: () => void;
   toggleClipMask: () => void;
   booleanOp: (op: BooleanOp) => void;
+  convertSelectionToPaths: () => void;
   copySelection: () => void;
   paste: () => void;
   pasteInPlace: () => void;
@@ -814,6 +816,30 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       state.selection = [result.node.id];
       clearMissingKeyObject(state);
       return true;
+    });
+  },
+
+  convertSelectionToPaths: () => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      let changed = false;
+
+      for (const id of state.selection) {
+        const node = sourceDoc.nodes[id];
+        if (!node) {
+          continue;
+        }
+
+        const pathNode = computeConvertShapeToPath(node);
+        if (!pathNode) {
+          continue;
+        }
+
+        state.doc.nodes[id] = pathNode;
+        changed = true;
+      }
+
+      return changed;
     });
   },
 

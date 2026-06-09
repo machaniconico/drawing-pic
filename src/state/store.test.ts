@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BBox } from "../core/geometry/bbox";
 import type { Matrix } from "../core/geometry/matrix";
 import { selectionBounds } from "../core/model/bounds";
-import { createGroup, createRect } from "../core/model/factory";
+import { createEllipse, createGroup, createRect } from "../core/model/factory";
 import type { Document, NodeId, Paint, Stroke } from "../core/model/types";
 import { canRedo, canUndo, createHistory } from "./history";
 import { flipNodes, rotateNodes90, rotateNodesAround } from "./operations";
@@ -1063,6 +1063,53 @@ describe("editorStore", () => {
 
     expect(editorStore.getState().doc).toBe(beforeDoc);
     expect(editorStore.getState().selection).toEqual([]);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
+  it("converts selected rect and ellipse nodes to paths in place as one undoable step", () => {
+    const rect = createRect(0, 0, 10, 20);
+    const ellipse = createEllipse(30, 40, 15, 25);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().addNode(ellipse);
+    editorStore.getState().setSelection([rect.id, ellipse.id]);
+    const beforeDoc = editorStore.getState().doc;
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().convertSelectionToPaths();
+
+    const convertedRect = editorStore.getState().doc.nodes[rect.id];
+    const convertedEllipse = editorStore.getState().doc.nodes[ellipse.id];
+    expect(convertedRect?.type).toBe("path");
+    expect(convertedEllipse?.type).toBe("path");
+    expect(convertedRect?.id).toBe(rect.id);
+    expect(convertedEllipse?.id).toBe(ellipse.id);
+    expect(editorStore.getState().selection).toEqual([rect.id, ellipse.id]);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.nodes[rect.id]?.type).toBe("rect");
+    expect(editorStore.getState().doc.nodes[ellipse.id]?.type).toBe("ellipse");
+    expect(editorStore.getState().selection).toEqual([rect.id, ellipse.id]);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("does not push history when converting a selection with no convertible shapes", () => {
+    const group = createGroup("Object group");
+    editorStore.getState().addNode(group);
+    const layerId = firstLayerId(editorStore.getState().doc);
+    editorStore.getState().setSelection([group.id, layerId]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().convertSelectionToPaths();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.nodes[group.id]).toBe(group);
+    expect(editorStore.getState().doc.nodes[layerId]?.type).toBe("layer");
+    expect(editorStore.getState().selection).toEqual([group.id, layerId]);
     expect(editorStore.getState().history.past).toHaveLength(0);
     expect(canUndo(editorStore.getState().history)).toBe(false);
   });
