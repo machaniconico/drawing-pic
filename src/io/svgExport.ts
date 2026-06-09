@@ -1,12 +1,14 @@
 import type { Matrix } from "../core/geometry/matrix";
+import { compose, IDENTITY } from "../core/geometry/matrix";
 import type { Vec2 } from "../core/geometry/vector";
 import {
   height as bboxHeight,
   isEmpty,
+  unionAll,
   width as bboxWidth,
   type BBox,
 } from "../core/geometry/bbox";
-import { selectionBounds } from "../core/model/bounds";
+import { worldBounds } from "../core/model/bounds";
 import type {
   Anchor,
   Document,
@@ -36,6 +38,11 @@ interface GradientReference {
 interface SvgContext {
   gradients: GradientReference[];
   nextGradientId: number;
+}
+
+interface SelectionRoot {
+  node: SceneNode;
+  parentWorldTransform: Matrix;
 }
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -308,22 +315,84 @@ const documentBounds = (doc: Document): BBox => ({
   maxY: doc.height,
 });
 
-const exportBounds = (doc: Document, nodeIds: readonly NodeId[] | undefined): BBox => {
-  if (nodeIds === undefined || nodeIds.length === 0) return documentBounds(doc);
+const resolveSelectionRoots = (
+  doc: Document,
+  nodeIds: readonly NodeId[] | undefined,
+): SelectionRoot[] => {
+  if (nodeIds === undefined || nodeIds.length === 0) return [];
 
-  const bounds = selectionBounds(doc, nodeIds);
+  const candidates = new Set(nodeIds.filter((id) => doc.nodes[id] !== undefined));
+  if (candidates.size === 0) return [];
+
+  const roots: SelectionRoot[] = [];
+
+  const visit = (
+    nodeId: NodeId,
+    parentWorldTransform: Matrix,
+    hasSelectedAncestor: boolean,
+  ): void => {
+    const node = doc.nodes[nodeId];
+    if (node === undefined) return;
+
+    const isSelected = candidates.has(nodeId);
+    if (isSelected && !hasSelectedAncestor) {
+      roots.push({ node, parentWorldTransform });
+    }
+
+    if (isContainer(node)) {
+      const nextParentWorldTransform = compose(parentWorldTransform, node.transform);
+      for (const childId of node.children) {
+        visit(childId, nextParentWorldTransform, hasSelectedAncestor || isSelected);
+      }
+    }
+  };
+
+  for (const layerId of doc.layerOrder) {
+    visit(layerId, IDENTITY, false);
+  }
+
+  return roots;
+};
+
+const subtreeWorldBounds = (doc: Document, node: SceneNode): BBox => {
+  if (!isContainer(node)) return worldBounds(doc, node.id);
+
+  return unionAll(
+    node.children
+      .map((childId) => doc.nodes[childId])
+      .filter((child): child is SceneNode => child !== undefined)
+      .map((child) => subtreeWorldBounds(doc, child)),
+  );
+};
+
+const selectionSubtreeBounds = (doc: Document, roots: readonly SelectionRoot[]): BBox =>
+  unionAll(roots.map((root) => subtreeWorldBounds(doc, root.node)));
+
+const exportBounds = (doc: Document, roots: readonly SelectionRoot[]): BBox => {
+  if (roots.length === 0) return documentBounds(doc);
+
+  const bounds = selectionSubtreeBounds(doc, roots);
   return isEmpty(bounds) ? documentBounds(doc) : bounds;
 };
 
 export const documentToSvg = (doc: Document, opts?: SvgExportOptions): string => {
   const ctx: SvgContext = { gradients: [], nextGradientId: 1 };
-  const body = doc.layerOrder
-    .map((layerId) => doc.nodes[layerId])
-    .filter((layer): layer is SceneNode => layer !== undefined)
-    .map((layer) => renderNode(doc, layer, ctx))
-    .join("");
+  const selectionRoots = resolveSelectionRoots(doc, opts?.nodeIds);
+  const body =
+    opts?.nodeIds !== undefined && opts.nodeIds.length > 0 && selectionRoots.length > 0
+      ? selectionRoots
+          .map(
+            (root) =>
+              `<g${transformAttr(root.parentWorldTransform)}>${renderNode(doc, root.node, ctx)}</g>`,
+          )
+          .join("")
+      : doc.layerOrder
+          .map((layerId) => doc.nodes[layerId])
+          .filter((layer): layer is SceneNode => layer !== undefined)
+          .map((layer) => renderNode(doc, layer, ctx))
+          .join("");
   const defs = gradientDefs(ctx.gradients);
-  const bounds = exportBounds(doc, opts?.nodeIds);
+  const bounds = exportBounds(doc, selectionRoots);
   const scale = exportScale(opts?.scale);
   const outputWidth = bboxWidth(bounds);
   const outputHeight = bboxHeight(bounds);

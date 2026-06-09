@@ -48,20 +48,32 @@ describe("documentToSvg", () => {
     );
   });
 
-  it("crops the SVG viewBox to selected node world bounds", () => {
+  it("isolates selected subtrees and crops the SVG viewBox to selected node world bounds", () => {
     const doc = createDocument(320, 240, "Selection");
+    const group = createGroup("Translated group");
+    group.transform = { ...IDENTITY, e: 100, f: 200 };
     const unselected = createRect(5, 6, 10, 12);
+    const overlappingUnselected = createRect(140, 250, 99, 99);
+    overlappingUnselected.fill = solid({ r: 255, g: 0, b: 0, a: 1 });
     const selected = createRect(40, 50, 20, 30);
+    selected.fill = solid({ r: 0, g: 170, b: 0, a: 1 });
     addNode(doc, unselected);
-    addNode(doc, selected);
+    addNode(doc, overlappingUnselected);
+    addNode(doc, group);
+    addNode(doc, selected, group.id);
 
     const svg = documentToSvg(doc, { nodeIds: [selected.id] });
 
     expect(svg).toContain(
-      '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="30" viewBox="40 50 20 30">',
+      '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="30" viewBox="140 250 20 30">',
     );
-    expect(svg).toContain('transform="matrix(1 0 0 1 5 6)"');
+    expect(svg).toContain('<g transform="matrix(1 0 0 1 100 200)">');
     expect(svg).toContain('transform="matrix(1 0 0 1 40 50)"');
+    expect(svg).toContain('fill="#00aa00"');
+    expect(svg).not.toContain('transform="matrix(1 0 0 1 5 6)"');
+    expect(svg).not.toContain('transform="matrix(1 0 0 1 140 250)"');
+    expect(svg).not.toContain('fill="#ff0000"');
+    expect(svg).not.toContain('width="99" height="99"');
   });
 
   it("exports a rect with transform, opacity, rounded corners, fill, and stroke", () => {

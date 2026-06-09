@@ -1,11 +1,15 @@
 import {
   height as bboxHeight,
   isEmpty,
+  unionAll,
   width as bboxWidth,
   type BBox,
 } from "../core/geometry/bbox";
-import { selectionBounds } from "../core/model/bounds";
-import type { Document, NodeId } from "../core/model/types";
+import type { Matrix } from "../core/geometry/matrix";
+import { compose, IDENTITY } from "../core/geometry/matrix";
+import { worldBounds } from "../core/model/bounds";
+import type { Document, NodeId, SceneNode } from "../core/model/types";
+import { isContainer } from "../core/model/types";
 import { renderDocument } from "../render/canvasRenderer";
 
 export interface PngExportOptions {
@@ -26,20 +30,84 @@ const documentBounds = (doc: Document): BBox => ({
   maxY: doc.height,
 });
 
+interface SelectionRoot {
+  node: SceneNode;
+  parentWorldTransform: Matrix;
+}
+
 interface ExportCrop {
   bounds: BBox;
   isSelection: boolean;
+  roots: SelectionRoot[];
 }
+
+const resolveSelectionRoots = (
+  doc: Document,
+  nodeIds: readonly NodeId[] | undefined,
+): SelectionRoot[] => {
+  if (nodeIds === undefined || nodeIds.length === 0) return [];
+
+  const candidates = new Set(nodeIds.filter((id) => doc.nodes[id] !== undefined));
+  if (candidates.size === 0) return [];
+
+  const roots: SelectionRoot[] = [];
+
+  const visit = (
+    nodeId: NodeId,
+    parentWorldTransform: Matrix,
+    hasSelectedAncestor: boolean,
+  ): void => {
+    const node = doc.nodes[nodeId];
+    if (node === undefined) return;
+
+    const isSelected = candidates.has(nodeId);
+    if (isSelected && !hasSelectedAncestor) {
+      roots.push({ node, parentWorldTransform });
+    }
+
+    if (isContainer(node)) {
+      const nextParentWorldTransform = compose(parentWorldTransform, node.transform);
+      for (const childId of node.children) {
+        visit(childId, nextParentWorldTransform, hasSelectedAncestor || isSelected);
+      }
+    }
+  };
+
+  for (const layerId of doc.layerOrder) {
+    visit(layerId, IDENTITY, false);
+  }
+
+  return roots;
+};
+
+const subtreeWorldBounds = (doc: Document, node: SceneNode): BBox => {
+  if (!isContainer(node)) return worldBounds(doc, node.id);
+
+  return unionAll(
+    node.children
+      .map((childId) => doc.nodes[childId])
+      .filter((child): child is SceneNode => child !== undefined)
+      .map((child) => subtreeWorldBounds(doc, child)),
+  );
+};
+
+const selectionSubtreeBounds = (doc: Document, roots: readonly SelectionRoot[]): BBox =>
+  unionAll(roots.map((root) => subtreeWorldBounds(doc, root.node)));
 
 const exportCrop = (doc: Document, nodeIds: readonly NodeId[] | undefined): ExportCrop => {
   if (nodeIds === undefined || nodeIds.length === 0) {
-    return { bounds: documentBounds(doc), isSelection: false };
+    return { bounds: documentBounds(doc), isSelection: false, roots: [] };
   }
 
-  const bounds = selectionBounds(doc, nodeIds);
+  const roots = resolveSelectionRoots(doc, nodeIds);
+  if (roots.length === 0) {
+    return { bounds: documentBounds(doc), isSelection: false, roots };
+  }
+
+  const bounds = selectionSubtreeBounds(doc, roots);
   return isEmpty(bounds)
-    ? { bounds: documentBounds(doc), isSelection: false }
-    : { bounds, isSelection: true };
+    ? { bounds: documentBounds(doc), isSelection: true, roots }
+    : { bounds, isSelection: true, roots };
 };
 
 const requireContext = (canvas: HTMLCanvasElement): CanvasRenderingContext2D => {
@@ -48,6 +116,73 @@ const requireContext = (canvas: HTMLCanvasElement): CanvasRenderingContext2D => 
     throw new Error("Canvas 2D context is unavailable.");
   }
   return ctx;
+};
+
+const cloneSubtree = (
+  sourceDoc: Document,
+  targetNodes: Record<NodeId, SceneNode>,
+  nodeId: NodeId,
+): NodeId | null => {
+  const node = sourceDoc.nodes[nodeId];
+  if (node === undefined) return null;
+
+  const clone = structuredClone(node) as SceneNode;
+  targetNodes[nodeId] = clone;
+
+  if (isContainer(clone)) {
+    clone.children = clone.children.filter(
+      (childId) => cloneSubtree(sourceDoc, targetNodes, childId) !== null,
+    );
+  }
+
+  return nodeId;
+};
+
+const uniqueSyntheticLayerId = (
+  sourceDoc: Document,
+  targetNodes: Record<NodeId, SceneNode>,
+  index: number,
+): NodeId => {
+  let id = `png-export-selection-layer-${index}`;
+  let suffix = 1;
+  while (sourceDoc.nodes[id] !== undefined || targetNodes[id] !== undefined) {
+    id = `png-export-selection-layer-${index}-${suffix}`;
+    suffix += 1;
+  }
+  return id;
+};
+
+const isolatedSelectionDocument = (
+  doc: Document,
+  roots: readonly SelectionRoot[],
+): Document => {
+  const nodes: Record<NodeId, SceneNode> = {};
+  const layerOrder: NodeId[] = [];
+
+  roots.forEach((root, index) => {
+    const clonedRootId = cloneSubtree(doc, nodes, root.node.id);
+    if (clonedRootId === null) return;
+
+    const layerId = uniqueSyntheticLayerId(doc, nodes, index);
+    nodes[layerId] = {
+      id: layerId,
+      name: "Selection Export",
+      type: "layer",
+      transform: root.parentWorldTransform,
+      opacity: 1,
+      visible: true,
+      locked: false,
+      children: [clonedRootId],
+    };
+    layerOrder.push(layerId);
+  });
+
+  return {
+    ...doc,
+    layerOrder,
+    guides: [],
+    nodes,
+  };
 };
 
 export const documentToPngBlob = (doc: Document, opts?: PngExportOptions): Promise<Blob> =>
@@ -66,23 +201,10 @@ export const documentToPngBlob = (doc: Document, opts?: PngExportOptions): Promi
       const ctx = requireContext(canvas);
 
       if (crop.isSelection) {
-        const fullCanvas = document.createElement("canvas");
-        fullCanvas.width = doc.width * scale;
-        fullCanvas.height = doc.height * scale;
-        const fullCtx = requireContext(fullCanvas);
-
-        renderDocument(fullCtx, doc, { pan: { x: 0, y: 0 }, zoom: scale });
-        ctx.drawImage(
-          fullCanvas,
-          bounds.minX * scale,
-          bounds.minY * scale,
-          cropWidth * scale,
-          cropHeight * scale,
-          0,
-          0,
-          cropWidth * scale,
-          cropHeight * scale,
-        );
+        renderDocument(ctx, isolatedSelectionDocument(doc, crop.roots), {
+          pan: { x: -bounds.minX * scale, y: -bounds.minY * scale },
+          zoom: scale,
+        });
       } else {
         renderDocument(ctx, doc, {
           pan: { x: -bounds.minX * scale, y: -bounds.minY * scale },
