@@ -138,6 +138,8 @@ export interface EditorActions {
   setSnapTarget: (target: SnapTarget, on: boolean) => void;
   setGridSize: (size: number) => void;
   setShowGrid: (on: boolean) => void;
+  setDocumentSize: (width: number, height: number) => void;
+  setDocumentName: (name: string) => void;
   loadDocument: (doc: Document) => void;
   undo: () => void;
   redo: () => void;
@@ -148,6 +150,7 @@ export type EditorStore = EditorState & EditorActions;
 const DEFAULT_SNAP_GRID_SIZE = 8;
 const MIN_SNAP_GRID_SIZE = 1;
 const MAX_SNAP_GRID_SIZE = 1024;
+const MIN_DOCUMENT_SIZE = 1;
 
 const defaultSnapSettings = (): SnapSettings => ({
   enabled: true,
@@ -986,6 +989,32 @@ export const editorStore = createStore<EditorStore>()((set) => ({
         persistEditorPrefs(state);
       }),
     );
+  },
+
+  setDocumentSize: (width, height) => {
+    withDocHistory(set, (state) => {
+      const nextWidth = Number.isFinite(width) ? Math.max(MIN_DOCUMENT_SIZE, width) : state.doc.width;
+      const nextHeight = Number.isFinite(height) ? Math.max(MIN_DOCUMENT_SIZE, height) : state.doc.height;
+      if (state.doc.width === nextWidth && state.doc.height === nextHeight) {
+        return false;
+      }
+
+      state.doc.width = nextWidth;
+      state.doc.height = nextHeight;
+      return true;
+    });
+  },
+
+  setDocumentName: (name) => {
+    withDocHistory(set, (state) => {
+      const nextName = name.trim();
+      if (nextName === "" || state.doc.name === nextName) {
+        return false;
+      }
+
+      state.doc.name = nextName;
+      return true;
+    });
   },
 
   loadDocument: (doc) => {

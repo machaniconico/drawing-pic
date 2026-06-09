@@ -168,6 +168,88 @@ describe("editorStore", () => {
     expect(editorStore.getState().showGrid).toBe(false);
   });
 
+  it("sets document size and undoes it as one history step", () => {
+    const before = editorStore.getState();
+    const beforeDoc = before.doc;
+    const nextWidth = beforeDoc.width + 120;
+    const nextHeight = beforeDoc.height + 80;
+
+    editorStore.getState().setDocumentSize(nextWidth, nextHeight);
+
+    const after = editorStore.getState();
+    expect(after.doc.width).toBe(nextWidth);
+    expect(after.doc.height).toBe(nextHeight);
+    expect(after.history.past).toHaveLength(before.history.past.length + 1);
+    expect(after.selection).toBe(before.selection);
+    expect(after.keyObjectId).toBe(before.keyObjectId);
+    expect(after.activeTool).toBe(before.activeTool);
+    expect(after.viewport).toBe(before.viewport);
+    expect(after.snapSettings).toBe(before.snapSettings);
+    expect(after.showGrid).toBe(before.showGrid);
+    expect(after.clipboard).toBe(before.clipboard);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.width).toBe(beforeDoc.width);
+    expect(editorStore.getState().doc.height).toBe(beforeDoc.height);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("sets document name and undoes it as one history step", () => {
+    const before = editorStore.getState();
+    const beforeDoc = before.doc;
+
+    editorStore.getState().setDocumentName("  Client Poster  ");
+
+    const after = editorStore.getState();
+    expect(after.doc.name).toBe("Client Poster");
+    expect(after.history.past).toHaveLength(before.history.past.length + 1);
+    expect(after.selection).toBe(before.selection);
+    expect(after.keyObjectId).toBe(before.keyObjectId);
+    expect(after.activeTool).toBe(before.activeTool);
+    expect(after.viewport).toBe(before.viewport);
+    expect(after.snapSettings).toBe(before.snapSettings);
+    expect(after.showGrid).toBe(before.showGrid);
+    expect(after.clipboard).toBe(before.clipboard);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.name).toBe(beforeDoc.name);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("does not push history for document metadata no-op guards", () => {
+    const initialDoc = editorStore.getState().doc;
+
+    editorStore.getState().setDocumentSize(initialDoc.width, initialDoc.height);
+    editorStore.getState().setDocumentSize(Number.NaN, Number.POSITIVE_INFINITY);
+    editorStore.getState().setDocumentName(initialDoc.name);
+    editorStore.getState().setDocumentName(`  ${initialDoc.name}  `);
+    editorStore.getState().setDocumentName("");
+    editorStore.getState().setDocumentName("   ");
+
+    expect(editorStore.getState().doc).toBe(initialDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+
+    editorStore.getState().setDocumentSize(0, -40);
+
+    expect(editorStore.getState().doc.width).toBe(1);
+    expect(editorStore.getState().doc.height).toBe(1);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+    expect(editorStore.getState().doc).toBe(initialDoc);
+
+    editorStore.getState().setDocumentSize(Number.NaN, initialDoc.height + 20);
+
+    expect(editorStore.getState().doc.width).toBe(initialDoc.width);
+    expect(editorStore.getState().doc.height).toBe(initialDoc.height + 20);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
   it("rehydrates persisted snap settings and grid visibility over current defaults", () => {
     persistMock.loadEditorPrefs.mockReturnValue({
       snapSettings: {
