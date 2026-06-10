@@ -15,7 +15,9 @@ import type {
   GradientStop,
   NodeId,
   Paint,
+  EllipseNode,
   PathNode,
+  RectNode,
   RGBA,
   SceneNode,
   Stroke,
@@ -24,6 +26,7 @@ import type {
 import { isContainer } from "../core/model/types";
 
 type GradientPaint = Extract<Paint, { type: "linear" | "radial" }>;
+type AlignedStrokeNode = RectNode | EllipseNode | PathNode;
 
 export interface SvgExportOptions {
   scale?: number;
@@ -184,6 +187,157 @@ const subpathToD = (subpath: SubPath): string => {
 const pathToD = (node: PathNode): string =>
   node.subpaths.map(subpathToD).filter((d) => d.length > 0).join(" ");
 
+const rectGeometryAttrs = (node: RectNode): string => {
+  const radiusAttrs =
+    node.rx > 0 || node.ry > 0
+      ? numericAttr("rx", Math.max(0, node.rx)) + numericAttr("ry", Math.max(0, node.ry))
+      : "";
+
+  return `${numericAttr("x", 0)}${numericAttr("y", 0)}${numericAttr(
+    "width",
+    node.width,
+  )}${numericAttr("height", node.height)}${radiusAttrs}`;
+};
+
+const ellipseGeometryAttrs = (node: EllipseNode): string =>
+  `${numericAttr("cx", 0)}${numericAttr("cy", 0)}${numericAttr(
+    "rx",
+    Math.abs(node.rx),
+  )}${numericAttr("ry", Math.abs(node.ry))}`;
+
+const pathGeometryAttrs = (node: PathNode): string => attr("d", pathToD(node));
+
+const renderLocalGeometry = (node: AlignedStrokeNode): string => {
+  switch (node.type) {
+    case "rect":
+      return `<rect${rectGeometryAttrs(node)} />`;
+    case "ellipse":
+      return `<ellipse${ellipseGeometryAttrs(node)} />`;
+    case "path":
+      return `<path${pathGeometryAttrs(node)} />`;
+  }
+};
+
+const HUGE_CLIP_COORD = 10000000;
+
+const hugeClipRectPath = (): string =>
+  [
+    "M",
+    formatNumber(-HUGE_CLIP_COORD),
+    formatNumber(-HUGE_CLIP_COORD),
+    "H",
+    formatNumber(HUGE_CLIP_COORD),
+    "V",
+    formatNumber(HUGE_CLIP_COORD),
+    "H",
+    formatNumber(-HUGE_CLIP_COORD),
+    "Z",
+  ].join(" ");
+
+const rectToPathD = (node: RectNode): string => {
+  const width = node.width;
+  const height = node.height;
+  const rx = Math.min(Math.max(0, node.rx), Math.abs(width) / 2);
+  const ry = Math.min(Math.max(0, node.ry), Math.abs(height) / 2);
+
+  if (rx === 0 || ry === 0) {
+    return [
+      "M",
+      formatNumber(0),
+      formatNumber(0),
+      "H",
+      formatNumber(width),
+      "V",
+      formatNumber(height),
+      "H",
+      formatNumber(0),
+      "Z",
+    ].join(" ");
+  }
+
+  return [
+    "M",
+    formatNumber(rx),
+    formatNumber(0),
+    "H",
+    formatNumber(width - rx),
+    "A",
+    formatNumber(rx),
+    formatNumber(ry),
+    "0 0 1",
+    formatNumber(width),
+    formatNumber(ry),
+    "V",
+    formatNumber(height - ry),
+    "A",
+    formatNumber(rx),
+    formatNumber(ry),
+    "0 0 1",
+    formatNumber(width - rx),
+    formatNumber(height),
+    "H",
+    formatNumber(rx),
+    "A",
+    formatNumber(rx),
+    formatNumber(ry),
+    "0 0 1",
+    formatNumber(0),
+    formatNumber(height - ry),
+    "V",
+    formatNumber(ry),
+    "A",
+    formatNumber(rx),
+    formatNumber(ry),
+    "0 0 1",
+    formatNumber(rx),
+    formatNumber(0),
+    "Z",
+  ].join(" ");
+};
+
+const ellipseToPathD = (node: EllipseNode): string => {
+  const rx = Math.abs(node.rx);
+  const ry = Math.abs(node.ry);
+
+  return [
+    "M",
+    formatNumber(-rx),
+    formatNumber(0),
+    "A",
+    formatNumber(rx),
+    formatNumber(ry),
+    "0 1 0",
+    formatNumber(rx),
+    formatNumber(0),
+    "A",
+    formatNumber(rx),
+    formatNumber(ry),
+    "0 1 0",
+    formatNumber(-rx),
+    formatNumber(0),
+    "Z",
+  ].join(" ");
+};
+
+const geometryToPathD = (node: AlignedStrokeNode): string => {
+  switch (node.type) {
+    case "rect":
+      return rectToPathD(node);
+    case "ellipse":
+      return ellipseToPathD(node);
+    case "path":
+      return pathToD(node);
+  }
+};
+
+const strokeAlignmentClipContent = (node: AlignedStrokeNode, align: Stroke["align"]): string =>
+  align === "inside"
+    ? renderLocalGeometry(node)
+    : `<path${attr("clip-rule", "evenodd")}${attr(
+        "d",
+        `${hugeClipRectPath()} ${geometryToPathD(node)}`,
+      )} />`;
+
 const gradientId = (ctx: SvgContext, paint: GradientPaint): string => {
   const id = `svg-export-gradient-${ctx.nextGradientId}`;
   ctx.nextGradientId += 1;
@@ -215,12 +369,12 @@ const paintAttrs = (
   }
 };
 
-const strokeAttrs = (stroke: Stroke | null, ctx: SvgContext): string => {
+const strokeAttrs = (stroke: Stroke | null, ctx: SvgContext, width = stroke?.width ?? 0): string => {
   if (stroke === null || stroke.paint.type === "none") return attr("stroke", "none");
 
   let output =
     paintAttrs(stroke.paint, "stroke", "stroke-opacity", ctx) +
-    numericAttr("stroke-width", stroke.width) +
+    numericAttr("stroke-width", width) +
     attr("stroke-linecap", stroke.cap) +
     attr("stroke-linejoin", stroke.join) +
     numericAttr("stroke-miterlimit", stroke.miterLimit);
@@ -350,6 +504,58 @@ const renderClipGeometryNode = (doc: Document, node: SceneNode): string => {
   }
 };
 
+const hasVisibleStroke = (stroke: Stroke | null): stroke is Stroke =>
+  stroke !== null && stroke.paint.type !== "none";
+
+const isFullyClosedPath = (node: PathNode): boolean =>
+  node.subpaths.length > 0 && node.subpaths.every((subpath) => subpath.closed);
+
+const alignedStrokeNode = (node: SceneNode): AlignedStrokeNode | null => {
+  if (node.type === "rect" || node.type === "ellipse") return node;
+  if (node.type === "path" && isFullyClosedPath(node)) return node;
+  return null;
+};
+
+const renderAlignedStrokeNode = (
+  node: SceneNode,
+  ctx: SvgContext,
+): string | null => {
+  const alignedNode = alignedStrokeNode(node);
+  if (alignedNode === null || !hasVisibleStroke(alignedNode.stroke)) return null;
+
+  const stroke = alignedNode.stroke;
+  if (stroke.align !== "inside" && stroke.align !== "outside") return null;
+
+  const clipPath = clipPathId(ctx, strokeAlignmentClipContent(alignedNode, stroke.align));
+  const common = nodeCommonAttrs(alignedNode);
+  const geometry = renderGeometryAttrs(alignedNode);
+
+  return (
+    `<${alignedNode.type}${common}${geometry}${paintAttrs(
+      alignedNode.fill,
+      "fill",
+      "fill-opacity",
+      ctx,
+    )}${attr("stroke", "none")} />` +
+    `<${alignedNode.type}${common}${geometry}${attr("fill", "none")}${strokeAttrs(
+      stroke,
+      ctx,
+      stroke.width * 2,
+    )}${attr("clip-path", `url(#${clipPath})`)} />`
+  );
+};
+
+const renderGeometryAttrs = (node: AlignedStrokeNode): string => {
+  switch (node.type) {
+    case "rect":
+      return rectGeometryAttrs(node);
+    case "ellipse":
+      return ellipseGeometryAttrs(node);
+    case "path":
+      return pathGeometryAttrs(node);
+  }
+};
+
 const renderNode = (doc: Document, node: SceneNode, ctx: SvgContext): string => {
   if (!node.visible) return "";
 
@@ -370,6 +576,9 @@ const renderNode = (doc: Document, node: SceneNode, ctx: SvgContext): string => 
 
     return `<g${nodeCommonAttrs(node)}${clipPath}>${children}</g>`;
   }
+
+  const alignedStroke = renderAlignedStrokeNode(node, ctx);
+  if (alignedStroke !== null) return alignedStroke;
 
   switch (node.type) {
     case "rect": {

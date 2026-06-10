@@ -142,6 +142,64 @@ describe("documentToSvg", () => {
     expect(svg).toContain('stroke-dasharray="4 2"');
   });
 
+  it("exports inside-aligned rect strokes as clipped double-width stroke-only copies above fill", () => {
+    const doc = createDocument(100, 80, "Inside stroke");
+    const rect = createRect(10, 20, 30, 40);
+    rect.fill = solid({ r: 255, g: 0, b: 0, a: 1 });
+    rect.stroke = {
+      ...defaultStroke({ r: 0, g: 0, b: 255, a: 1 }, 3),
+      align: "inside",
+      dash: [5, 2],
+    };
+    addNode(doc, rect);
+
+    const svg = documentToSvg(doc);
+    const fillOnly =
+      '<rect transform="matrix(1 0 0 1 10 20)" opacity="1" x="0" y="0" width="30" height="40" fill="#ff0000" fill-opacity="1" stroke="none" />';
+    const strokeOnly =
+      '<rect transform="matrix(1 0 0 1 10 20)" opacity="1" x="0" y="0" width="30" height="40" fill="none" stroke="#0000ff" stroke-opacity="1" stroke-width="6" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10" stroke-dasharray="5 2" clip-path="url(#svg-export-clip-1)" />';
+
+    expect(svg).toContain(
+      '<defs><clipPath id="svg-export-clip-1"><rect x="0" y="0" width="30" height="40" /></clipPath></defs>',
+    );
+    expect(svg).toContain(fillOnly + strokeOnly);
+    expect(svg.indexOf(fillOnly)).toBeLessThan(svg.indexOf(strokeOnly));
+    expect(svg).not.toContain('stroke-width="3"');
+  });
+
+  it("exports outside-aligned ellipse strokes with an evenodd complement clipPath", () => {
+    const doc = createDocument(100, 80, "Outside stroke");
+    const ellipse = createEllipse(25, 30, 12, 8);
+    ellipse.stroke = {
+      ...defaultStroke({ r: 255, g: 128, b: 0, a: 1 }, 4),
+      align: "outside",
+    };
+    addNode(doc, ellipse);
+
+    const svg = documentToSvg(doc);
+
+    expect(svg).toContain(
+      '<clipPath id="svg-export-clip-1"><path clip-rule="evenodd" d="M -10000000 -10000000 H 10000000 V 10000000 H -10000000 Z M -12 0 A 12 8 0 1 0 12 0 A 12 8 0 1 0 -12 0 Z" /></clipPath>',
+    );
+    expect(svg).toContain(
+      '<ellipse transform="matrix(1 0 0 1 25 30)" opacity="1" cx="0" cy="0" rx="12" ry="8" fill="none" stroke="#ff8000" stroke-opacity="1" stroke-width="8" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10" clip-path="url(#svg-export-clip-1)" />',
+    );
+  });
+
+  it("keeps center-aligned stroke output byte-for-byte unchanged", () => {
+    const doc = createDocument(100, 80, "Center stroke");
+    const rect = createRect(1, 2, 10, 20);
+    rect.stroke = {
+      ...defaultStroke({ r: 0, g: 0, b: 0, a: 1 }, 2),
+      align: "center",
+    };
+    addNode(doc, rect);
+
+    expect(documentToSvg(doc)).toBe(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80" viewBox="0 0 100 80"><g transform="matrix(1 0 0 1 0 0)" opacity="1"><rect transform="matrix(1 0 0 1 1 2)" opacity="1" x="0" y="0" width="10" height="20" fill="#c8c8c8" fill-opacity="1" stroke="#000000" stroke-opacity="1" stroke-width="2" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10" /></g></svg>',
+    );
+  });
+
   it("exports an ellipse centered on local origin", () => {
     const doc = createDocument(200, 100, "Ellipse");
     const ellipse = createEllipse(40, 50, 12, 18);
