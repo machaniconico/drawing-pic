@@ -1,10 +1,11 @@
 import { original, produce } from "immer";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
+import { offsetSubPaths } from "../core/geometry/offsetPath";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
 import { createDocument } from "../core/model/factory";
-import type { Document, NodeId, Paint, RGBA, SceneNode, Stroke } from "../core/model/types";
+import type { Document, NodeId, Paint, PathNode, RGBA, SceneNode, Stroke } from "../core/model/types";
 import { hasStyle, isContainer } from "../core/model/types";
 import {
   alignNodes as computeAlignNodes,
@@ -122,6 +123,7 @@ export interface EditorActions {
   toggleClipMask: () => void;
   booleanOp: (op: BooleanOp) => void;
   convertSelectionToPaths: () => void;
+  offsetSelectedPaths: (distance: number) => void;
   copySelection: () => void;
   paste: () => void;
   pasteInPlace: () => void;
@@ -840,6 +842,72 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       }
 
       return changed;
+    });
+  },
+
+  offsetSelectedPaths: (distance) => {
+    if (distance === 0 || !Number.isFinite(distance)) {
+      return;
+    }
+
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const cloneSourceDoc = structuredClone(sourceDoc) as Document;
+      const offsetIds: NodeId[] = [];
+
+      for (const id of state.selection) {
+        const node = sourceDoc.nodes[id];
+        if (!node || node.locked) {
+          continue;
+        }
+
+        const sourcePath = node.type === "path" ? node : computeConvertShapeToPath(node);
+        if (!sourcePath) {
+          continue;
+        }
+
+        const parent = findNodeParent(sourceDoc, id);
+        if (!parent) {
+          continue;
+        }
+
+        const offsetNode: PathNode = {
+          id: sourcePath.id,
+          name: `${sourcePath.name} offset`,
+          type: "path",
+          transform: structuredClone(sourcePath.transform),
+          opacity: sourcePath.opacity,
+          visible: sourcePath.visible,
+          locked: sourcePath.locked,
+          fill: structuredClone(sourcePath.fill),
+          stroke: sourcePath.stroke === null ? null : structuredClone(sourcePath.stroke),
+          blendMode: sourcePath.blendMode,
+          subpaths: offsetSubPaths(
+            sourcePath.subpaths,
+            distance,
+            sourcePath.stroke?.join ?? "miter",
+            sourcePath.stroke?.miterLimit ?? 4,
+          ),
+        };
+
+        cloneSourceDoc.nodes[offsetNode.id] = offsetNode;
+        const clone = cloneSubtree(cloneSourceDoc, offsetNode.id, undefined, Object.keys(state.doc.nodes));
+        Object.assign(cloneSourceDoc.nodes, clone.nodes);
+        for (const clonedNode of Object.values(clone.nodes)) {
+          state.doc.nodes[clonedNode.id] = clonedNode;
+        }
+
+        insertRootAfter(state.doc, parent.parentId, id, clone.rootId);
+        offsetIds.push(clone.rootId);
+      }
+
+      if (offsetIds.length === 0) {
+        return false;
+      }
+
+      state.selection = offsetIds;
+      clearMissingKeyObject(state);
+      return true;
     });
   },
 

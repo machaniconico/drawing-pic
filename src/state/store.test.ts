@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BBox } from "../core/geometry/bbox";
 import type { Matrix } from "../core/geometry/matrix";
 import { selectionBounds } from "../core/model/bounds";
-import { createEllipse, createGroup, createRect } from "../core/model/factory";
+import { createEllipse, createGroup, createPath, createRect } from "../core/model/factory";
 import type { Document, NodeId, Paint, Stroke } from "../core/model/types";
 import { canRedo, canUndo, createHistory } from "./history";
 import { flipNodes, rotateNodes90, rotateNodesAround } from "./operations";
@@ -1110,6 +1110,172 @@ describe("editorStore", () => {
     expect(editorStore.getState().doc.nodes[group.id]).toBe(group);
     expect(editorStore.getState().doc.nodes[layerId]?.type).toBe("layer");
     expect(editorStore.getState().selection).toEqual([group.id, layerId]);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
+  it("offsets selected paths, rects, and ellipses into new selected path siblings", () => {
+    const fill: Paint = { type: "solid", color: { r: 220, g: 20, b: 80, a: 0.75 } };
+    const stroke: Stroke = {
+      paint: { type: "solid", color: { r: 10, g: 20, b: 30, a: 1 } },
+      width: 3,
+      cap: "round",
+      join: "bevel",
+      miterLimit: 2,
+      dash: [2, 1],
+      dashOffset: 0.5,
+      align: "center",
+    };
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 20, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 20, y: 20 }, handleIn: null, handleOut: null },
+          { point: { x: 0, y: 20 }, handleIn: null, handleOut: null },
+        ],
+        closed: true,
+      },
+    ]);
+    path.name = "Logo";
+    path.transform = { a: 1, b: 0, c: 0.25, d: 1, e: 5, f: 6 };
+    path.fill = fill;
+    path.stroke = stroke;
+    path.opacity = 0.6;
+    path.blendMode = "multiply";
+    const rect = createRect(40, 10, 16, 24);
+    rect.name = "Panel";
+    const ellipse = createEllipse(80, 20, 12, 18);
+    ellipse.name = "Badge";
+    editorStore.getState().addNode(path);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().addNode(ellipse);
+    editorStore.getState().setSelection([path.id, rect.id, ellipse.id]);
+    const layerId = firstLayerId(editorStore.getState().doc);
+    const beforeDoc = editorStore.getState().doc;
+    const originalPath = structuredClone(path);
+    const originalRect = structuredClone(rect);
+    const originalEllipse = structuredClone(ellipse);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().offsetSelectedPaths(4);
+
+    const offsetIds = editorStore.getState().selection;
+    expect(offsetIds).toHaveLength(3);
+    expect(new Set(offsetIds).size).toBe(3);
+    expect(offsetIds).not.toContain(path.id);
+    expect(offsetIds).not.toContain(rect.id);
+    expect(offsetIds).not.toContain(ellipse.id);
+    expect(editorStore.getState().doc.nodes[path.id]).toEqual(originalPath);
+    expect(editorStore.getState().doc.nodes[rect.id]).toEqual(originalRect);
+    expect(editorStore.getState().doc.nodes[ellipse.id]).toEqual(originalEllipse);
+
+    const layer = editorStore.getState().doc.nodes[layerId];
+    expect(layer?.type === "layer" ? layer.children : []).toEqual([
+      path.id,
+      offsetIds[0],
+      rect.id,
+      offsetIds[1],
+      ellipse.id,
+      offsetIds[2],
+    ]);
+
+    const offsetPath = editorStore.getState().doc.nodes[offsetIds[0]!];
+    const offsetRect = editorStore.getState().doc.nodes[offsetIds[1]!];
+    const offsetEllipse = editorStore.getState().doc.nodes[offsetIds[2]!];
+    expect(offsetPath?.type).toBe("path");
+    expect(offsetRect?.type).toBe("path");
+    expect(offsetEllipse?.type).toBe("path");
+    if (offsetPath?.type !== "path" || offsetRect?.type !== "path" || offsetEllipse?.type !== "path") {
+      throw new Error("Expected offset nodes to be paths");
+    }
+
+    expect(offsetPath.name).toBe("Logo offset");
+    expect(offsetRect.name).toBe("Panel offset");
+    expect(offsetEllipse.name).toBe("Badge offset");
+    expectMatrixCloseTo(offsetPath.transform, path.transform);
+    expect(offsetPath.fill).toEqual(path.fill);
+    expect(offsetPath.stroke).toEqual(path.stroke);
+    expect(offsetPath.opacity).toBe(path.opacity);
+    expect(offsetPath.visible).toBe(path.visible);
+    expect(offsetPath.blendMode).toBe(path.blendMode);
+    expect(offsetPath.subpaths).not.toEqual(path.subpaths);
+    expect(offsetRect.subpaths).toHaveLength(1);
+    expect(offsetEllipse.subpaths).toHaveLength(1);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.nodes[offsetIds[0]!]).toBeUndefined();
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("skips locked and unsupported nodes while offsetting selected paths", () => {
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 10, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 10, y: 10 }, handleIn: null, handleOut: null },
+        ],
+        closed: true,
+      },
+    ]);
+    const lockedRect = createRect(20, 0, 10, 10);
+    lockedRect.locked = true;
+    const group = createGroup("Unsupported group");
+    editorStore.getState().addNode(path);
+    editorStore.getState().addNode(lockedRect);
+    editorStore.getState().addNode(group);
+    editorStore.getState().setSelection([path.id, lockedRect.id, group.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().offsetSelectedPaths(3);
+
+    const offsetIds = editorStore.getState().selection;
+    expect(offsetIds).toHaveLength(1);
+    expect(offsetIds[0]).not.toBe(path.id);
+    expect(editorStore.getState().doc.nodes[offsetIds[0]!]?.type).toBe("path");
+    expect(editorStore.getState().doc.nodes[lockedRect.id]).toEqual(lockedRect);
+    expect(editorStore.getState().doc.nodes[group.id]).toEqual(group);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
+  it("does not push history when offsetting by zero, empty selections, or no eligible nodes", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeZeroDoc = editorStore.getState().doc;
+
+    editorStore.getState().offsetSelectedPaths(0);
+
+    expect(editorStore.getState().doc).toBe(beforeZeroDoc);
+    expect(editorStore.getState().selection).toEqual([rect.id]);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    editorStore.getState().clearSelection();
+    editorStore.getState().offsetSelectedPaths(5);
+
+    expect(editorStore.getState().doc).toBe(beforeZeroDoc);
+    expect(editorStore.getState().selection).toEqual([]);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    const lockedPath = createPath();
+    lockedPath.locked = true;
+    const group = createGroup("Unsupported group");
+    editorStore.getState().addNode(lockedPath);
+    editorStore.getState().addNode(group);
+    editorStore.getState().setSelection([lockedPath.id, group.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeNoEligibleDoc = editorStore.getState().doc;
+
+    editorStore.getState().offsetSelectedPaths(5);
+
+    expect(editorStore.getState().doc).toBe(beforeNoEligibleDoc);
+    expect(editorStore.getState().selection).toEqual([lockedPath.id, group.id]);
     expect(editorStore.getState().history.past).toHaveLength(0);
     expect(canUndo(editorStore.getState().history)).toBe(false);
   });
