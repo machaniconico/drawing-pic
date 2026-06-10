@@ -62,7 +62,7 @@ const ringArea = (points: readonly Vec2[]): number => {
   return area / 2;
 };
 
-const flattenSubPath = (subpath: SubPath): Vec2[] => {
+export const flattenSubPathToPolyline = (subpath: SubPath): Vec2[] => {
   if (subpath.anchors.length === 0) {
     return [];
   }
@@ -271,7 +271,7 @@ export const offsetSubPaths = (
   miterLimit: number,
 ): SubPath[] =>
   subpaths.map((subpath) => {
-    const points = flattenSubPath(subpath);
+    const points = flattenSubPathToPolyline(subpath);
     const distinctPoints = cleanPolyline(points, subpath.closed);
 
     if (Math.abs(distance) <= EPS || distinctPoints.length < 2 || (subpath.closed && distinctPoints.length < 3)) {
