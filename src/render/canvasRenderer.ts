@@ -73,13 +73,12 @@ const drawArtboard = (
   ctx.restore();
 };
 
-const roundedRectPath = (ctx: CanvasRenderingContext2D, node: RectNode): void => {
+const addRoundedRectPath = (ctx: CanvasRenderingContext2D, node: RectNode): void => {
   const width = node.width;
   const height = node.height;
   const rx = Math.min(Math.abs(node.rx), Math.abs(width) / 2);
   const ry = Math.min(Math.abs(node.ry), Math.abs(height) / 2);
 
-  ctx.beginPath();
   if (rx === 0 || ry === 0) {
     ctx.rect(0, 0, width, height);
     return;
@@ -97,18 +96,25 @@ const roundedRectPath = (ctx: CanvasRenderingContext2D, node: RectNode): void =>
   ctx.closePath();
 };
 
-const ellipsePath = (ctx: CanvasRenderingContext2D, node: EllipseNode): void => {
+const roundedRectPath = (ctx: CanvasRenderingContext2D, node: RectNode): void => {
   ctx.beginPath();
+  addRoundedRectPath(ctx, node);
+};
+
+const addEllipsePath = (ctx: CanvasRenderingContext2D, node: EllipseNode): void => {
   ctx.ellipse(0, 0, Math.abs(node.rx), Math.abs(node.ry), 0, 0, Math.PI * 2);
   ctx.closePath();
+};
+
+const ellipsePath = (ctx: CanvasRenderingContext2D, node: EllipseNode): void => {
+  ctx.beginPath();
+  addEllipsePath(ctx, node);
 };
 
 const addPoint = (point: Vec2, handle: Vec2 | null): Vec2 =>
   handle === null ? point : { x: point.x + handle.x, y: point.y + handle.y };
 
-const pathNodePath = (ctx: CanvasRenderingContext2D, node: PathNode): void => {
-  ctx.beginPath();
-
+const addPathNodePath = (ctx: CanvasRenderingContext2D, node: PathNode): void => {
   for (const subpath of node.subpaths) {
     const anchors = subpath.anchors;
     const first = anchors[0];
@@ -138,34 +144,102 @@ const pathNodePath = (ctx: CanvasRenderingContext2D, node: PathNode): void => {
   }
 };
 
+const pathNodePath = (ctx: CanvasRenderingContext2D, node: PathNode): void => {
+  ctx.beginPath();
+  addPathNodePath(ctx, node);
+};
+
+type BuildPath = () => void;
+type AddPath = () => void;
+type StrokeAlignmentEligibility = {
+  addPath: AddPath;
+  closed: boolean;
+};
+
+const OUTSIDE_STROKE_CLIP_SIZE = 1e7;
+
+const isClosedPathNode = (node: PathNode): boolean =>
+  node.subpaths.length > 0 &&
+  node.subpaths.every((subpath) => subpath.closed && subpath.anchors.length > 1);
+
+const applyAlignedStroke = (
+  ctx: CanvasRenderingContext2D,
+  stroke: Stroke | null,
+  buildPath: BuildPath,
+  eligibility: StrokeAlignmentEligibility | null,
+): boolean => {
+  if (!applyStroke(ctx, stroke)) return false;
+  if (stroke?.align !== "inside" && stroke?.align !== "outside") {
+    ctx.stroke();
+    return true;
+  }
+  if (eligibility === null || !eligibility.closed) {
+    ctx.stroke();
+    return true;
+  }
+
+  ctx.save();
+  if (stroke.align === "inside") {
+    buildPath();
+    ctx.clip();
+  } else {
+    ctx.beginPath();
+    ctx.rect(
+      -OUTSIDE_STROKE_CLIP_SIZE,
+      -OUTSIDE_STROKE_CLIP_SIZE,
+      OUTSIDE_STROKE_CLIP_SIZE * 2,
+      OUTSIDE_STROKE_CLIP_SIZE * 2,
+    );
+    eligibility.addPath();
+    ctx.clip("evenodd");
+  }
+
+  ctx.lineWidth = stroke.width * 2;
+  buildPath();
+  ctx.stroke();
+  ctx.restore();
+  return true;
+};
+
 const paintCurrentPath = (
   ctx: CanvasRenderingContext2D,
   fill: Paint,
   stroke: Stroke | null,
+  buildPath: BuildPath,
+  eligibility: StrokeAlignmentEligibility | null,
 ): void => {
   if (applyFill(ctx, fill)) {
     ctx.fill();
   }
 
-  // Canvas2D strokes paths on center only; inside/outside stroke alignment is approximated.
-  if (applyStroke(ctx, stroke)) {
-    ctx.stroke();
-  }
+  applyAlignedStroke(ctx, stroke, buildPath, eligibility);
 };
 
 const drawRect = (ctx: CanvasRenderingContext2D, node: RectNode): void => {
+  const buildPath = () => roundedRectPath(ctx, node);
   roundedRectPath(ctx, node);
-  paintCurrentPath(ctx, node.fill, node.stroke);
+  paintCurrentPath(ctx, node.fill, node.stroke, buildPath, {
+    addPath: () => addRoundedRectPath(ctx, node),
+    closed: true,
+  });
 };
 
 const drawEllipse = (ctx: CanvasRenderingContext2D, node: EllipseNode): void => {
+  const buildPath = () => ellipsePath(ctx, node);
   ellipsePath(ctx, node);
-  paintCurrentPath(ctx, node.fill, node.stroke);
+  paintCurrentPath(ctx, node.fill, node.stroke, buildPath, {
+    addPath: () => addEllipsePath(ctx, node),
+    closed: true,
+  });
 };
 
 const drawPath = (ctx: CanvasRenderingContext2D, node: PathNode): void => {
+  const buildPath = () => pathNodePath(ctx, node);
   pathNodePath(ctx, node);
-  paintCurrentPath(ctx, node.fill, node.stroke);
+  paintCurrentPath(ctx, node.fill, node.stroke, buildPath, {
+    addPath: () => addPathNodePath(ctx, node),
+    closed: isClosedPathNode(node),
+  });
 };
 
 const configureText = (ctx: CanvasRenderingContext2D, node: TextNode): void => {
