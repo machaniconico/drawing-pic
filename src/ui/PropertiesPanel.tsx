@@ -99,6 +99,9 @@ const hexToRgba = (hex: string, alpha = 1): RGBA => {
 const formatUnitNumber = (value: number): string =>
   Number.isFinite(value) ? String(Math.round(clamp(value, 0, 1) * 1000) / 1000) : "0";
 
+const canOffsetPathNode = (node: { readonly type: string }): boolean =>
+  node.type === "path" || node.type === "rect" || node.type === "ellipse";
+
 const paintColor = (paint: Paint): RGBA | null =>
   paint.type === "solid" ? paint.color : null;
 
@@ -414,6 +417,8 @@ export function PropertiesPanel() {
   const selectSameFill = useEditorStore((state) => state.selectSameFill);
   const selectSameStroke = useEditorStore((state) => state.selectSameStroke);
   const convertSelectionToPaths = useEditorStore((state) => state.convertSelectionToPaths);
+  const offsetSelectedPaths = useEditorStore((state) => state.offsetSelectedPaths);
+  const [offsetDistance, setOffsetDistance] = useState("10");
   const selectedNodes = getSelectedNodes({ doc, selection });
 
   if (selectedNodes.length === 0) {
@@ -435,6 +440,17 @@ export function PropertiesPanel() {
     !boundsAreEmpty && selectedNodes.length === 1
       ? (nodeRotationAngle(selectedNodes[0]) * 180) / Math.PI
       : null;
+  const canOffsetSelection = selectedNodes.some(canOffsetPathNode);
+  const offsetDistanceNumber = Number(offsetDistance);
+  const canApplyOffset = Number.isFinite(offsetDistanceNumber) && offsetDistanceNumber !== 0;
+
+  const applyOffsetPath = (): void => {
+    if (!canApplyOffset) {
+      return;
+    }
+
+    offsetSelectedPaths(offsetDistanceNumber);
+  };
 
   const commitSelectionX = (x: number): void => {
     if (boundsAreEmpty) {
@@ -530,6 +546,31 @@ export function PropertiesPanel() {
       </div>
     </section>
   );
+
+  const offsetPathRow = canOffsetSelection ? (
+    <label className="properties-panel__row">
+      <span className="properties-panel__label">Offset Path</span>
+      <span className="properties-panel__offset-controls">
+        <input
+          aria-label="Offset distance"
+          className="properties-panel__number properties-panel__number--compact"
+          onChange={(event) => setOffsetDistance(event.currentTarget.value)}
+          step={1}
+          type="number"
+          value={offsetDistance}
+        />
+        <button
+          aria-label="Offset path"
+          className="properties-panel__button"
+          disabled={!canApplyOffset}
+          onClick={applyOffsetPath}
+          type="button"
+        >
+          Offset
+        </button>
+      </span>
+    </label>
+  ) : null;
 
   if (selectedNodes.length > 1) {
     const sharedOpacity = selectedNodes.every((node) => node.opacity === selectedNodes[0].opacity)
@@ -711,6 +752,11 @@ export function PropertiesPanel() {
             />
           </label>
         </section>
+        {canOffsetSelection ? (
+          <section className="properties-panel__section" aria-label="Path actions">
+            {offsetPathRow}
+          </section>
+        ) : null}
         {geometrySection}
       </aside>
     );
@@ -1647,15 +1693,18 @@ export function PropertiesPanel() {
         </section>
       ) : null}
 
-      {canConvertToPath ? (
-        <section className="properties-panel__section" aria-label="Path conversion">
-          <button
-            className="properties-panel__button"
-            onClick={convertSelectionToPaths}
-            type="button"
-          >
-            Convert to Path
-          </button>
+      {canConvertToPath || canOffsetSelection ? (
+        <section className="properties-panel__section" aria-label="Path actions">
+          {canConvertToPath ? (
+            <button
+              className="properties-panel__button"
+              onClick={convertSelectionToPaths}
+              type="button"
+            >
+              Convert to Path
+            </button>
+          ) : null}
+          {offsetPathRow}
         </section>
       ) : null}
 

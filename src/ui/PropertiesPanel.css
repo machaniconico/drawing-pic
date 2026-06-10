@@ -169,6 +169,13 @@
   width: 132px;
 }
 
+.properties-panel__offset-controls {
+  display: grid;
+  grid-template-columns: 58px auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .properties-panel__number:focus,
 .properties-panel__color:focus,
 .properties-panel__select:focus,
