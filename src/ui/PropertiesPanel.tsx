@@ -26,6 +26,7 @@ type PaintTarget =
 const FILL_TYPES: readonly FillType[] = ["none", "solid", "linear", "radial"];
 const LINE_CAPS: readonly LineCap[] = ["butt", "round", "square"];
 const LINE_JOINS: readonly LineJoin[] = ["miter", "round", "bevel"];
+const STROKE_ALIGNMENTS: readonly Stroke["align"][] = ["center", "inside", "outside"];
 const BLEND_MODES = [
   { label: "Normal", value: "source-over" },
   { label: "Multiply", value: "multiply" },
@@ -993,6 +994,19 @@ export function PropertiesPanel() {
     });
   };
 
+  const setStrokeAlign = (stroke: Stroke, align: Stroke["align"]): void => {
+    if (!hasStyle(node)) {
+      return;
+    }
+
+    updateNode(node.id, {
+      stroke: {
+        ...stroke,
+        align,
+      },
+    });
+  };
+
   const setStrokeDash = (stroke: Stroke, value: string): void => {
     if (!hasStyle(node)) {
       return;
@@ -1476,6 +1490,25 @@ export function PropertiesPanel() {
                     {LINE_JOINS.map((join) => (
                       <option key={join} value={join}>
                         {join}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="properties-panel__row">
+                  <span className="properties-panel__label">Align</span>
+                  <select
+                    aria-label="Stroke align"
+                    className="properties-panel__select"
+                    onChange={(event) =>
+                      setStrokeAlign(stroke, event.currentTarget.value as Stroke["align"])
+                    }
+                    value={stroke.align ?? "center"}
+                  >
+                    {STROKE_ALIGNMENTS.map((align) => (
+                      <option key={align} value={align}>
+                        {align[0].toUpperCase()}
+                        {align.slice(1)}
                       </option>
                     ))}
                   </select>
