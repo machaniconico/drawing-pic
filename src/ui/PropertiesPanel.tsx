@@ -102,6 +102,13 @@ const formatUnitNumber = (value: number): string =>
 const canOffsetPathNode = (node: { readonly type: string }): boolean =>
   node.type === "path" || node.type === "rect" || node.type === "ellipse";
 
+const canOutlineStrokeNode = (node: { readonly stroke?: Stroke | null; readonly type: string }): boolean =>
+  canOffsetPathNode(node) &&
+  node.stroke !== undefined &&
+  node.stroke !== null &&
+  node.stroke.paint.type !== "none" &&
+  node.stroke.width > 0;
+
 const paintColor = (paint: Paint): RGBA | null =>
   paint.type === "solid" ? paint.color : null;
 
@@ -417,6 +424,7 @@ export function PropertiesPanel() {
   const selectSameFill = useEditorStore((state) => state.selectSameFill);
   const selectSameStroke = useEditorStore((state) => state.selectSameStroke);
   const convertSelectionToPaths = useEditorStore((state) => state.convertSelectionToPaths);
+  const outlineSelectedStrokes = useEditorStore((state) => state.outlineSelectedStrokes);
   const offsetSelectedPaths = useEditorStore((state) => state.offsetSelectedPaths);
   const [offsetDistance, setOffsetDistance] = useState("10");
   const selectedNodes = getSelectedNodes({ doc, selection });
@@ -441,6 +449,7 @@ export function PropertiesPanel() {
       ? (nodeRotationAngle(selectedNodes[0]) * 180) / Math.PI
       : null;
   const canOffsetSelection = selectedNodes.some(canOffsetPathNode);
+  const canOutlineStroke = selectedNodes.some(canOutlineStrokeNode);
   const offsetDistanceNumber = Number(offsetDistance);
   const canApplyOffset = Number.isFinite(offsetDistanceNumber) && offsetDistanceNumber !== 0;
 
@@ -754,6 +763,16 @@ export function PropertiesPanel() {
         </section>
         {canOffsetSelection ? (
           <section className="properties-panel__section" aria-label="Path actions">
+            {canOutlineStroke ? (
+              <button
+                aria-label="Outline stroke"
+                className="properties-panel__button"
+                onClick={outlineSelectedStrokes}
+                type="button"
+              >
+                Outline Stroke
+              </button>
+            ) : null}
             {offsetPathRow}
           </section>
         ) : null}
@@ -1693,7 +1712,7 @@ export function PropertiesPanel() {
         </section>
       ) : null}
 
-      {canConvertToPath || canOffsetSelection ? (
+      {canConvertToPath || canOffsetSelection || canOutlineStroke ? (
         <section className="properties-panel__section" aria-label="Path actions">
           {canConvertToPath ? (
             <button
@@ -1702,6 +1721,16 @@ export function PropertiesPanel() {
               type="button"
             >
               Convert to Path
+            </button>
+          ) : null}
+          {canOutlineStroke ? (
+            <button
+              aria-label="Outline stroke"
+              className="properties-panel__button"
+              onClick={outlineSelectedStrokes}
+              type="button"
+            >
+              Outline Stroke
             </button>
           ) : null}
           {offsetPathRow}
