@@ -18,12 +18,14 @@ import { useEditorStore } from "../state/store";
 import "./PropertiesPanel.css";
 
 type FillType = Paint["type"];
+type StrokeType = Exclude<FillType, "pattern">;
 type GradientPaint = LinearGradient | RadialGradient;
 type PaintTarget =
   | { readonly kind: "fill" }
   | { readonly kind: "stroke"; readonly stroke: Stroke };
 
-const FILL_TYPES: readonly FillType[] = ["none", "solid", "linear", "radial"];
+const FILL_TYPES: readonly FillType[] = ["none", "solid", "linear", "radial", "pattern"];
+const STROKE_TYPES: readonly StrokeType[] = ["none", "solid", "linear", "radial"];
 const LINE_CAPS: readonly LineCap[] = ["butt", "round", "square"];
 const LINE_JOINS: readonly LineJoin[] = ["miter", "round", "bevel"];
 const STROKE_ALIGNMENTS: readonly Stroke["align"][] = ["center", "inside", "outside"];
@@ -151,6 +153,11 @@ const parseFillType = (value: string): FillType | null => {
   return FILL_TYPES.includes(fillType) ? fillType : null;
 };
 
+const parseStrokeType = (value: string): StrokeType | null => {
+  const strokeType = value as StrokeType;
+  return STROKE_TYPES.includes(strokeType) ? strokeType : null;
+};
+
 const parseBlendMode = (value: string): GlobalCompositeOperation | null => {
   const blendMode = value as GlobalCompositeOperation;
   return BLEND_MODES.some((mode) => mode.value === blendMode) ? blendMode : null;
@@ -228,7 +235,11 @@ const gradientWithStops = (gradient: GradientPaint, stops: readonly GradientStop
   };
 };
 
-const paintForFillType = (fillType: FillType, currentFill: Paint): Paint => {
+const paintForFillType = (
+  fillType: FillType,
+  currentFill: Paint,
+  firstEligiblePatternSourceId: string | null = null,
+): Paint => {
   const primaryColor = primaryPaintColor(currentFill);
   const stops =
     currentFill.type === "linear" || currentFill.type === "radial"
@@ -258,8 +269,9 @@ const paintForFillType = (fillType: FillType, currentFill: Paint): Paint => {
         radius: 0.5,
       };
     case "pattern":
-      // パターン編集 UI は US-118 で実装。FILL_TYPES 未掲載のため現状この分岐には到達しない。
-      return currentFill;
+      return currentFill.type === "pattern" || firstEligiblePatternSourceId === null
+        ? currentFill
+        : { type: "pattern", sourceId: firstEligiblePatternSourceId, scale: 1, rotation: 0 };
   }
 };
 
@@ -789,6 +801,10 @@ export function PropertiesPanel() {
   }
 
   const node = selectedNodes[0];
+  const eligiblePatternSources = Object.values(doc.nodes).filter(
+    (candidate) => candidate.type !== "layer" && candidate.id !== node.id,
+  );
+  const firstEligiblePatternSourceId = eligiblePatternSources[0]?.id ?? null;
   const opacityPercent = Math.round(clamp(node.opacity, 0, 1) * 100);
   const blendMode =
     parseBlendMode("blendMode" in node ? String(node.blendMode) : "") ?? "source-over";
@@ -816,7 +832,9 @@ export function PropertiesPanel() {
       return;
     }
 
-    updateNode(node.id, { fill: paintForFillType(fillType, node.fill) });
+    updateNode(node.id, {
+      fill: paintForFillType(fillType, node.fill, firstEligiblePatternSourceId),
+    });
   };
 
   const setFill = (hex: string): void => {
@@ -845,6 +863,47 @@ export function PropertiesPanel() {
           ...node.fill.color,
           a: clamp(nextAlpha, 0, 1),
         },
+      },
+    });
+  };
+
+  const setPatternFillSource = (sourceId: string): void => {
+    if (!hasStyle(node) || node.fill.type !== "pattern") {
+      return;
+    }
+
+    updateNode(node.id, {
+      fill: {
+        ...node.fill,
+        sourceId,
+      },
+    });
+  };
+
+  const setPatternFillScale = (value: number): void => {
+    const nextScale = readNumber(value);
+    if (!hasStyle(node) || node.fill.type !== "pattern" || nextScale === null) {
+      return;
+    }
+
+    updateNode(node.id, {
+      fill: {
+        ...node.fill,
+        scale: Math.max(0.01, nextScale),
+      },
+    });
+  };
+
+  const setPatternFillRotation = (value: number): void => {
+    const nextRotationDeg = readNumber(value);
+    if (!hasStyle(node) || node.fill.type !== "pattern" || nextRotationDeg === null) {
+      return;
+    }
+
+    updateNode(node.id, {
+      fill: {
+        ...node.fill,
+        rotation: (nextRotationDeg * Math.PI) / 180,
       },
     });
   };
@@ -997,7 +1056,7 @@ export function PropertiesPanel() {
     });
   };
 
-  const setStrokeType = (stroke: Stroke | null, strokeType: FillType): void => {
+  const setStrokeType = (stroke: Stroke | null, strokeType: StrokeType): void => {
     if (!hasStyle(node) || stroke === null) {
       return;
     }
@@ -1408,7 +1467,11 @@ export function PropertiesPanel() {
                 value={styledNode.fill.type}
               >
                 {FILL_TYPES.map((fillType) => (
-                  <option key={fillType} value={fillType}>
+                  <option
+                    disabled={fillType === "pattern" && firstEligiblePatternSourceId === null}
+                    key={fillType}
+                    value={fillType}
+                  >
                     {FILL_TYPE_LABELS[fillType]}
                   </option>
                 ))}
@@ -1449,6 +1512,43 @@ export function PropertiesPanel() {
               ? renderGradientEditor("Fill", { kind: "fill" }, gradientFill)
               : null}
 
+            {styledNode.fill.type === "pattern" ? (
+              <div className="properties-panel__gradient-editor" aria-label="Fill pattern">
+                <label className="properties-panel__row">
+                  <span className="properties-panel__label">Source</span>
+                  <select
+                    aria-label="Pattern source"
+                    className="properties-panel__select"
+                    onChange={(event) => setPatternFillSource(event.currentTarget.value)}
+                    value={styledNode.fill.sourceId}
+                  >
+                    {eligiblePatternSources.map((sourceNode) => (
+                      <option key={sourceNode.id} value={sourceNode.id}>
+                        {sourceNode.name || sourceNode.id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="properties-panel__row">
+                  <span className="properties-panel__label">Scale</span>
+                  <CommitNumberInput
+                    ariaLabel="Pattern scale"
+                    min={0.01}
+                    onCommit={setPatternFillScale}
+                    value={styledNode.fill.scale}
+                  />
+                </label>
+                <label className="properties-panel__row">
+                  <span className="properties-panel__label">Rotation</span>
+                  <CommitNumberInput
+                    ariaLabel="Pattern rotation"
+                    onCommit={setPatternFillRotation}
+                    value={(styledNode.fill.rotation * 180) / Math.PI}
+                  />
+                </label>
+              </div>
+            ) : null}
+
             <label className="properties-panel__row">
               <span className="properties-panel__label">Stroke type</span>
               <select
@@ -1456,14 +1556,14 @@ export function PropertiesPanel() {
                 className="properties-panel__select"
                 disabled={stroke === null}
                 onChange={(event) => {
-                  const strokeType = parseFillType(event.currentTarget.value);
+                  const strokeType = parseStrokeType(event.currentTarget.value);
                   if (strokeType !== null) {
                     setStrokeType(stroke, strokeType);
                   }
                 }}
                 value={stroke?.paint.type ?? "none"}
               >
-                {FILL_TYPES.map((strokeType) => (
+                {STROKE_TYPES.map((strokeType) => (
                   <option key={strokeType} value={strokeType}>
                     {FILL_TYPE_LABELS[strokeType]}
                   </option>
