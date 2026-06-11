@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BBox } from "../core/geometry/bbox";
 import type { Matrix } from "../core/geometry/matrix";
 import { selectionBounds } from "../core/model/bounds";
-import { createEllipse, createGroup, createPath, createRect } from "../core/model/factory";
-import type { Document, NodeId, Paint, Stroke } from "../core/model/types";
+import { createEllipse, createGroup, createPath, createRect, createText } from "../core/model/factory";
+import type { Document, NodeId, Paint, Stroke, SubPath } from "../core/model/types";
 import { canRedo, canUndo, createHistory } from "./history";
 import { flipNodes, rotateNodes90, rotateNodesAround } from "./operations";
 import { createEditorStateForTest, editorStore, type SnapSettings, type SnapTarget } from "./store";
@@ -42,6 +42,17 @@ const expectBoundsCloseTo = (actual: BBox, expected: BBox): void => {
   expect(actual.minY).toBeCloseTo(expected.minY, 9);
   expect(actual.maxX).toBeCloseTo(expected.maxX, 9);
   expect(actual.maxY).toBeCloseTo(expected.maxY, 9);
+};
+
+const subPathBounds = (subpath: SubPath): BBox => {
+  const xs = subpath.anchors.map((anchor) => anchor.point.x);
+  const ys = subpath.anchors.map((anchor) => anchor.point.y);
+  return {
+    minX: Math.min(...xs),
+    minY: Math.min(...ys),
+    maxX: Math.max(...xs),
+    maxY: Math.max(...ys),
+  };
 };
 
 describe("editorStore", () => {
@@ -1112,6 +1123,210 @@ describe("editorStore", () => {
     expect(editorStore.getState().selection).toEqual([group.id, layerId]);
     expect(editorStore.getState().history.past).toHaveLength(0);
     expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
+  it("outlines selected stroked paths, rects, and ellipses in place as one undoable step", () => {
+    const originalFill: Paint = { type: "solid", color: { r: 240, g: 240, b: 240, a: 1 } };
+    const strokePaint: Paint = { type: "solid", color: { r: 20, g: 80, b: 220, a: 0.8 } };
+    const stroke: Stroke = {
+      paint: strokePaint,
+      width: 6,
+      cap: "round",
+      join: "bevel",
+      miterLimit: 3,
+      dash: [],
+      dashOffset: 0,
+      align: "center",
+    };
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 20, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 20, y: 20 }, handleIn: null, handleOut: null },
+          { point: { x: 0, y: 20 }, handleIn: null, handleOut: null },
+        ],
+        closed: true,
+      },
+    ]);
+    path.name = "Logo stroke";
+    path.transform = { a: 1, b: 0, c: 0.2, d: 1, e: 8, f: 12 };
+    path.fill = originalFill;
+    path.stroke = stroke;
+    path.opacity = 0.5;
+    path.visible = false;
+    path.blendMode = "multiply";
+    const rect = createRect(40, 0, 30, 20);
+    rect.stroke = { ...structuredClone(stroke), width: 4 };
+    const ellipse = createEllipse(100, 20, 12, 8);
+    ellipse.stroke = { ...structuredClone(stroke), width: 2 };
+    editorStore.getState().addNode(path);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().addNode(ellipse);
+    editorStore.getState().setSelection([path.id, rect.id, ellipse.id]);
+    const beforeDoc = editorStore.getState().doc;
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().outlineSelectedStrokes();
+
+    const outlinedPath = editorStore.getState().doc.nodes[path.id];
+    const outlinedRect = editorStore.getState().doc.nodes[rect.id];
+    const outlinedEllipse = editorStore.getState().doc.nodes[ellipse.id];
+    expect(outlinedPath?.type).toBe("path");
+    expect(outlinedRect?.type).toBe("path");
+    expect(outlinedEllipse?.type).toBe("path");
+    if (outlinedPath?.type !== "path" || outlinedRect?.type !== "path" || outlinedEllipse?.type !== "path") {
+      throw new Error("Expected outlined nodes to be paths");
+    }
+
+    expect(outlinedPath.id).toBe(path.id);
+    expect(outlinedPath.name).toBe(path.name);
+    expectMatrixCloseTo(outlinedPath.transform, path.transform);
+    expect(outlinedPath.opacity).toBe(path.opacity);
+    expect(outlinedPath.visible).toBe(path.visible);
+    expect(outlinedPath.locked).toBe(path.locked);
+    expect(outlinedPath.blendMode).toBe(path.blendMode);
+    expect(outlinedPath.fill).toEqual(strokePaint);
+    expect(outlinedPath.fill).not.toBe(strokePaint);
+    expect(outlinedPath.fill).not.toEqual(originalFill);
+    expect(outlinedPath.stroke).toBeNull();
+    expect(outlinedPath.subpaths).toHaveLength(2);
+    expect(outlinedRect.id).toBe(rect.id);
+    expect(outlinedRect.subpaths).toHaveLength(2);
+    expect(outlinedEllipse.id).toBe(ellipse.id);
+    expect(outlinedEllipse.subpaths).toHaveLength(2);
+    expect(editorStore.getState().selection).toEqual([path.id, rect.id, ellipse.id]);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().doc.nodes[path.id]).toEqual(path);
+    expect(editorStore.getState().doc.nodes[rect.id]?.type).toBe("rect");
+    expect(editorStore.getState().doc.nodes[ellipse.id]?.type).toBe("ellipse");
+    expect(editorStore.getState().selection).toEqual([path.id, rect.id, ellipse.id]);
+    expect(canRedo(editorStore.getState().history)).toBe(true);
+  });
+
+  it("does not push history when outlining strokes with an empty or all-skipped selection", () => {
+    const stroke: Stroke = {
+      paint: { type: "solid", color: { r: 0, g: 0, b: 0, a: 1 } },
+      width: 4,
+      cap: "butt",
+      join: "miter",
+      miterLimit: 4,
+      dash: [],
+      dashOffset: 0,
+      align: "center",
+    };
+    const lockedPath = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 20, y: 0 }, handleIn: null, handleOut: null },
+        ],
+        closed: false,
+      },
+    ]);
+    lockedPath.locked = true;
+    lockedPath.stroke = structuredClone(stroke);
+    const text = createText("Unsupported", { x: 0, y: 0 });
+    text.stroke = structuredClone(stroke);
+    const noStroke = createRect(30, 0, 10, 10);
+    noStroke.stroke = null;
+    const nonePaint = createRect(50, 0, 10, 10);
+    nonePaint.stroke = { ...structuredClone(stroke), paint: { type: "none" } };
+    const zeroWidth = createRect(70, 0, 10, 10);
+    zeroWidth.stroke = { ...structuredClone(stroke), width: 0 };
+    const emptyOutline = createPath();
+    emptyOutline.stroke = structuredClone(stroke);
+    editorStore.getState().addNode(lockedPath);
+    editorStore.getState().addNode(text);
+    editorStore.getState().addNode(noStroke);
+    editorStore.getState().addNode(nonePaint);
+    editorStore.getState().addNode(zeroWidth);
+    editorStore.getState().addNode(emptyOutline);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeEmptySelectionDoc = editorStore.getState().doc;
+
+    editorStore.getState().outlineSelectedStrokes();
+
+    expect(editorStore.getState().doc).toBe(beforeEmptySelectionDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    editorStore.getState().setSelection([
+      lockedPath.id,
+      text.id,
+      noStroke.id,
+      nonePaint.id,
+      zeroWidth.id,
+      emptyOutline.id,
+    ]);
+    const beforeSkippedDoc = editorStore.getState().doc;
+
+    editorStore.getState().outlineSelectedStrokes();
+
+    expect(editorStore.getState().doc).toBe(beforeSkippedDoc);
+    expect(editorStore.getState().doc.nodes[lockedPath.id]).toEqual(lockedPath);
+    expect(editorStore.getState().doc.nodes[text.id]).toEqual(text);
+    expect(editorStore.getState().doc.nodes[noStroke.id]).toEqual(noStroke);
+    expect(editorStore.getState().doc.nodes[nonePaint.id]).toEqual(nonePaint);
+    expect(editorStore.getState().doc.nodes[zeroWidth.id]).toEqual(zeroWidth);
+    expect(editorStore.getState().doc.nodes[emptyOutline.id]).toEqual(emptyOutline);
+    expect(editorStore.getState().selection).toEqual([
+      lockedPath.id,
+      text.id,
+      noStroke.id,
+      nonePaint.id,
+      zeroWidth.id,
+      emptyOutline.id,
+    ]);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
+  it("forwards inside stroke alignment when outlining selected rect strokes", () => {
+    const rect = createRect(10, 20, 100, 50);
+    rect.stroke = {
+      paint: { type: "solid", color: { r: 255, g: 0, b: 0, a: 1 } },
+      width: 10,
+      cap: "butt",
+      join: "miter",
+      miterLimit: 4,
+      dash: [],
+      dashOffset: 0,
+      align: "inside",
+    };
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().outlineSelectedStrokes();
+
+    const outlined = editorStore.getState().doc.nodes[rect.id];
+    expect(outlined?.type).toBe("path");
+    if (outlined?.type !== "path") {
+      throw new Error("Expected inside-aligned outline to be a path");
+    }
+
+    expectBoundsCloseTo(subPathBounds(outlined.subpaths[0]!), {
+      minX: 0,
+      minY: 0,
+      maxX: 100,
+      maxY: 50,
+    });
+    expectBoundsCloseTo(subPathBounds(outlined.subpaths[1]!), {
+      minX: 10,
+      minY: 10,
+      maxX: 90,
+      maxY: 40,
+    });
+    expectBoundsCloseTo(selectionBounds(editorStore.getState().doc, [rect.id]), {
+      minX: 10,
+      minY: 20,
+      maxX: 110,
+      maxY: 70,
+    });
   });
 
   it("offsets selected paths, rects, and ellipses into new selected path siblings", () => {
