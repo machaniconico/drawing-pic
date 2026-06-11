@@ -1,7 +1,8 @@
 import type { Matrix } from "../core/geometry/matrix";
-import { compose, IDENTITY } from "../core/geometry/matrix";
+import { compose, IDENTITY, translate } from "../core/geometry/matrix";
 import type { Vec2 } from "../core/geometry/vector";
 import {
+  EMPTY_BBOX,
   height as bboxHeight,
   isEmpty,
   unionAll,
@@ -26,6 +27,7 @@ import type {
 import { isContainer } from "../core/model/types";
 
 type GradientPaint = Extract<Paint, { type: "linear" | "radial" }>;
+type PatternPaint = Extract<Paint, { type: "pattern" }>;
 type AlignedStrokeNode = RectNode | EllipseNode | PathNode;
 
 export interface SvgExportOptions {
@@ -43,11 +45,24 @@ interface ClipPathReference {
   content: string;
 }
 
+interface PatternReference {
+  id: string;
+  bounds: BBox;
+  paint: PatternPaint;
+  parentWorldTransform: Matrix;
+  content: string;
+}
+
 interface SvgContext {
+  doc: Document;
   gradients: GradientReference[];
   clipPaths: ClipPathReference[];
+  patterns: PatternReference[];
+  patternIds: Map<string, string>;
   nextGradientId: number;
   nextClipPathId: number;
+  nextPatternId: number;
+  patternDepth: number;
 }
 
 interface SelectionRoot {
@@ -88,18 +103,26 @@ const colorToHex = (color: RGBA): string =>
 
 const alpha = (color: RGBA): string => formatNumber(clamp(color.a, 0, 1));
 
-const transformAttr = ({ a, b, c, d, e, f }: Matrix): string =>
-  attr(
-    "transform",
-    `matrix(${[
-      formatNumber(a),
-      formatNumber(b),
-      formatNumber(c),
-      formatNumber(d),
-      formatNumber(e),
-      formatNumber(f),
-    ].join(" ")})`,
-  );
+const matrixTransformValue = ({ a, b, c, d, e, f }: Matrix): string =>
+  `matrix(${[
+    formatNumber(a),
+    formatNumber(b),
+    formatNumber(c),
+    formatNumber(d),
+    formatNumber(e),
+    formatNumber(f),
+  ].join(" ")})`;
+
+const transformAttr = (matrix: Matrix): string =>
+  attr("transform", matrixTransformValue(matrix));
+
+const isIdentityMatrix = (matrix: Matrix): boolean =>
+  matrix.a === 1 &&
+  matrix.b === 0 &&
+  matrix.c === 0 &&
+  matrix.d === 1 &&
+  matrix.e === 0 &&
+  matrix.f === 0;
 
 const CSS_BLEND_MODES: Partial<Record<GlobalCompositeOperation, string>> = {
   "source-over": "normal",
@@ -352,6 +375,103 @@ const clipPathId = (ctx: SvgContext, content: string): string => {
   return id;
 };
 
+const patternKey = (paint: PatternPaint): string =>
+  [paint.sourceId, paint.scale, paint.rotation].join("\u0000");
+
+const visibleSubtreeWorldBounds = (doc: Document, node: SceneNode): BBox => {
+  if (!node.visible) return EMPTY_BBOX;
+  if (!isContainer(node)) return worldBounds(doc, node.id);
+
+  return unionAll(
+    node.children
+      .map((childId) => doc.nodes[childId])
+      .filter((child): child is SceneNode => child !== undefined)
+      .map((child) => visibleSubtreeWorldBounds(doc, child)),
+  );
+};
+
+const patternSourceWorldBounds = (doc: Document, node: SceneNode): BBox => {
+  if (node.type === "layer") return EMPTY_BBOX;
+  if (!isContainer(node)) return worldBounds(doc, node.id);
+
+  return unionAll(
+    node.children
+      .map((childId) => doc.nodes[childId])
+      .filter((child): child is SceneNode => child !== undefined)
+      .map((child) => visibleSubtreeWorldBounds(doc, child)),
+  );
+};
+
+const parentWorldTransform = (doc: Document, id: NodeId): Matrix | null => {
+  const visit = (nodeId: NodeId, parentWorld: Matrix): Matrix | null => {
+    const node = doc.nodes[nodeId];
+    if (node === undefined) return null;
+    if (node.id === id) return parentWorld;
+
+    if (isContainer(node)) {
+      const nextParentWorld = compose(parentWorld, node.transform);
+      for (const childId of node.children) {
+        const found = visit(childId, nextParentWorld);
+        if (found !== null) return found;
+      }
+    }
+
+    return null;
+  };
+
+  for (const layerId of doc.layerOrder) {
+    const found = visit(layerId, IDENTITY);
+    if (found !== null) return found;
+  }
+
+  return null;
+};
+
+const isDegenerateBounds = (bounds: BBox): boolean => {
+  const width = bboxWidth(bounds);
+  const height = bboxHeight(bounds);
+  return (
+    isEmpty(bounds) ||
+    width <= 0 ||
+    height <= 0 ||
+    !Number.isFinite(bounds.minX) ||
+    !Number.isFinite(bounds.minY) ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height)
+  );
+};
+
+const patternId = (ctx: SvgContext, paint: PatternPaint): string | null => {
+  const source = ctx.doc.nodes[paint.sourceId];
+  if (source === undefined || source.type === "layer") return null;
+
+  const bounds = patternSourceWorldBounds(ctx.doc, source);
+  if (isDegenerateBounds(bounds)) return null;
+  const sourceParentWorldTransform = parentWorldTransform(ctx.doc, source.id);
+  if (sourceParentWorldTransform === null) return null;
+
+  const key = patternKey(paint);
+  const existing = ctx.patternIds.get(key);
+  if (existing !== undefined) return existing;
+
+  const id = `svg-export-pattern-${ctx.nextPatternId}`;
+  ctx.nextPatternId += 1;
+  ctx.patternIds.set(key, id);
+
+  ctx.patternDepth += 1;
+  const content = renderNode(ctx.doc, source, ctx, { ignoreOwnVisibility: true });
+  ctx.patternDepth -= 1;
+
+  ctx.patterns.push({
+    id,
+    bounds,
+    paint,
+    parentWorldTransform: sourceParentWorldTransform,
+    content,
+  });
+  return id;
+};
+
 const paintAttrs = (
   paint: Paint,
   property: "fill" | "stroke",
@@ -361,9 +481,12 @@ const paintAttrs = (
   switch (paint.type) {
     case "none":
       return attr(property, "none");
-    case "pattern":
-      // パターン出力は US-117 で実装。未対応の間は none 扱い。
-      return attr(property, "none");
+    case "pattern": {
+      if (ctx.patternDepth > 0) return attr(property, "none");
+
+      const id = patternId(ctx, paint);
+      return id === null ? attr(property, "none") : attr(property, `url(#${id})`);
+    }
     case "solid":
       return attr(property, colorToHex(paint.color)) + attr(opacityProperty, alpha(paint.color));
     case "linear":
@@ -437,15 +560,44 @@ const gradientDefs = (gradients: readonly GradientReference[]): string => {
 const clipPathDefs = (clipPaths: readonly ClipPathReference[]): string =>
   clipPaths.map(({ id, content }) => `<clipPath${attr("id", id)}>${content}</clipPath>`).join("");
 
+const patternDefs = (patterns: readonly PatternReference[]): string =>
+  patterns
+    .map(({ id, bounds, paint, parentWorldTransform, content }) => {
+      const width = bboxWidth(bounds);
+      const height = bboxHeight(bounds);
+      const rotationDeg = (paint.rotation * 180) / Math.PI;
+      const patternTransform = `rotate(${formatNumber(rotationDeg)} ${formatNumber(
+        bounds.minX,
+      )} ${formatNumber(bounds.minY)}) scale(${formatNumber(paint.scale)})`;
+      const tileTransform = isIdentityMatrix(parentWorldTransform)
+        ? `translate(${formatNumber(-bounds.minX)},${formatNumber(-bounds.minY)})`
+        : matrixTransformValue(
+            compose(translate(-bounds.minX, -bounds.minY), parentWorldTransform),
+          );
+
+      return `<pattern${attr("id", id)}${attr("patternUnits", "userSpaceOnUse")}${numericAttr(
+        "x",
+        bounds.minX,
+      )}${numericAttr("y", bounds.minY)}${numericAttr("width", width)}${numericAttr(
+        "height",
+        height,
+      )}${attr("patternTransform", patternTransform)}><g${attr(
+        "transform",
+        tileTransform,
+      )}>${content}</g></pattern>`;
+    })
+    .join("");
+
 const documentDefs = (ctx: SvgContext): string => {
-  if (ctx.clipPaths.length === 0) return gradientDefs(ctx.gradients);
+  if (ctx.patterns.length === 0 && ctx.clipPaths.length === 0) return gradientDefs(ctx.gradients);
 
   const gradients = gradientDefs(ctx.gradients);
+  const patterns = patternDefs(ctx.patterns);
   const clips = clipPathDefs(ctx.clipPaths);
 
-  if (gradients.length === 0) return `<defs>${clips}</defs>`;
+  if (gradients.length === 0) return `<defs>${patterns}${clips}</defs>`;
 
-  return gradients.replace("</defs>", `${clips}</defs>`);
+  return gradients.replace("</defs>", `${patterns}${clips}</defs>`);
 };
 
 const renderBackground = (doc: Document): string => {
@@ -559,8 +711,13 @@ const renderGeometryAttrs = (node: AlignedStrokeNode): string => {
   }
 };
 
-const renderNode = (doc: Document, node: SceneNode, ctx: SvgContext): string => {
-  if (!node.visible) return "";
+const renderNode = (
+  doc: Document,
+  node: SceneNode,
+  ctx: SvgContext,
+  options: { ignoreOwnVisibility?: boolean } = {},
+): string => {
+  if (!node.visible && !options.ignoreOwnVisibility) return "";
 
   if (isContainer(node)) {
     const childNodes = node.children
@@ -716,7 +873,17 @@ const exportBounds = (doc: Document, roots: readonly SelectionRoot[]): BBox => {
 };
 
 export const documentToSvg = (doc: Document, opts?: SvgExportOptions): string => {
-  const ctx: SvgContext = { gradients: [], clipPaths: [], nextGradientId: 1, nextClipPathId: 1 };
+  const ctx: SvgContext = {
+    doc,
+    gradients: [],
+    clipPaths: [],
+    patterns: [],
+    patternIds: new Map(),
+    nextGradientId: 1,
+    nextClipPathId: 1,
+    nextPatternId: 1,
+    patternDepth: 0,
+  };
   const selectionRoots = resolveSelectionRoots(doc, opts?.nodeIds);
   const layers =
     opts?.nodeIds !== undefined && opts.nodeIds.length > 0 && selectionRoots.length > 0

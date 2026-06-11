@@ -62,6 +62,17 @@ describe("documentToSvg", () => {
     expect(documentToSvg(doc, {})).toBe(svg);
   });
 
+  it("keeps no-pattern documents byte-for-byte unchanged", () => {
+    const doc = createDocument(100, 80, "No pattern compat");
+    const rect = createRect(1, 2, 10, 20);
+    rect.stroke = null;
+    addNode(doc, rect);
+
+    expect(documentToSvg(doc)).toBe(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80" viewBox="0 0 100 80"><g transform="matrix(1 0 0 1 0 0)" opacity="1"><rect transform="matrix(1 0 0 1 1 2)" opacity="1" x="0" y="0" width="10" height="20" fill="#c8c8c8" fill-opacity="1" stroke="none" /></g></svg>',
+    );
+  });
+
   it("omits mix-blend-mode for default and source-over blend modes", () => {
     const doc = createDocument(320, 240, "Normal blend");
     const defaultRect = createRect(10, 20, 80, 40);
@@ -312,6 +323,121 @@ describe("documentToSvg", () => {
       '<radialGradient id="svg-export-gradient-1" gradientUnits="userSpaceOnUse" cx="10" cy="12" r="35">',
     );
     expect(svg).toContain('fill="url(#svg-export-gradient-1)"');
+  });
+
+  it("emits pattern defs and fill/stroke references from source world bounds", () => {
+    const doc = createDocument(120, 90, "Pattern");
+    const source = createRect(20, 30, 12, 8);
+    source.visible = false;
+    source.fill = solid({ r: 1, g: 2, b: 3, a: 1 });
+    source.stroke = null;
+    const patternPaint = {
+      type: "pattern" as const,
+      sourceId: source.id,
+      scale: 2,
+      rotation: Math.PI / 4,
+    };
+    const target = createRect(0, 0, 50, 40);
+    target.fill = patternPaint;
+    target.stroke = { ...defaultStroke({ r: 0, g: 0, b: 0, a: 1 }, 3), paint: patternPaint };
+    addNode(doc, source);
+    addNode(doc, target);
+
+    const svg = documentToSvg(doc);
+
+    expect(svg.match(/<pattern/g)?.length).toBe(1);
+    expect(svg).toContain(
+      '<pattern id="svg-export-pattern-1" patternUnits="userSpaceOnUse" x="20" y="30" width="12" height="8" patternTransform="rotate(45 20 30) scale(2)">',
+    );
+    expect(svg).toContain('<g transform="translate(-20,-30)">');
+    expect(svg).toContain(
+      '<rect transform="matrix(1 0 0 1 20 30)" opacity="1" x="0" y="0" width="12" height="8" fill="#010203" fill-opacity="1" stroke="none" />',
+    );
+    expect(svg).toContain('fill="url(#svg-export-pattern-1)"');
+    expect(svg).toContain('stroke="url(#svg-export-pattern-1)"');
+    expect(svg).toContain('stroke-width="3"');
+  });
+
+  it("includes pattern source ancestor transforms in tile content", () => {
+    const doc = createDocument(120, 90, "Nested Pattern Source");
+    const group = createGroup("Pattern source parent");
+    group.transform = { ...IDENTITY, a: 2, d: 3, e: 10, f: 20 };
+    const source = createRect(5, 7, 4, 6);
+    source.visible = false;
+    source.fill = solid({ r: 1, g: 2, b: 3, a: 1 });
+    source.stroke = null;
+    const target = createRect(0, 0, 50, 40);
+    target.fill = { type: "pattern", sourceId: source.id, scale: 1, rotation: 0 };
+    target.stroke = null;
+    addNode(doc, group);
+    addNode(doc, source, group.id);
+    addNode(doc, target);
+
+    const svg = documentToSvg(doc);
+
+    expect(svg.match(/<pattern/g)?.length).toBe(1);
+    expect(svg).toContain(
+      '<pattern id="svg-export-pattern-1" patternUnits="userSpaceOnUse" x="20" y="41" width="8" height="18" patternTransform="rotate(0 20 41) scale(1)">',
+    );
+    expect(svg).toContain('<g transform="matrix(2 0 0 3 -10 -21)">');
+    expect(svg).toContain(
+      '<rect transform="matrix(1 0 0 1 5 7)" opacity="1" x="0" y="0" width="4" height="6" fill="#010203" fill-opacity="1" stroke="none" />',
+    );
+    expect(svg).toContain('fill="url(#svg-export-pattern-1)"');
+  });
+
+  it("falls back to none and emits no pattern def for invalid pattern sources", () => {
+    const doc = createDocument(120, 90, "Invalid Pattern Sources");
+    const missing = createRect(0, 0, 10, 10);
+    missing.fill = { type: "pattern", sourceId: "missing-source", scale: 1, rotation: 0 };
+    missing.stroke = null;
+    const layerSource = createRect(20, 0, 10, 10);
+    layerSource.fill = { type: "pattern", sourceId: firstLayerId(doc), scale: 1, rotation: 0 };
+    layerSource.stroke = null;
+    const degenerateSource = createRect(40, 0, 0, 10);
+    degenerateSource.visible = false;
+    const degenerate = createRect(60, 0, 10, 10);
+    degenerate.fill = { type: "pattern", sourceId: degenerateSource.id, scale: 1, rotation: 0 };
+    degenerate.stroke = null;
+    addNode(doc, missing);
+    addNode(doc, layerSource);
+    addNode(doc, degenerateSource);
+    addNode(doc, degenerate);
+
+    const svg = documentToSvg(doc);
+
+    expect(svg).not.toContain("<defs>");
+    expect(svg).not.toContain("<pattern");
+    expect(svg.match(/fill="none"/g)?.length).toBe(3);
+  });
+
+  it("emits none for nested pattern paints inside pattern tile content", () => {
+    const doc = createDocument(120, 90, "Nested Pattern");
+    const nestedSource = createRect(70, 70, 5, 5);
+    nestedSource.visible = false;
+    nestedSource.fill = solid({ r: 255, g: 0, b: 0, a: 1 });
+    nestedSource.stroke = null;
+    const tileSource = createRect(10, 20, 15, 10);
+    tileSource.visible = false;
+    tileSource.fill = { type: "pattern", sourceId: nestedSource.id, scale: 1, rotation: 0 };
+    tileSource.stroke = null;
+    const target = createRect(0, 0, 40, 30);
+    target.fill = { type: "pattern", sourceId: tileSource.id, scale: 1, rotation: 0 };
+    target.stroke = null;
+    addNode(doc, nestedSource);
+    addNode(doc, tileSource);
+    addNode(doc, target);
+
+    const svg = documentToSvg(doc);
+
+    expect(svg.match(/<pattern/g)?.length).toBe(1);
+    expect(svg).toContain(
+      '<pattern id="svg-export-pattern-1" patternUnits="userSpaceOnUse" x="10" y="20" width="15" height="10" patternTransform="rotate(0 10 20) scale(1)">',
+    );
+    expect(svg).toContain(
+      '<rect transform="matrix(1 0 0 1 10 20)" opacity="1" x="0" y="0" width="15" height="10" fill="none" stroke="none" />',
+    );
+    expect(svg).not.toContain("svg-export-pattern-2");
   });
 
   it("emits a clipPath for clip groups and does not paint the frontmost mask child", () => {
