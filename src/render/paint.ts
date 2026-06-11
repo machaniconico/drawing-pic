@@ -25,6 +25,9 @@ const canvasStyleFromPaint = (
   switch (paint.type) {
     case "none":
       return null;
+    case "pattern":
+      // パターン描画は US-116 で実装。未対応の間は none 扱い。
+      return null;
     case "solid":
       return rgbaToCss(paint.color);
     case "linear": {

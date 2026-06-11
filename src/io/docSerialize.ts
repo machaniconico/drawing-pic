@@ -143,6 +143,16 @@ const validatePaint = (value: unknown, path: string): void => {
       validateVec2(paint.center, `${path}.center`);
       requireNumber(paint.radius, `${path}.radius`);
       return;
+    case "pattern":
+      requireString(paint.sourceId, `${path}.sourceId`);
+      {
+        const scale = requireNumber(paint.scale, `${path}.scale`);
+        if (scale <= 0) {
+          throw new Error(`${path}.scale must be greater than 0.`);
+        }
+      }
+      requireNumber(paint.rotation, `${path}.rotation`);
+      return;
     default:
       throw new Error(`${path}.type has unsupported paint type "${type}".`);
   }
@@ -346,6 +356,13 @@ const orderPaint = (paint: Paint): Paint => {
         stops: paint.stops.map(orderGradientStop),
         center: paint.center,
         radius: paint.radius,
+      };
+    case "pattern":
+      return {
+        type: "pattern",
+        sourceId: paint.sourceId,
+        scale: paint.scale,
+        rotation: paint.rotation,
       };
   }
 };

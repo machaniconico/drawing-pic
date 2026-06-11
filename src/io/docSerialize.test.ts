@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import richDocNoPatternFixture from "./__fixtures__/rich-doc-no-pattern.v1.json";
 import { IDENTITY } from "../core/geometry/matrix";
 import {
   createDocument,
@@ -85,6 +86,34 @@ describe("docSerialize", () => {
     const doc = createRichDocument();
 
     expect(deserializeDocument(serializeDocument(doc))).toEqual(doc);
+  });
+
+  it("round-trips pattern paints byte-for-byte with stable key order", () => {
+    const doc = createRichDocument();
+    const rect = doc.nodes.sibling_rect;
+    if (rect?.type !== "rect") {
+      throw new Error("Expected sibling_rect fixture node.");
+    }
+    rect.fill = {
+      rotation: Math.PI / 4,
+      scale: 2,
+      sourceId: "missing_pattern_source",
+      type: "pattern",
+    };
+
+    const serialized = serializeDocument(doc);
+
+    expect(serializeDocument(deserializeDocument(serialized))).toBe(serialized);
+    expect(serialized).toContain(
+      [
+        '        "fill": {',
+        '          "type": "pattern",',
+        '          "sourceId": "missing_pattern_source",',
+        '          "scale": 2,',
+        '          "rotation": 0.7853981633974483',
+        "        }",
+      ].join("\n"),
+    );
   });
 
   it("includes the version wrapper field", () => {
@@ -174,6 +203,20 @@ describe("docSerialize", () => {
     expect(deserializeDocument(JSON.stringify({ version: 1, doc: legacyDoc })).guides).toEqual([]);
   });
 
+  it("legacy docs without pattern paints still load", () => {
+    const doc = createRichDocument();
+
+    expect(deserializeDocument(JSON.stringify({ version: 1, doc }))).toEqual(doc);
+  });
+
+  it("serializes docs without pattern paints byte-for-byte as before", () => {
+    // fixture は PatternPaint 導入時点の serializeDocument 出力をピン留めしたもの。
+    // serializeDocument は JSON.stringify(…, null, 2) なので再 stringify でバイト列が再現できる。
+    const fixture = JSON.stringify(richDocNoPatternFixture, null, 2);
+
+    expect(serializeDocument(createRichDocument())).toBe(fixture);
+  });
+
   it("loads legacy guides without preference fields unchanged", () => {
     const doc = createRichDocument();
     doc.guides = [{ id: "legacy_guide", axis: "x", position: 120 }];
@@ -188,6 +231,29 @@ describe("docSerialize", () => {
 
     expect(() => deserializeDocument(JSON.stringify({ version: 1, doc: { ...doc, width: "wide" } }))).toThrow(
       /doc.width must be a finite number/,
+    );
+  });
+
+  it("rejects malformed pattern paints with path-prefixed errors", () => {
+    const doc = createRichDocument();
+    const rect = doc.nodes.sibling_rect;
+    if (rect?.type !== "rect") {
+      throw new Error("Expected sibling_rect fixture node.");
+    }
+
+    rect.fill = { type: "pattern", scale: 1, rotation: 0 } as typeof rect.fill;
+    expect(() => deserializeDocument(JSON.stringify({ version: 1, doc }))).toThrow(
+      /doc.nodes.sibling_rect.fill.sourceId must be a string/,
+    );
+
+    rect.fill = { type: "pattern", sourceId: "pattern_tile", scale: 0, rotation: 0 };
+    expect(() => deserializeDocument(JSON.stringify({ version: 1, doc }))).toThrow(
+      /doc.nodes.sibling_rect.fill.scale must be greater than 0/,
+    );
+
+    rect.fill = { type: "pattern", sourceId: "pattern_tile", scale: 1, rotation: Number.POSITIVE_INFINITY };
+    expect(() => deserializeDocument(JSON.stringify({ version: 1, doc }))).toThrow(
+      /doc.nodes.sibling_rect.fill.rotation must be a finite number/,
     );
   });
 });

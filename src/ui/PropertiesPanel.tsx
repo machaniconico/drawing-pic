@@ -54,6 +54,7 @@ const FILL_TYPE_LABELS: Record<FillType, string> = {
   solid: "Solid",
   linear: "Linear",
   radial: "Radial",
+  pattern: "Pattern",
 };
 
 const DEFAULT_COLOR: RGBA = { r: 0, g: 0, b: 0, a: 1 };
@@ -120,6 +121,7 @@ const primaryPaintColor = (paint: Paint): RGBA | null => {
     case "radial":
       return paint.stops[0]?.color ?? null;
     case "none":
+    case "pattern":
       return null;
   }
 };
@@ -139,6 +141,8 @@ const paintLabel = (paint: Paint): string => {
       return "Linear gradient";
     case "radial":
       return "Radial gradient";
+    case "pattern":
+      return "Pattern";
   }
 };
 
@@ -253,6 +257,9 @@ const paintForFillType = (fillType: FillType, currentFill: Paint): Paint => {
         center: { x: 0.5, y: 0.5 },
         radius: 0.5,
       };
+    case "pattern":
+      // パターン編集 UI は US-118 で実装。FILL_TYPES 未掲載のため現状この分岐には到達しない。
+      return currentFill;
   }
 };
 

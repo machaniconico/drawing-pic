@@ -361,6 +361,9 @@ const paintAttrs = (
   switch (paint.type) {
     case "none":
       return attr(property, "none");
+    case "pattern":
+      // パターン出力は US-117 で実装。未対応の間は none 扱い。
+      return attr(property, "none");
     case "solid":
       return attr(property, colorToHex(paint.color)) + attr(opacityProperty, alpha(paint.color));
     case "linear":

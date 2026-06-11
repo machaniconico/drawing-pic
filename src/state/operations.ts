@@ -281,6 +281,10 @@ const paintEquals = (a: Paint, b: Paint): boolean => {
       const other = b as Extract<Paint, { type: "radial" }>;
       return a.radius === other.radius && pointEquals(a.center, other.center) && gradientStopsEqual(a.stops, other.stops);
     }
+    case "pattern": {
+      const other = b as Extract<Paint, { type: "pattern" }>;
+      return a.sourceId === other.sourceId && a.scale === other.scale && a.rotation === other.rotation;
+    }
   }
 };
 

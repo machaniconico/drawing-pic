@@ -44,11 +44,22 @@ export interface RadialGradient {
   radius: number;
 }
 
+export interface PatternPaint {
+  type: "pattern";
+  /** タイルとして描く既存ノードの id */
+  sourceId: NodeId;
+  /** タイル変換: 等倍スケール */
+  scale: number;
+  /** ラジアン */
+  rotation: number;
+}
+
 export type Paint =
   | { type: "none" }
   | { type: "solid"; color: RGBA }
   | LinearGradient
-  | RadialGradient;
+  | RadialGradient
+  | PatternPaint;
 
 export type LineCap = "butt" | "round" | "square";
 export type LineJoin = "miter" | "round" | "bevel";
