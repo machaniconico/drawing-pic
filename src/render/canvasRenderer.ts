@@ -14,7 +14,8 @@ import type {
   Stroke,
   TextNode,
 } from "../core/model/types";
-import { applyFill, applyStroke } from "./paint";
+import { applyFill, applyStroke, type PatternPaintResolver } from "./paint";
+import { createPatternResolver, type RenderPatternSubtree } from "./patternResolver";
 
 export interface Viewport {
   zoom: number;
@@ -167,8 +168,9 @@ const applyAlignedStroke = (
   stroke: Stroke | null,
   buildPath: BuildPath,
   eligibility: StrokeAlignmentEligibility | null,
+  resolvePattern?: PatternPaintResolver,
 ): boolean => {
-  if (!applyStroke(ctx, stroke)) return false;
+  if (!applyStroke(ctx, stroke, resolvePattern)) return false;
   if (stroke?.align !== "inside" && stroke?.align !== "outside") {
     ctx.stroke();
     return true;
@@ -207,39 +209,73 @@ const paintCurrentPath = (
   stroke: Stroke | null,
   buildPath: BuildPath,
   eligibility: StrokeAlignmentEligibility | null,
+  resolvePattern?: PatternPaintResolver,
 ): void => {
-  if (applyFill(ctx, fill)) {
+  if (applyFill(ctx, fill, resolvePattern)) {
     ctx.fill();
   }
 
-  applyAlignedStroke(ctx, stroke, buildPath, eligibility);
+  applyAlignedStroke(ctx, stroke, buildPath, eligibility, resolvePattern);
 };
 
-const drawRect = (ctx: CanvasRenderingContext2D, node: RectNode): void => {
+const drawRect = (
+  ctx: CanvasRenderingContext2D,
+  node: RectNode,
+  resolvePattern?: PatternPaintResolver,
+): void => {
   const buildPath = () => roundedRectPath(ctx, node);
   roundedRectPath(ctx, node);
-  paintCurrentPath(ctx, node.fill, node.stroke, buildPath, {
-    addPath: () => addRoundedRectPath(ctx, node),
-    closed: true,
-  });
+  paintCurrentPath(
+    ctx,
+    node.fill,
+    node.stroke,
+    buildPath,
+    {
+      addPath: () => addRoundedRectPath(ctx, node),
+      closed: true,
+    },
+    resolvePattern,
+  );
 };
 
-const drawEllipse = (ctx: CanvasRenderingContext2D, node: EllipseNode): void => {
+const drawEllipse = (
+  ctx: CanvasRenderingContext2D,
+  node: EllipseNode,
+  resolvePattern?: PatternPaintResolver,
+): void => {
   const buildPath = () => ellipsePath(ctx, node);
   ellipsePath(ctx, node);
-  paintCurrentPath(ctx, node.fill, node.stroke, buildPath, {
-    addPath: () => addEllipsePath(ctx, node),
-    closed: true,
-  });
+  paintCurrentPath(
+    ctx,
+    node.fill,
+    node.stroke,
+    buildPath,
+    {
+      addPath: () => addEllipsePath(ctx, node),
+      closed: true,
+    },
+    resolvePattern,
+  );
 };
 
-const drawPath = (ctx: CanvasRenderingContext2D, node: PathNode): void => {
+const drawPath = (
+  ctx: CanvasRenderingContext2D,
+  node: PathNode,
+  resolvePattern?: PatternPaintResolver,
+): void => {
   const buildPath = () => pathNodePath(ctx, node);
   pathNodePath(ctx, node);
-  paintCurrentPath(ctx, node.fill, node.stroke, buildPath, {
-    addPath: () => addPathNodePath(ctx, node),
-    closed: isClosedPathNode(node),
-  });
+  paintCurrentPath(
+    ctx,
+    node.fill,
+    node.stroke,
+    buildPath,
+    {
+      addPath: () => addPathNodePath(ctx, node),
+      closed: isClosedPathNode(node),
+    },
+    resolvePattern,
+  );
 };
 
 const configureText = (ctx: CanvasRenderingContext2D, node: TextNode): void => {
@@ -250,19 +286,23 @@ const configureText = (ctx: CanvasRenderingContext2D, node: TextNode): void => {
   ctx.textBaseline = "alphabetic";
 };
 
-const drawText = (ctx: CanvasRenderingContext2D, node: TextNode): void => {
+const drawText = (
+  ctx: CanvasRenderingContext2D,
+  node: TextNode,
+  resolvePattern?: PatternPaintResolver,
+): void => {
   configureText(ctx, node);
 
   const lines = node.text.split(/\r\n|\r|\n/);
   const lineAdvance = node.fontSize * node.lineHeight;
 
-  if (applyFill(ctx, node.fill)) {
+  if (applyFill(ctx, node.fill, resolvePattern)) {
     lines.forEach((line, index) => {
       ctx.fillText(line, 0, index * lineAdvance);
     });
   }
 
-  if (applyStroke(ctx, node.stroke)) {
+  if (applyStroke(ctx, node.stroke, resolvePattern)) {
     lines.forEach((line, index) => {
       ctx.strokeText(line, 0, index * lineAdvance);
     });
@@ -351,11 +391,12 @@ const drawChildNodes = (
   doc: Document,
   childIds: readonly string[],
   onImageLoad?: () => void,
+  resolvePattern?: PatternPaintResolver,
 ): void => {
   for (const childId of childIds) {
     const child = doc.nodes[childId];
     if (child !== undefined) {
-      drawNode(ctx, doc, child, onImageLoad);
+      drawNode(ctx, doc, child, onImageLoad, resolvePattern);
     }
   }
 };
@@ -365,13 +406,14 @@ const drawClippedGroup = (
   doc: Document,
   node: Extract<SceneNode, { type: "group" }>,
   onImageLoad?: () => void,
+  resolvePattern?: PatternPaintResolver,
 ): void => {
   const maskId = node.children[node.children.length - 1];
   const mask = maskId === undefined ? undefined : doc.nodes[maskId];
   const clippedChildIds = node.children.slice(0, -1);
 
   if (mask === undefined) {
-    drawChildNodes(ctx, doc, clippedChildIds, onImageLoad);
+    drawChildNodes(ctx, doc, clippedChildIds, onImageLoad, resolvePattern);
     return;
   }
 
@@ -380,7 +422,7 @@ const drawClippedGroup = (
 
   if (!buildClipMaskPath(ctx, doc, mask)) {
     ctx.restore();
-    drawChildNodes(ctx, doc, clippedChildIds, onImageLoad);
+    drawChildNodes(ctx, doc, clippedChildIds, onImageLoad, resolvePattern);
     return;
   }
 
@@ -393,8 +435,34 @@ const drawClippedGroup = (
   }
 
   ctx.transform(...toCanvasArgs(inverseMaskTransform));
-  drawChildNodes(ctx, doc, clippedChildIds, onImageLoad);
+  drawChildNodes(ctx, doc, clippedChildIds, onImageLoad, resolvePattern);
   ctx.restore();
+};
+
+const pathToNode = (doc: Document, id: string): SceneNode[] | null => {
+  const visit = (nodeId: string, path: SceneNode[]): SceneNode[] | null => {
+    const node = doc.nodes[nodeId];
+    if (node === undefined) return null;
+
+    const nextPath = [...path, node];
+    if (node.id === id) return nextPath;
+
+    if (node.type === "layer" || node.type === "group") {
+      for (const childId of node.children) {
+        const childPath = visit(childId, nextPath);
+        if (childPath !== null) return childPath;
+      }
+    }
+
+    return null;
+  };
+
+  for (const layerId of doc.layerOrder) {
+    const path = visit(layerId, []);
+    if (path !== null) return path;
+  }
+
+  return null;
 };
 
 const drawNode = (
@@ -402,8 +470,10 @@ const drawNode = (
   doc: Document,
   node: SceneNode,
   onImageLoad?: () => void,
+  resolvePattern?: PatternPaintResolver,
+  ignoreNodeVisibility = false,
 ): void => {
-  if (!node.visible) return;
+  if (!ignoreNodeVisibility && !node.visible) return;
 
   ctx.save();
   ctx.transform(...toCanvasArgs(node.transform));
@@ -411,26 +481,26 @@ const drawNode = (
 
   switch (node.type) {
     case "layer":
-      drawChildNodes(ctx, doc, node.children, onImageLoad);
+      drawChildNodes(ctx, doc, node.children, onImageLoad, resolvePattern);
       break;
     case "group":
       if (node.clip && node.children.length >= 2) {
-        drawClippedGroup(ctx, doc, node, onImageLoad);
+        drawClippedGroup(ctx, doc, node, onImageLoad, resolvePattern);
       } else {
-        drawChildNodes(ctx, doc, node.children, onImageLoad);
+        drawChildNodes(ctx, doc, node.children, onImageLoad, resolvePattern);
       }
       break;
     case "rect":
-      drawRect(ctx, node);
+      drawRect(ctx, node, resolvePattern);
       break;
     case "ellipse":
-      drawEllipse(ctx, node);
+      drawEllipse(ctx, node, resolvePattern);
       break;
     case "path":
-      drawPath(ctx, node);
+      drawPath(ctx, node, resolvePattern);
       break;
     case "text":
-      drawText(ctx, node);
+      drawText(ctx, node, resolvePattern);
       break;
     case "image":
       drawImage(ctx, node, onImageLoad);
@@ -455,10 +525,24 @@ export const renderDocument = (
 
   drawArtboard(ctx, doc.width, doc.height, doc.background);
 
+  const renderSubtree: RenderPatternSubtree = (targetCtx, sourceId, resolvePattern) => {
+    const path = pathToNode(doc, sourceId);
+    const source = path?.[path.length - 1];
+    if (path === null || source === undefined) return;
+
+    targetCtx.save();
+    for (const ancestor of path.slice(0, -1)) {
+      targetCtx.transform(...toCanvasArgs(ancestor.transform));
+    }
+    drawNode(targetCtx, doc, source, viewport.onImageLoad, resolvePattern, true);
+    targetCtx.restore();
+  };
+  const resolvePattern = createPatternResolver(ctx, doc, renderSubtree);
+
   for (const layerId of doc.layerOrder) {
     const layer = doc.nodes[layerId];
     if (layer !== undefined) {
-      drawNode(ctx, doc, layer, viewport.onImageLoad);
+      drawNode(ctx, doc, layer, viewport.onImageLoad, resolvePattern);
     }
   }
 

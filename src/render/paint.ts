@@ -1,4 +1,6 @@
-import type { Paint, RGBA, Stroke } from "../core/model/types";
+import type { Paint, PatternPaint, RGBA, Stroke } from "../core/model/types";
+
+export type PatternPaintResolver = (paint: PatternPaint) => CanvasPattern | null;
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
@@ -18,16 +20,16 @@ const addStops = (gradient: CanvasGradient, paint: Extract<Paint, { stops: unkno
   }
 };
 
-const canvasStyleFromPaint = (
+export const canvasStyleFromPaint = (
   ctx: CanvasRenderingContext2D,
   paint: Paint,
-): CanvasGradient | string | null => {
+  resolvePattern?: PatternPaintResolver,
+): CanvasGradient | CanvasPattern | string | null => {
   switch (paint.type) {
     case "none":
       return null;
     case "pattern":
-      // パターン描画は US-116 で実装。未対応の間は none 扱い。
-      return null;
+      return resolvePattern?.(paint) ?? null;
     case "solid":
       return rgbaToCss(paint.color);
     case "linear": {
@@ -55,24 +57,37 @@ const canvasStyleFromPaint = (
   }
 };
 
-export const applyFill = (ctx: CanvasRenderingContext2D, paint: Paint): boolean => {
-  const style = canvasStyleFromPaint(ctx, paint);
+export const applyFill = (
+  ctx: CanvasRenderingContext2D,
+  paint: Paint,
+  resolvePattern?: PatternPaintResolver,
+): boolean => {
+  const style = canvasStyleFromPaint(ctx, paint, resolvePattern);
   if (style === null) return false;
 
   ctx.fillStyle = style;
   return true;
 };
 
-export function applyStroke(ctx: CanvasRenderingContext2D, stroke: Stroke | null): boolean;
-export function applyStroke(ctx: CanvasRenderingContext2D, paint: Paint): boolean;
+export function applyStroke(
+  ctx: CanvasRenderingContext2D,
+  stroke: Stroke | null,
+  resolvePattern?: PatternPaintResolver,
+): boolean;
+export function applyStroke(
+  ctx: CanvasRenderingContext2D,
+  paint: Paint,
+  resolvePattern?: PatternPaintResolver,
+): boolean;
 export function applyStroke(
   ctx: CanvasRenderingContext2D,
   strokeOrPaint: Stroke | Paint | null,
+  resolvePattern?: PatternPaintResolver,
 ): boolean {
   if (strokeOrPaint === null) return false;
 
   const paint = "paint" in strokeOrPaint ? strokeOrPaint.paint : strokeOrPaint;
-  const style = canvasStyleFromPaint(ctx, paint);
+  const style = canvasStyleFromPaint(ctx, paint, resolvePattern);
   if (style === null) return false;
 
   if ("paint" in strokeOrPaint) {
