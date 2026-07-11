@@ -1677,6 +1677,21 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(1);
   });
 
+  it("does not push history when reversing leaves the geometry unchanged", () => {
+    // A single handle-less anchor reverses to an identical subpath.
+    const path = createPath([
+      { anchors: [{ point: { x: 3, y: 4 }, handleIn: null, handleOut: null }], closed: false },
+    ]);
+    editorStore.getState().addNode(path);
+    editorStore.getState().setSelection([path.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().reverseSelectedPaths();
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
   it("does not push history when reversing a non-path, locked, or empty selection", () => {
     const rect = createRect(0, 0, 10, 10);
     editorStore.getState().addNode(rect);

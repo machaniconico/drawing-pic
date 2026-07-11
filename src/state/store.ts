@@ -1130,9 +1130,14 @@ export const editorStore = createStore<EditorStore>()((set) => ({
           continue;
         }
 
+        const reversed = reverseSubPaths(node.subpaths);
+        if (subpathsEqual(reversed, node.subpaths)) {
+          continue;
+        }
+
         state.doc.nodes[id] = {
           ...structuredClone(node),
-          subpaths: reverseSubPaths(node.subpaths),
+          subpaths: reversed,
         };
         changed = true;
       }
