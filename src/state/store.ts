@@ -4,6 +4,7 @@ import { createStore } from "zustand/vanilla";
 import { offsetSubPaths } from "../core/geometry/offsetPath";
 import { roundCorners } from "../core/geometry/roundCorners";
 import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
+import { zigzagSubPaths } from "../core/geometry/zigzag";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
 import { createDocument } from "../core/model/factory";
@@ -128,6 +129,7 @@ export interface EditorActions {
   outlineSelectedStrokes: () => void;
   offsetSelectedPaths: (distance: number) => void;
   roundSelectedCorners: (radius: number) => void;
+  zigzagSelectedPaths: (size: number, ridges: number) => void;
   copySelection: () => void;
   paste: () => void;
   pasteInPlace: () => void;
@@ -539,6 +541,49 @@ const withDocHistory = (
   );
 };
 
+/**
+ * Applies a pure subpath-level effect to every eligible selected node in
+ * place, converting rects/ellipses to paths first. Returns whether anything
+ * changed so the caller can gate history. Shared by the Round Corners and
+ * Zig-Zag effects, which differ only in the geometry transform.
+ */
+const applyInPlaceSubPathEffect = (
+  state: EditorStore,
+  transform: (subpaths: PathNode["subpaths"]) => PathNode["subpaths"],
+): boolean => {
+  const sourceDoc = original(state.doc) ?? state.doc;
+  let changed = false;
+
+  for (const id of state.selection) {
+    const node = sourceDoc.nodes[id];
+    if (!node || node.locked || (node.type !== "path" && node.type !== "rect" && node.type !== "ellipse")) {
+      continue;
+    }
+
+    const sourcePath = node.type === "path" ? node : computeConvertShapeToPath(node);
+    if (!sourcePath) {
+      continue;
+    }
+
+    state.doc.nodes[id] = {
+      id: node.id,
+      name: node.name,
+      type: "path",
+      transform: structuredClone(node.transform),
+      opacity: node.opacity,
+      visible: node.visible,
+      locked: node.locked,
+      fill: structuredClone(sourcePath.fill),
+      stroke: sourcePath.stroke === null ? null : structuredClone(sourcePath.stroke),
+      blendMode: node.blendMode,
+      subpaths: transform(sourcePath.subpaths),
+    } satisfies PathNode;
+    changed = true;
+  }
+
+  return changed;
+};
+
 export const editorStore = createStore<EditorStore>()((set) => ({
   ...initialState(),
 
@@ -911,43 +956,19 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       return;
     }
 
-    withDocHistory(set, (state) => {
-      const sourceDoc = original(state.doc) ?? state.doc;
-      let changed = false;
+    withDocHistory(set, (state) =>
+      applyInPlaceSubPathEffect(state, (subpaths) => roundCorners(subpaths, radius)),
+    );
+  },
 
-      for (const id of state.selection) {
-        const node = sourceDoc.nodes[id];
-        if (!node || node.locked || (node.type !== "path" && node.type !== "rect" && node.type !== "ellipse")) {
-          continue;
-        }
+  zigzagSelectedPaths: (size, ridges) => {
+    if (size === 0 || !Number.isFinite(size) || !Number.isFinite(ridges) || Math.floor(ridges) < 1) {
+      return;
+    }
 
-        const sourcePath = node.type === "path" ? node : computeConvertShapeToPath(node);
-        if (!sourcePath) {
-          continue;
-        }
-
-        const roundedSubpaths = roundCorners(sourcePath.subpaths, radius);
-
-        const roundedNode: PathNode = {
-          id: node.id,
-          name: node.name,
-          type: "path",
-          transform: structuredClone(node.transform),
-          opacity: node.opacity,
-          visible: node.visible,
-          locked: node.locked,
-          fill: structuredClone(sourcePath.fill),
-          stroke: sourcePath.stroke === null ? null : structuredClone(sourcePath.stroke),
-          blendMode: node.blendMode,
-          subpaths: roundedSubpaths,
-        };
-
-        state.doc.nodes[id] = roundedNode;
-        changed = true;
-      }
-
-      return changed;
-    });
+    withDocHistory(set, (state) =>
+      applyInPlaceSubPathEffect(state, (subpaths) => zigzagSubPaths(subpaths, size, ridges)),
+    );
   },
 
   offsetSelectedPaths: (distance) => {

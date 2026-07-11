@@ -446,8 +446,11 @@ export function PropertiesPanel() {
   const outlineSelectedStrokes = useEditorStore((state) => state.outlineSelectedStrokes);
   const offsetSelectedPaths = useEditorStore((state) => state.offsetSelectedPaths);
   const roundSelectedCorners = useEditorStore((state) => state.roundSelectedCorners);
+  const zigzagSelectedPaths = useEditorStore((state) => state.zigzagSelectedPaths);
   const [offsetDistance, setOffsetDistance] = useState("10");
   const [cornerRadius, setCornerRadius] = useState("10");
+  const [zigzagSize, setZigzagSize] = useState("10");
+  const [zigzagRidges, setZigzagRidges] = useState("4");
   const selectedNodes = getSelectedNodes({ doc, selection });
 
   if (selectedNodes.length === 0) {
@@ -490,6 +493,22 @@ export function PropertiesPanel() {
     }
 
     roundSelectedCorners(cornerRadiusNumber);
+  };
+
+  const zigzagSizeNumber = Number(zigzagSize);
+  const zigzagRidgesNumber = Number(zigzagRidges);
+  const canApplyZigzag =
+    Number.isFinite(zigzagSizeNumber) &&
+    zigzagSizeNumber !== 0 &&
+    Number.isFinite(zigzagRidgesNumber) &&
+    Math.floor(zigzagRidgesNumber) >= 1;
+
+  const applyZigzag = (): void => {
+    if (!canApplyZigzag) {
+      return;
+    }
+
+    zigzagSelectedPaths(zigzagSizeNumber, Math.floor(zigzagRidgesNumber));
   };
 
   const commitSelectionX = (x: number): void => {
@@ -633,6 +652,40 @@ export function PropertiesPanel() {
           type="button"
         >
           Round
+        </button>
+      </span>
+    </label>
+  ) : null;
+
+  const zigzagRow = canOffsetSelection ? (
+    <label className="properties-panel__row">
+      <span className="properties-panel__label">Zig Zag</span>
+      <span className="properties-panel__offset-controls">
+        <input
+          aria-label="Zig zag size"
+          className="properties-panel__number properties-panel__number--compact"
+          onChange={(event) => setZigzagSize(event.currentTarget.value)}
+          step={1}
+          type="number"
+          value={zigzagSize}
+        />
+        <input
+          aria-label="Zig zag ridges"
+          className="properties-panel__number properties-panel__number--compact"
+          min={1}
+          onChange={(event) => setZigzagRidges(event.currentTarget.value)}
+          step={1}
+          type="number"
+          value={zigzagRidges}
+        />
+        <button
+          aria-label="Apply zig zag"
+          className="properties-panel__button"
+          disabled={!canApplyZigzag}
+          onClick={applyZigzag}
+          type="button"
+        >
+          Zig Zag
         </button>
       </span>
     </label>
@@ -832,6 +885,7 @@ export function PropertiesPanel() {
             ) : null}
             {offsetPathRow}
             {roundCornersRow}
+            {zigzagRow}
           </section>
         ) : null}
         {geometrySection}
@@ -1881,6 +1935,7 @@ export function PropertiesPanel() {
           ) : null}
           {offsetPathRow}
           {roundCornersRow}
+          {zigzagRow}
         </section>
       ) : null}
 

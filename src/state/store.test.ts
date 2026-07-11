@@ -1582,6 +1582,70 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(0);
   });
 
+  it("zig-zags selected path segments in place, adding ridge anchors", () => {
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 100, y: 0 }, handleIn: null, handleOut: null },
+        ],
+        closed: false,
+      },
+    ]);
+    editorStore.getState().addNode(path);
+    editorStore.getState().setSelection([path.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().zigzagSelectedPaths(10, 3);
+
+    const node = editorStore.getState().doc.nodes[path.id];
+    expect(node?.type).toBe("path");
+    if (node?.type !== "path") {
+      throw new Error("expected path node");
+    }
+    // start + 3 ridges + end
+    expect(node.subpaths[0]!.anchors).toHaveLength(5);
+    expect(editorStore.getState().selection).toEqual([path.id]);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
+  it("converts a selected ellipse to a zig-zagged path node in place", () => {
+    const ellipse = createEllipse(50, 50, 40, 40);
+    editorStore.getState().addNode(ellipse);
+    editorStore.getState().setSelection([ellipse.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().zigzagSelectedPaths(6, 2);
+
+    expect(editorStore.getState().doc.nodes[ellipse.id]?.type).toBe("path");
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
+  it("does not push history when zig-zag has no size, no ridges, or no eligible nodes", () => {
+    const rect = createRect(0, 0, 20, 20);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().zigzagSelectedPaths(0, 3);
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    editorStore.getState().zigzagSelectedPaths(10, 0);
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    const lockedPath = createPath();
+    lockedPath.locked = true;
+    editorStore.getState().addNode(lockedPath);
+    editorStore.getState().setSelection([lockedPath.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeLockedDoc = editorStore.getState().doc;
+
+    editorStore.getState().zigzagSelectedPaths(10, 3);
+    expect(editorStore.getState().doc).toBe(beforeLockedDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
   it("caps document history at 100 snapshots", () => {
     for (let i = 0; i < 105; i += 1) {
       editorStore.getState().addNode(createRect(i, i, 10, 10));
