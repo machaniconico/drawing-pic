@@ -33,11 +33,20 @@ const puckerBloatSubPath = (subpath: SubPath, amount: number): SubPath => {
   return {
     closed: subpath.closed,
     anchors: subpath.anchors.map((anchor) => {
+      const dx = anchor.point.x - center.x;
+      const dy = anchor.point.y - center.y;
+      // An anchor sitting exactly on the centroid has no radial direction, so
+      // leave it untouched rather than collapsing its handles to a zero vector
+      // (which would otherwise register as a spurious change).
+      if (dx === 0 && dy === 0) {
+        return cloneAnchor(anchor);
+      }
+
       // Radial handle pointing from the centroid toward the anchor, scaled by
       // amount. Positive amount pushes the control points outward so the edges
       // bulge (bloat); negative pulls them inward so the edges cave and the
       // anchors become spikes (pucker). in == out gives the characteristic cusp.
-      const radial = { x: (anchor.point.x - center.x) * amount, y: (anchor.point.y - center.y) * amount };
+      const radial = { x: dx * amount, y: dy * amount };
       return {
         point: clonePoint(anchor.point),
         handleIn: clonePoint(radial),

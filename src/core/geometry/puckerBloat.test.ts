@@ -52,6 +52,29 @@ describe("puckerBloatSubPaths", () => {
     expect(first.handleIn).toEqual({ x: 5, y: 5 });
   });
 
+  it("leaves an anchor sitting on the centroid untouched (no null→zero handles)", () => {
+    // Centroid is the origin; the third anchor sits exactly on it.
+    const withCenterAnchor: SubPath = {
+      anchors: [corner({ x: -6, y: 0 }), corner({ x: 6, y: 0 }), corner({ x: 0, y: 0 })],
+      closed: true,
+    };
+    const [result] = puckerBloatSubPaths([withCenterAnchor], 0.5);
+    const centerAnchor = result!.anchors[2]!;
+    expect(centerAnchor.handleIn).toBeNull();
+    expect(centerAnchor.handleOut).toBeNull();
+    // The off-centre anchors still get radial handles.
+    expect(result!.anchors[0]!.handleOut).toEqual({ x: -3, y: 0 });
+  });
+
+  it("is a no-op for a subpath whose anchors are all coincident", () => {
+    const coincident: SubPath = {
+      anchors: [corner({ x: 5, y: 5 }), corner({ x: 5, y: 5 }), corner({ x: 5, y: 5 })],
+      closed: true,
+    };
+    const [result] = puckerBloatSubPaths([coincident], 0.5);
+    expect(result!.anchors.every((a) => a.handleIn === null && a.handleOut === null)).toBe(true);
+  });
+
   it("leaves subpaths with fewer than two anchors unchanged", () => {
     const single: SubPath = { anchors: [corner({ x: 3, y: 4 })], closed: false };
     const [result] = puckerBloatSubPaths([single], 0.5);
