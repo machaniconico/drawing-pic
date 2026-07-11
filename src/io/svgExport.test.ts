@@ -554,4 +554,44 @@ describe("documentToSvg", () => {
     expect(svg).not.toContain("mix-blend-mode");
     expect(svg).not.toContain('style="');
   });
+
+  it("exports a compound path as a single path with one subpath per ring", () => {
+    const doc = createDocument(100, 100, "Compound");
+    // Outer square CW, inner square CCW (a hole under the non-zero fill rule).
+    const compound = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 40, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 40, y: 40 }, handleIn: null, handleOut: null },
+          { point: { x: 0, y: 40 }, handleIn: null, handleOut: null },
+        ],
+        closed: true,
+      },
+      {
+        anchors: [
+          { point: { x: 10, y: 10 }, handleIn: null, handleOut: null },
+          { point: { x: 10, y: 30 }, handleIn: null, handleOut: null },
+          { point: { x: 30, y: 30 }, handleIn: null, handleOut: null },
+          { point: { x: 30, y: 10 }, handleIn: null, handleOut: null },
+        ],
+        closed: true,
+      },
+    ]);
+    compound.fill = solid({ r: 0, g: 0, b: 0, a: 1 });
+    compound.stroke = null;
+    addNode(doc, compound);
+
+    const svg = documentToSvg(doc);
+
+    // Exactly one <path> element with two closed subpaths in its d attribute.
+    expect(svg.match(/<path/g)).toHaveLength(1);
+    const dMatch = svg.match(/ d="([^"]+)"/);
+    expect(dMatch).not.toBeNull();
+    const d = dMatch![1]!;
+    expect(d.match(/M /g)).toHaveLength(2);
+    expect(d.match(/Z/g)).toHaveLength(2);
+    // Non-zero winding is the default; no fill-rule override is emitted.
+    expect(svg).not.toContain("fill-rule");
+  });
 });
