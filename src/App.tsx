@@ -59,6 +59,8 @@ export default function App() {
   const setAllObjectsHidden = useEditorStore((state) => state.setAllObjectsHidden);
   const setSelection = useEditorStore((state) => state.setSelection);
   const clearSelection = useEditorStore((state) => state.clearSelection);
+  const combineSelectedPaths = useEditorStore((state) => state.combineSelectedPaths);
+  const releaseSelectedCompoundPaths = useEditorStore((state) => state.releaseSelectedCompoundPaths);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -200,6 +202,16 @@ export default function App() {
         return;
       }
 
+      if (hasCommandModifier && key === "8") {
+        event.preventDefault();
+        if (event.altKey) {
+          releaseSelectedCompoundPaths();
+        } else {
+          combineSelectedPaths();
+        }
+        return;
+      }
+
       if (hasCommandModifier && (key === "]" || key === "}")) {
         event.preventDefault();
         if (event.shiftKey) {
@@ -266,9 +278,11 @@ export default function App() {
     bringForward,
     bringToFront,
     clearSelection,
+    combineSelectedPaths,
     copySelection,
     doc,
     duplicateSelection,
+    releaseSelectedCompoundPaths,
     flipSelection,
     groupSelection,
     hideSelection,
