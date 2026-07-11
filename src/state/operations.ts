@@ -953,6 +953,31 @@ export const combinePaths = (doc: Document, ids: readonly NodeId[]): BooleanSele
   };
 };
 
+/**
+ * Splits a compound path (a path node with two or more subpaths) into one fresh
+ * path node per subpath, each inheriting the original's transform and style.
+ * Returns null for nodes that are not paths or have fewer than two subpaths.
+ */
+export const splitCompoundPath = (node: SceneNode): PathNode[] | null => {
+  if (node.type !== "path" || node.subpaths.length < 2) {
+    return null;
+  }
+
+  return node.subpaths.map((subpath, index) => ({
+    id: createNodeId(),
+    name: node.subpaths.length > 1 ? `${node.name} ${index + 1}` : node.name,
+    type: "path",
+    transform: structuredClone(node.transform),
+    opacity: node.opacity,
+    visible: node.visible,
+    locked: node.locked,
+    fill: structuredClone(node.fill),
+    stroke: node.stroke === null ? null : structuredClone(node.stroke),
+    blendMode: node.blendMode,
+    subpaths: [structuredClone(subpath)],
+  }));
+};
+
 export const groupSelection = (doc: Document, ids: readonly NodeId[]): GroupSelectionResult | null => {
   const topLevelIds = topLevelNodeIds(doc, ids);
   const firstParent = topLevelIds.length > 0 ? findNodeParent(doc, topLevelIds[0]!) : null;

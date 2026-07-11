@@ -1861,6 +1861,44 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(0);
   });
 
+  it("releases a selected compound path into separate paths at the same slot", () => {
+    const compound = createPath([
+      { anchors: [{ point: { x: 0, y: 0 }, handleIn: null, handleOut: null }], closed: true },
+      { anchors: [{ point: { x: 5, y: 5 }, handleIn: null, handleOut: null }], closed: true },
+    ]);
+    const sibling = createRect(50, 50, 10, 10);
+    editorStore.getState().addNode(compound);
+    editorStore.getState().addNode(sibling);
+    editorStore.getState().setSelection([compound.id]);
+    const layerId = firstLayerId(editorStore.getState().doc);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().releaseSelectedCompoundPaths();
+
+    // The original node is gone, replaced by two paths, both selected.
+    expect(editorStore.getState().doc.nodes[compound.id]).toBeUndefined();
+    const selection = editorStore.getState().selection;
+    expect(selection).toHaveLength(2);
+    expect(selection.every((id) => editorStore.getState().doc.nodes[id]?.type === "path")).toBe(true);
+    // They occupy the original's slot, before the sibling.
+    const layer = editorStore.getState().doc.nodes[layerId];
+    const children = layer?.type === "layer" ? layer.children : [];
+    expect(children).toEqual([selection[0], selection[1], sibling.id]);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
+  it("does not push history when releasing a single-subpath or non-path selection", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().releaseSelectedCompoundPaths();
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
   it("caps document history at 100 snapshots", () => {
     for (let i = 0; i < 105; i += 1) {
       editorStore.getState().addNode(createRect(i, i, 10, 10));

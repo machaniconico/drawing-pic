@@ -38,7 +38,8 @@ they compose freely with each other, boolean ops, and every exporter:
 - **Boolean** union/subtract/intersect/exclude, convert-to-path, and grouping /
   clipping masks
 - **Compound Path** — merge selected shapes into one path (holes via reversing
-  an inner subpath under the non-zero fill rule)
+  an inner subpath under the non-zero fill rule), and **Release** to split a
+  compound path back into separate paths
 
 ### Layout & workflow
 

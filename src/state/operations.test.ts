@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { canUndo } from "./history";
 import { apply, compose, IDENTITY, invert, rotationAround, type Matrix } from "../core/geometry/matrix";
 import {
+  corner,
   createDocument,
   createEllipse,
   createGroup,
@@ -36,6 +37,7 @@ import {
   rotateNodes90,
   sampleStyleAt,
   sendBackward,
+  splitCompoundPath,
   ungroupSelection,
 } from "./operations";
 import { createEditorStateForTest, editorStore } from "./store";
@@ -1040,6 +1042,35 @@ describe("selection operations", () => {
 
     expect(combinePaths(doc, [rect.id])).toBeNull();
     expect(combinePaths(doc, [rect.id, group.id])).toBeNull();
+  });
+
+  it("splits a compound path into one fresh path per subpath, inheriting style", () => {
+    const compound = createPath([
+      { anchors: [corner({ x: 0, y: 0 }), corner({ x: 10, y: 0 }), corner({ x: 10, y: 10 })], closed: true },
+      { anchors: [corner({ x: 2, y: 2 }), corner({ x: 6, y: 2 }), corner({ x: 6, y: 6 })], closed: true },
+    ]);
+    compound.name = "Ring";
+    compound.transform = { a: 1, b: 0, c: 0, d: 1, e: 5, f: 7 };
+
+    const pieces = splitCompoundPath(compound);
+
+    expect(pieces).not.toBeNull();
+    expect(pieces).toHaveLength(2);
+    expect(pieces!.every((p) => p.type === "path" && p.subpaths.length === 1)).toBe(true);
+    expect(pieces!.every((p) => p.id !== compound.id)).toBe(true);
+    expect(new Set(pieces!.map((p) => p.id)).size).toBe(2);
+    expect(pieces![0]!.transform).toEqual(compound.transform);
+    expect(pieces![0]!.transform).not.toBe(compound.transform);
+    expect(pieces![0]!.subpaths[0]!.anchors[0]!.point).toEqual({ x: 0, y: 0 });
+    expect(pieces![1]!.subpaths[0]!.anchors[0]!.point).toEqual({ x: 2, y: 2 });
+  });
+
+  it("returns null when releasing a non-path or a single-subpath path", () => {
+    const single = createPath([
+      { anchors: [corner({ x: 0, y: 0 }), corner({ x: 1, y: 0 })], closed: false },
+    ]);
+    expect(splitCompoundPath(single)).toBeNull();
+    expect(splitCompoundPath(createRect(0, 0, 10, 10))).toBeNull();
   });
 });
 

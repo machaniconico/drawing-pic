@@ -19,6 +19,7 @@ import {
   booleanSelection as computeBooleanSelection,
   cloneSubtree,
   combinePaths as computeCombinePaths,
+  splitCompoundPath as computeSplitCompoundPath,
   convertShapeToPath as computeConvertShapeToPath,
   distributeByGap as computeDistributeByGap,
   distributeNodes as computeDistributeNodes,
@@ -129,6 +130,7 @@ export interface EditorActions {
   toggleClipMask: () => void;
   booleanOp: (op: BooleanOp) => void;
   combineSelectedPaths: () => void;
+  releaseSelectedCompoundPaths: () => void;
   convertSelectionToPaths: () => void;
   outlineSelectedStrokes: () => void;
   offsetSelectedPaths: (distance: number) => void;
@@ -894,6 +896,48 @@ export const editorStore = createStore<EditorStore>()((set) => ({
         delete state.doc.nodes[id];
       }
       state.selection = [result.node.id];
+      clearMissingKeyObject(state);
+      return true;
+    });
+  },
+
+  releaseSelectedCompoundPaths: () => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const nextSelection: NodeId[] = [];
+      let changed = false;
+
+      for (const id of state.selection) {
+        const node = sourceDoc.nodes[id];
+        const pieces = node && !node.locked ? computeSplitCompoundPath(node) : null;
+        if (!node || !pieces) {
+          nextSelection.push(id);
+          continue;
+        }
+
+        const parent = findNodeParent(state.doc, id);
+        const container = parent ? state.doc.nodes[parent.parentId ?? ""] : undefined;
+        if (!parent || !container || !isContainer(container)) {
+          nextSelection.push(id);
+          continue;
+        }
+
+        const index = container.children.indexOf(id);
+        const insertAt = index < 0 ? container.children.length : index;
+        container.children.splice(insertAt, index < 0 ? 0 : 1, ...pieces.map((piece) => piece.id));
+        for (const piece of pieces) {
+          state.doc.nodes[piece.id] = piece;
+          nextSelection.push(piece.id);
+        }
+        delete state.doc.nodes[id];
+        changed = true;
+      }
+
+      if (!changed) {
+        return false;
+      }
+
+      state.selection = nextSelection;
       clearMissingKeyObject(state);
       return true;
     });

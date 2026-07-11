@@ -53,6 +53,7 @@ export function AlignPanel() {
   const setKeyObject = useEditorStore((state) => state.setKeyObject);
   const toggleClipMask = useEditorStore((state) => state.toggleClipMask);
   const combineSelectedPaths = useEditorStore((state) => state.combineSelectedPaths);
+  const releaseSelectedCompoundPaths = useEditorStore((state) => state.releaseSelectedCompoundPaths);
 
   const selectionCount = selection.length;
   const selectedNode = selectionCount === 1 ? nodes[selection[0]!] : undefined;
@@ -70,6 +71,10 @@ export function AlignPanel() {
         (node.type === "path" || node.type === "rect" || node.type === "ellipse")
       );
     }).length >= 2;
+  const canReleaseCompound = selection.some((id) => {
+    const node = nodes[id];
+    return node !== undefined && !node.locked && node.type === "path" && node.subpaths.length >= 2;
+  });
   const activeKeyObjectId = keyObjectId !== null && selection.includes(keyObjectId) ? keyObjectId : "";
   const arrangeActions: ArrangeAction[] = [
     { action: bringToFront, icon: "FF", label: "Bring to Front", title: "Bring selection to front" },
@@ -234,6 +239,18 @@ export function AlignPanel() {
               CP
             </span>
             <span className="align-panel__button-label">Compound</span>
+          </button>
+          <button
+            type="button"
+            className="align-panel__button align-panel__button--wide"
+            title="Release compound path into separate paths"
+            disabled={!canReleaseCompound}
+            onClick={releaseSelectedCompoundPaths}
+          >
+            <span className="align-panel__button-icon" aria-hidden="true">
+              RP
+            </span>
+            <span className="align-panel__button-label">Release</span>
           </button>
         </div>
       </section>
