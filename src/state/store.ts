@@ -1810,15 +1810,24 @@ export const editorStore = createStore<EditorStore>()((set) => ({
 
   fitDocumentToContent: () => {
     withDocHistory(set, (state) => {
-      const topIds: NodeId[] = [];
-      for (const layerId of state.doc.layerOrder) {
-        const layer = state.doc.nodes[layerId];
-        if (layer?.type === "layer") {
-          topIds.push(...layer.children);
+      // Collect leaf (non-container) ids by descending into groups/layers, since
+      // worldBounds only measures leaf geometry (a container's own localBounds
+      // is empty) but does account for the full ancestor transform chain.
+      const leafIds: NodeId[] = [];
+      const collectLeaves = (id: NodeId): void => {
+        const node = state.doc.nodes[id];
+        if (!node) {
+          return;
         }
-      }
+        if (node.type === "layer" || node.type === "group") {
+          node.children.forEach(collectLeaves);
+        } else {
+          leafIds.push(id);
+        }
+      };
+      state.doc.layerOrder.forEach(collectLeaves);
 
-      const bounds = selectionBounds(state.doc, topIds);
+      const bounds = selectionBounds(state.doc, leafIds);
       if (isBBoxEmpty(bounds)) {
         return false;
       }

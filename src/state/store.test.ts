@@ -336,6 +336,24 @@ describe("editorStore", () => {
     expect(state.history.past).toHaveLength(1);
   });
 
+  it("includes content nested inside groups when fitting to content", () => {
+    const loose = createRect(0, 0, 10, 10); // world (0,0)-(10,10)
+    const grouped = createRect(500, 500, 100, 100); // world (500,500)-(600,600)
+    editorStore.getState().addNode(loose);
+    editorStore.getState().addNode(grouped);
+    editorStore.getState().setSelection([grouped.id]);
+    editorStore.getState().groupSelection();
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().fitDocumentToContent();
+
+    const state = editorStore.getState();
+    // Content spans x:[0,600] y:[0,600] → the grouped rect must be measured.
+    expect(state.doc.width).toBe(600);
+    expect(state.doc.height).toBe(600);
+    expect(state.history.past).toHaveLength(1);
+  });
+
   it("does not push history when fitting an empty document to content", () => {
     editorStore.setState({ history: createHistory<Document>() });
     const beforeDoc = editorStore.getState().doc;
