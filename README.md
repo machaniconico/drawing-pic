@@ -56,6 +56,26 @@ they compose freely with each other, boolean ops, and every exporter:
 - **Import** raster images
 - Snap and grid preferences persist across sessions
 
+### Keyboard shortcuts
+
+`Cmd` on macOS, `Ctrl` on Windows/Linux.
+
+| Keys | Action |
+|------|--------|
+| `V` `A` `M` `L` `P` `T` `I` `K` `H` | Select / Direct Select / Rectangle / Ellipse / Pen / Type / Eyedropper / Measure / Hand |
+| `Cmd+A` / `Cmd+Shift+A` | Select all / Deselect |
+| `Cmd+Z` / `Cmd+Shift+Z` | Undo / Redo |
+| `Cmd+C` `Cmd+V` `Cmd+Shift+V` `Cmd+D` | Copy / Paste / Paste in place / Duplicate |
+| `Delete` / `Backspace` | Delete selection |
+| Arrow keys (`Shift` = 10 px) | Nudge selection |
+| `Shift+H` / `Shift+V` | Flip horizontal / vertical |
+| `Cmd+G` / `Cmd+Shift+G` | Group / Ungroup |
+| `Cmd+]` `Cmd+Shift+]` `Cmd+[` `Cmd+Shift+[` | Forward / To front / Backward / To back |
+| `Cmd+8` / `Cmd+Alt+8` | Make compound path / Release |
+| `Cmd+2` / `Cmd+Alt+2` | Lock selection / Unlock all |
+| `Cmd+3` / `Cmd+Alt+3` | Hide selection / Show all |
+| `Cmd+0` `Cmd+1` `Cmd+9` `Cmd++` `Cmd+-` | Fit / 100% / Zoom to selection / Zoom in / out |
+
 ## Architecture
 
 The code is layered so that geometry and model logic stay pure and testable,
