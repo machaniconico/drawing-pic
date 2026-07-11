@@ -3,6 +3,7 @@ import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { offsetSubPaths } from "../core/geometry/offsetPath";
 import { roundCorners } from "../core/geometry/roundCorners";
+import { simplifySubPaths } from "../core/geometry/simplify";
 import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
 import { zigzagSubPaths } from "../core/geometry/zigzag";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
@@ -131,6 +132,7 @@ export interface EditorActions {
   offsetSelectedPaths: (distance: number) => void;
   roundSelectedCorners: (radius: number) => void;
   zigzagSelectedPaths: (size: number, ridges: number) => void;
+  simplifySelectedPaths: (tolerance: number) => void;
   reverseSelectedPaths: () => void;
   addPolygon: (sides: number) => void;
   addStar: (points: number) => void;
@@ -972,6 +974,16 @@ export const editorStore = createStore<EditorStore>()((set) => ({
 
     withDocHistory(set, (state) =>
       applyInPlaceSubPathEffect(state, (subpaths) => zigzagSubPaths(subpaths, size, ridges)),
+    );
+  },
+
+  simplifySelectedPaths: (tolerance) => {
+    if (!Number.isFinite(tolerance) || tolerance < 0) {
+      return;
+    }
+
+    withDocHistory(set, (state) =>
+      applyInPlaceSubPathEffect(state, (subpaths) => simplifySubPaths(subpaths, tolerance)),
     );
   },
 

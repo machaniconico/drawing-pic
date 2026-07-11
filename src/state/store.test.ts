@@ -1736,6 +1736,53 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(1);
   });
 
+  it("simplifies selected paths in place, dropping redundant collinear anchors", () => {
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 25, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 50, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 50, y: 50 }, handleIn: null, handleOut: null },
+        ],
+        closed: false,
+      },
+    ]);
+    editorStore.getState().addNode(path);
+    editorStore.getState().setSelection([path.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().simplifySelectedPaths(0.01);
+
+    const node = editorStore.getState().doc.nodes[path.id];
+    if (node?.type !== "path") {
+      throw new Error("expected path node");
+    }
+    expect(node.subpaths[0]!.anchors.map((a) => a.point)).toEqual([
+      { x: 0, y: 0 },
+      { x: 50, y: 0 },
+      { x: 50, y: 50 },
+    ]);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
+  it("does not push history when simplify has a negative tolerance or no eligible nodes", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().simplifySelectedPaths(-1);
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    editorStore.getState().clearSelection();
+    editorStore.getState().simplifySelectedPaths(1);
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
   it("caps document history at 100 snapshots", () => {
     for (let i = 0; i < 105; i += 1) {
       editorStore.getState().addNode(createRect(i, i, 10, 10));

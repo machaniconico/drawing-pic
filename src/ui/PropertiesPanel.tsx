@@ -447,11 +447,13 @@ export function PropertiesPanel() {
   const offsetSelectedPaths = useEditorStore((state) => state.offsetSelectedPaths);
   const roundSelectedCorners = useEditorStore((state) => state.roundSelectedCorners);
   const zigzagSelectedPaths = useEditorStore((state) => state.zigzagSelectedPaths);
+  const simplifySelectedPaths = useEditorStore((state) => state.simplifySelectedPaths);
   const reverseSelectedPaths = useEditorStore((state) => state.reverseSelectedPaths);
   const [offsetDistance, setOffsetDistance] = useState("10");
   const [cornerRadius, setCornerRadius] = useState("10");
   const [zigzagSize, setZigzagSize] = useState("10");
   const [zigzagRidges, setZigzagRidges] = useState("4");
+  const [simplifyTolerance, setSimplifyTolerance] = useState("1");
   const selectedNodes = getSelectedNodes({ doc, selection });
 
   if (selectedNodes.length === 0) {
@@ -511,6 +513,17 @@ export function PropertiesPanel() {
     }
 
     zigzagSelectedPaths(zigzagSizeNumber, Math.floor(zigzagRidgesNumber));
+  };
+
+  const simplifyToleranceNumber = Number(simplifyTolerance);
+  const canApplySimplify = Number.isFinite(simplifyToleranceNumber) && simplifyToleranceNumber >= 0;
+
+  const applySimplify = (): void => {
+    if (!canApplySimplify) {
+      return;
+    }
+
+    simplifySelectedPaths(simplifyToleranceNumber);
   };
 
   const commitSelectionX = (x: number): void => {
@@ -688,6 +701,32 @@ export function PropertiesPanel() {
           type="button"
         >
           Zig Zag
+        </button>
+      </span>
+    </label>
+  ) : null;
+
+  const simplifyRow = canOffsetSelection ? (
+    <label className="properties-panel__row">
+      <span className="properties-panel__label">Simplify</span>
+      <span className="properties-panel__offset-controls">
+        <input
+          aria-label="Simplify tolerance"
+          className="properties-panel__number properties-panel__number--compact"
+          min={0}
+          onChange={(event) => setSimplifyTolerance(event.currentTarget.value)}
+          step={0.5}
+          type="number"
+          value={simplifyTolerance}
+        />
+        <button
+          aria-label="Simplify path"
+          className="properties-panel__button"
+          disabled={!canApplySimplify}
+          onClick={applySimplify}
+          type="button"
+        >
+          Simplify
         </button>
       </span>
     </label>
@@ -904,6 +943,7 @@ export function PropertiesPanel() {
             {offsetPathRow}
             {roundCornersRow}
             {zigzagRow}
+            {simplifyRow}
             {reversePathRow}
           </section>
         ) : null}
@@ -1955,6 +1995,7 @@ export function PropertiesPanel() {
           {offsetPathRow}
           {roundCornersRow}
           {zigzagRow}
+          {simplifyRow}
           {reversePathRow}
         </section>
       ) : null}
