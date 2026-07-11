@@ -52,6 +52,31 @@ button {
   font-weight: 650;
 }
 
+.app__history-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.app__history-button {
+  padding: 2px 10px;
+  color: #dedede;
+  background: #333336;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.app__history-button:hover:not(:disabled) {
+  background: #3a3a3d;
+  border-color: #4a4a4a;
+}
+
+.app__history-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .app__doc-meta {
   color: #bdbdbd;
   font-variant-numeric: tabular-nums;

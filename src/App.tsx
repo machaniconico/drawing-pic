@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { canRedo as historyCanRedo, canUndo as historyCanUndo } from "./state/history";
 import type { ToolId } from "./state/store";
 import { useEditorStore } from "./state/store";
 import CanvasView from "./ui/CanvasView";
@@ -59,6 +60,8 @@ export default function App() {
   const setAllObjectsHidden = useEditorStore((state) => state.setAllObjectsHidden);
   const setSelection = useEditorStore((state) => state.setSelection);
   const clearSelection = useEditorStore((state) => state.clearSelection);
+  const canUndo = useEditorStore((state) => historyCanUndo(state.history));
+  const canRedo = useEditorStore((state) => historyCanRedo(state.history));
   const combineSelectedPaths = useEditorStore((state) => state.combineSelectedPaths);
   const releaseSelectedCompoundPaths = useEditorStore((state) => state.releaseSelectedCompoundPaths);
 
@@ -307,6 +310,28 @@ export default function App() {
     <div className="app">
       <header className="app__menubar">
         <div className="app__brand">Drawing Pic</div>
+        <div className="app__history-controls">
+          <button
+            aria-label="Undo"
+            className="app__history-button"
+            disabled={!canUndo}
+            onClick={undo}
+            title="Undo (Cmd/Ctrl+Z)"
+            type="button"
+          >
+            ↶ Undo
+          </button>
+          <button
+            aria-label="Redo"
+            className="app__history-button"
+            disabled={!canRedo}
+            onClick={redo}
+            title="Redo (Cmd/Ctrl+Shift+Z)"
+            type="button"
+          >
+            ↷ Redo
+          </button>
+        </div>
         <div className="app__doc-meta">
           {doc.name} · {doc.width} × {doc.height}px · {activeTool}
         </div>
