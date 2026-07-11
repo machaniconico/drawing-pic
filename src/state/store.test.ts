@@ -127,6 +127,32 @@ describe("editorStore", () => {
     expect(canUndo(editorStore.getState().history)).toBe(false);
   });
 
+  it("inverts the selection over unlocked top-level nodes without pushing history", () => {
+    const a = createRect(0, 0, 10, 10);
+    const b = createRect(20, 0, 10, 10);
+    const c = createRect(40, 0, 10, 10);
+    const locked = createRect(60, 0, 10, 10);
+    locked.locked = true;
+    editorStore.getState().addNode(a);
+    editorStore.getState().addNode(b);
+    editorStore.getState().addNode(c);
+    editorStore.getState().addNode(locked);
+    editorStore.getState().setSelection([a.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().invertSelection();
+
+    // Everything selectable except the previously-selected a, and never the locked one.
+    expect(new Set(editorStore.getState().selection)).toEqual(new Set([b.id, c.id]));
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    // Inverting again returns to the original selection set.
+    editorStore.getState().invertSelection();
+    expect(new Set(editorStore.getState().selection)).toEqual(new Set([a.id]));
+  });
+
   it("selects nodes with the same stroke as the first selected node without pushing history", () => {
     const matchingStroke: Stroke = {
       paint: { type: "solid", color: { r: 20, g: 20, b: 20, a: 1 } },

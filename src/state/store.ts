@@ -168,6 +168,7 @@ export interface EditorActions {
   selectSameStroke: () => void;
   addToSelection: (id: NodeId) => void;
   clearSelection: () => void;
+  invertSelection: () => void;
   setKeyObject: (id: NodeId | null) => void;
   setActiveTool: (tool: ToolId) => void;
   setPan: (pan: Vec2) => void;
@@ -1677,6 +1678,31 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       produce((state: EditorStore) => {
         state.selection = [];
         state.keyObjectId = null;
+      }),
+    );
+  },
+
+  invertSelection: () => {
+    set(
+      produce((state: EditorStore) => {
+        // Selectable set matches Select All: unlocked, non-layer nodes that sit
+        // directly under a layer. Invert = those minus the current selection.
+        const current = new Set(state.selection);
+        const next: NodeId[] = [];
+        for (const layerId of state.doc.layerOrder) {
+          const layer = state.doc.nodes[layerId];
+          if (layer?.type !== "layer") {
+            continue;
+          }
+          for (const id of layer.children) {
+            const node = state.doc.nodes[id];
+            if (node && node.type !== "layer" && !node.locked && !current.has(id)) {
+              next.push(id);
+            }
+          }
+        }
+        state.selection = next;
+        clearMissingKeyObject(state);
       }),
     );
   },

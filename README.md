@@ -66,7 +66,7 @@ they compose freely with each other, boolean ops, and every exporter:
 | Keys | Action |
 |------|--------|
 | `V` `A` `M` `L` `P` `T` `I` `K` `H` | Select / Direct Select / Rectangle / Ellipse / Pen / Type / Eyedropper / Measure / Hand |
-| `Cmd+A` / `Cmd+Shift+A` | Select all / Deselect |
+| `Cmd+A` / `Cmd+Shift+A` / `Cmd+Shift+I` | Select all / Deselect / Invert selection |
 | `Cmd+Z` / `Cmd+Shift+Z` | Undo / Redo |
 | `Cmd+C` `Cmd+V` `Cmd+Shift+V` `Cmd+D` | Copy / Paste / Paste in place / Duplicate |
 | `Delete` / `Backspace` | Delete selection |

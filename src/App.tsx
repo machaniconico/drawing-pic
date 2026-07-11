@@ -64,6 +64,7 @@ export default function App() {
   const canRedo = useEditorStore((state) => historyCanRedo(state.history));
   const combineSelectedPaths = useEditorStore((state) => state.combineSelectedPaths);
   const releaseSelectedCompoundPaths = useEditorStore((state) => state.releaseSelectedCompoundPaths);
+  const invertSelection = useEditorStore((state) => state.invertSelection);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -92,6 +93,12 @@ export default function App() {
           });
           setSelection(selectableIds);
         }
+        return;
+      }
+
+      if (hasCommandModifier && event.shiftKey && key === "i") {
+        event.preventDefault();
+        invertSelection();
         return;
       }
 
@@ -285,6 +292,7 @@ export default function App() {
     copySelection,
     doc,
     duplicateSelection,
+    invertSelection,
     releaseSelectedCompoundPaths,
     flipSelection,
     groupSelection,
