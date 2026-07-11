@@ -176,6 +176,14 @@
   align-items: center;
 }
 
+.properties-panel__inline-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .properties-panel__number:focus,
 .properties-panel__color:focus,
 .properties-panel__select:focus,

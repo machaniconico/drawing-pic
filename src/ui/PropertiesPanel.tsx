@@ -456,6 +456,7 @@ export function PropertiesPanel() {
   const [cornerRadius, setCornerRadius] = useState("10");
   const [zigzagSize, setZigzagSize] = useState("10");
   const [zigzagRidges, setZigzagRidges] = useState("4");
+  const [zigzagSmooth, setZigzagSmooth] = useState(false);
   const [simplifyTolerance, setSimplifyTolerance] = useState("1");
   const [puckerAmount, setPuckerAmount] = useState("0.3");
   const [twistAngle, setTwistAngle] = useState("30");
@@ -517,7 +518,7 @@ export function PropertiesPanel() {
       return;
     }
 
-    zigzagSelectedPaths(zigzagSizeNumber, Math.floor(zigzagRidgesNumber));
+    zigzagSelectedPaths(zigzagSizeNumber, Math.floor(zigzagRidgesNumber), zigzagSmooth);
   };
 
   const simplifyToleranceNumber = Number(simplifyTolerance);
@@ -729,6 +730,15 @@ export function PropertiesPanel() {
         >
           Zig Zag
         </button>
+        <label className="properties-panel__inline-check" title="Smooth (wave) instead of sharp ridges">
+          <input
+            aria-label="Zig zag smooth"
+            checked={zigzagSmooth}
+            onChange={(event) => setZigzagSmooth(event.currentTarget.checked)}
+            type="checkbox"
+          />
+          <span>Smooth</span>
+        </label>
       </span>
     </label>
   ) : null;

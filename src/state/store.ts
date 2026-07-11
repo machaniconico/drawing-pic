@@ -137,7 +137,7 @@ export interface EditorActions {
   outlineSelectedStrokes: () => void;
   offsetSelectedPaths: (distance: number) => void;
   roundSelectedCorners: (radius: number) => void;
-  zigzagSelectedPaths: (size: number, ridges: number) => void;
+  zigzagSelectedPaths: (size: number, ridges: number, smooth?: boolean) => void;
   simplifySelectedPaths: (tolerance: number) => void;
   puckerBloatSelectedPaths: (amount: number) => void;
   twistSelectedPaths: (angleRadians: number) => void;
@@ -1075,13 +1075,18 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     );
   },
 
-  zigzagSelectedPaths: (size, ridges) => {
+  zigzagSelectedPaths: (size, ridges, smooth = false) => {
     if (size === 0 || !Number.isFinite(size) || !Number.isFinite(ridges) || Math.floor(ridges) < 1) {
       return;
     }
 
     withDocHistory(set, (state) =>
-      applyInPlaceSubPathEffect(state, (subpaths) => zigzagSubPaths(subpaths, size, ridges)),
+      applyInPlaceSubPathEffect(state, (subpaths) => {
+        const zigzagged = zigzagSubPaths(subpaths, size, ridges);
+        // Smooth mode turns the sharp ridges into a continuous wave by giving
+        // every resulting anchor auto-tangent handles.
+        return smooth ? smoothSubPaths(zigzagged) : zigzagged;
+      }),
     );
   },
 

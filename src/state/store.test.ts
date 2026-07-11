@@ -1609,6 +1609,35 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(1);
   });
 
+  it("produces smooth (handle-bearing) anchors in zig-zag smooth mode", () => {
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 100, y: 0 }, handleIn: null, handleOut: null },
+        ],
+        closed: false,
+      },
+    ]);
+    editorStore.getState().addNode(path);
+    editorStore.getState().setSelection([path.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().zigzagSelectedPaths(10, 3, true);
+
+    const node = editorStore.getState().doc.nodes[path.id];
+    if (node?.type !== "path") {
+      throw new Error("expected path node");
+    }
+    // Same anchor count as corner mode (start + 3 ridges + end), but interior
+    // anchors now carry smoothing handles.
+    const anchors = node.subpaths[0]!.anchors;
+    expect(anchors).toHaveLength(5);
+    expect(anchors[1]!.handleIn).not.toBeNull();
+    expect(anchors[1]!.handleOut).not.toBeNull();
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
   it("converts a selected ellipse to a zig-zagged path node in place", () => {
     const ellipse = createEllipse(50, 50, 40, 40);
     editorStore.getState().addNode(ellipse);

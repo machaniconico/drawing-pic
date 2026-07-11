@@ -31,7 +31,8 @@ they compose freely with each other, boolean ops, and every exporter:
 - **Offset Path** — parallel contour at a signed distance
 - **Outline Stroke** — convert a stroke into a filled shape
 - **Round Corners** — replace sharp corners with tangent bezier fillets
-- **Zig Zag** — alternating ridge displacement along each segment
+- **Zig Zag** — alternating ridge displacement along each segment (sharp or
+  smooth-wave mode)
 - **Simplify** — drop redundant near-collinear anchors within a tolerance
 - **Smooth** — convert every anchor to a smooth auto-tangent point
 - **Pucker & Bloat** — radial handle distortion (bulge out or spike in)
