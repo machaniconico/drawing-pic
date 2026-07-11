@@ -76,7 +76,7 @@ const zigzagSubPath = (subpath: SubPath, size: number, ridges: number): SubPath 
  */
 export const zigzagSubPaths = (subpaths: SubPath[], size: number, ridges: number): SubPath[] => {
   const ridgeCount = Math.floor(ridges);
-  if (size === 0 || !Number.isFinite(size) || ridgeCount < 1) {
+  if (size === 0 || !Number.isFinite(size) || !Number.isFinite(ridges) || ridgeCount < 1) {
     return subpaths.map(cloneSubPath);
   }
   return subpaths.map((subpath) => zigzagSubPath(subpath, size, ridgeCount));

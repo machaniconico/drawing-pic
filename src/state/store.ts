@@ -10,7 +10,7 @@ import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
 import { createDocument, createPolygon, createStar } from "../core/model/factory";
 import { reverseSubPaths, smoothSubPaths } from "../core/model/pathEdit";
-import type { Document, NodeId, Paint, PathNode, RGBA, SceneNode, Stroke } from "../core/model/types";
+import type { Document, NodeId, Paint, PathNode, RGBA, SceneNode, Stroke, SubPath } from "../core/model/types";
 import { hasStyle, isContainer } from "../core/model/types";
 import {
   alignNodes as computeAlignNodes,
@@ -552,6 +552,35 @@ const withDocHistory = (
   );
 };
 
+const vecEqual = (a: Vec2 | null, b: Vec2 | null): boolean =>
+  a === null || b === null ? a === b : a.x === b.x && a.y === b.y;
+
+/** Exact structural equality of two subpath lists, for no-op change detection. */
+const subpathsEqual = (a: readonly SubPath[], b: readonly SubPath[]): boolean => {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i += 1) {
+    const left = a[i]!;
+    const right = b[i]!;
+    if (left.closed !== right.closed || left.anchors.length !== right.anchors.length) {
+      return false;
+    }
+    for (let j = 0; j < left.anchors.length; j += 1) {
+      const la = left.anchors[j]!;
+      const ra = right.anchors[j]!;
+      if (
+        !vecEqual(la.point, ra.point) ||
+        !vecEqual(la.handleIn, ra.handleIn) ||
+        !vecEqual(la.handleOut, ra.handleOut)
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+};
+
 /**
  * Applies a pure subpath-level effect to every eligible selected node in
  * place, converting rects/ellipses to paths first. Returns whether anything
@@ -576,6 +605,14 @@ const applyInPlaceSubPathEffect = (
       continue;
     }
 
+    const nextSubpaths = transform(sourcePath.subpaths);
+    // Converting a rect/ellipse to a path is itself a change; for an existing
+    // path, only replace (and record history) when the geometry actually moves.
+    const geometryChanged = node.type !== "path" || !subpathsEqual(nextSubpaths, sourcePath.subpaths);
+    if (!geometryChanged) {
+      continue;
+    }
+
     state.doc.nodes[id] = {
       id: node.id,
       name: node.name,
@@ -587,7 +624,7 @@ const applyInPlaceSubPathEffect = (
       fill: structuredClone(sourcePath.fill),
       stroke: sourcePath.stroke === null ? null : structuredClone(sourcePath.stroke),
       blendMode: node.blendMode,
-      subpaths: transform(sourcePath.subpaths),
+      subpaths: nextSubpaths,
     } satisfies PathNode;
     changed = true;
   }

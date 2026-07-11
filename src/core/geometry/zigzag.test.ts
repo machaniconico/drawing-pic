@@ -104,6 +104,21 @@ describe("zigzagSubPaths", () => {
     expect(result!.anchors).toHaveLength(1 + 3 + 1);
   });
 
+  it("treats a non-finite ridge count as a no-op instead of hanging", () => {
+    const input = subpath(
+      [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+      ],
+      false,
+    );
+    // Would infinite-loop if Infinity reached the ridge loop.
+    const [inf] = zigzagSubPaths([input], 10, Number.POSITIVE_INFINITY);
+    expect(inf!.anchors).toHaveLength(2);
+    const [nan] = zigzagSubPaths([input], 10, Number.NaN);
+    expect(nan!.anchors).toHaveLength(2);
+  });
+
   it("ignores subpaths with fewer than two anchors", () => {
     const single = subpath([{ x: 5, y: 5 }], false);
     const [result] = zigzagSubPaths([single], 10, 3);

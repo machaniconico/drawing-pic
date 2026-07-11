@@ -1766,6 +1766,49 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(1);
   });
 
+  it("does not push history when an in-place effect leaves the geometry unchanged", () => {
+    // A 2-anchor path is below roundCorners' minimum, so rounding is a no-op.
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 10, y: 0 }, handleIn: null, handleOut: null },
+        ],
+        closed: false,
+      },
+    ]);
+    editorStore.getState().addNode(path);
+    editorStore.getState().setSelection([path.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().roundSelectedCorners(5);
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    // Smoothing is idempotent: the second application changes nothing.
+    editorStore.getState().setSelection([path.id]);
+    const triangle = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 20, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 20, y: 20 }, handleIn: null, handleOut: null },
+        ],
+        closed: true,
+      },
+    ]);
+    editorStore.getState().addNode(triangle);
+    editorStore.getState().setSelection([triangle.id]);
+    editorStore.getState().smoothSelectedPaths();
+    editorStore.setState({ history: createHistory<Document>() });
+    const afterFirstSmooth = editorStore.getState().doc;
+
+    editorStore.getState().smoothSelectedPaths();
+    expect(editorStore.getState().doc).toBe(afterFirstSmooth);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
   it("does not push history when simplify has a negative tolerance or no eligible nodes", () => {
     const rect = createRect(0, 0, 10, 10);
     editorStore.getState().addNode(rect);
