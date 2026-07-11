@@ -8,6 +8,7 @@ import { zigzagSubPaths } from "../core/geometry/zigzag";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
 import { createDocument } from "../core/model/factory";
+import { reverseSubPaths } from "../core/model/pathEdit";
 import type { Document, NodeId, Paint, PathNode, RGBA, SceneNode, Stroke } from "../core/model/types";
 import { hasStyle, isContainer } from "../core/model/types";
 import {
@@ -130,6 +131,7 @@ export interface EditorActions {
   offsetSelectedPaths: (distance: number) => void;
   roundSelectedCorners: (radius: number) => void;
   zigzagSelectedPaths: (size: number, ridges: number) => void;
+  reverseSelectedPaths: () => void;
   copySelection: () => void;
   paste: () => void;
   pasteInPlace: () => void;
@@ -969,6 +971,28 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     withDocHistory(set, (state) =>
       applyInPlaceSubPathEffect(state, (subpaths) => zigzagSubPaths(subpaths, size, ridges)),
     );
+  },
+
+  reverseSelectedPaths: () => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      let changed = false;
+
+      for (const id of state.selection) {
+        const node = sourceDoc.nodes[id];
+        if (!node || node.locked || node.type !== "path") {
+          continue;
+        }
+
+        state.doc.nodes[id] = {
+          ...structuredClone(node),
+          subpaths: reverseSubPaths(node.subpaths),
+        };
+        changed = true;
+      }
+
+      return changed;
+    });
   },
 
   offsetSelectedPaths: (distance) => {

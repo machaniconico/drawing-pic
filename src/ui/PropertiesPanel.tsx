@@ -447,6 +447,7 @@ export function PropertiesPanel() {
   const offsetSelectedPaths = useEditorStore((state) => state.offsetSelectedPaths);
   const roundSelectedCorners = useEditorStore((state) => state.roundSelectedCorners);
   const zigzagSelectedPaths = useEditorStore((state) => state.zigzagSelectedPaths);
+  const reverseSelectedPaths = useEditorStore((state) => state.reverseSelectedPaths);
   const [offsetDistance, setOffsetDistance] = useState("10");
   const [cornerRadius, setCornerRadius] = useState("10");
   const [zigzagSize, setZigzagSize] = useState("10");
@@ -474,6 +475,7 @@ export function PropertiesPanel() {
       : null;
   const canOffsetSelection = selectedNodes.some(canOffsetPathNode);
   const canOutlineStroke = selectedNodes.some(canOutlineStrokeNode);
+  const canReversePath = selectedNodes.some((node) => node.type === "path");
   const offsetDistanceNumber = Number(offsetDistance);
   const canApplyOffset = Number.isFinite(offsetDistanceNumber) && offsetDistanceNumber !== 0;
   const cornerRadiusNumber = Number(cornerRadius);
@@ -691,6 +693,22 @@ export function PropertiesPanel() {
     </label>
   ) : null;
 
+  const reversePathRow = canReversePath ? (
+    <label className="properties-panel__row">
+      <span className="properties-panel__label">Path Direction</span>
+      <span className="properties-panel__offset-controls">
+        <button
+          aria-label="Reverse path direction"
+          className="properties-panel__button"
+          onClick={reverseSelectedPaths}
+          type="button"
+        >
+          Reverse
+        </button>
+      </span>
+    </label>
+  ) : null;
+
   if (selectedNodes.length > 1) {
     const sharedOpacity = selectedNodes.every((node) => node.opacity === selectedNodes[0].opacity)
       ? Math.round(selectedNodes[0].opacity * 100)
@@ -886,6 +904,7 @@ export function PropertiesPanel() {
             {offsetPathRow}
             {roundCornersRow}
             {zigzagRow}
+            {reversePathRow}
           </section>
         ) : null}
         {geometrySection}
@@ -1936,6 +1955,7 @@ export function PropertiesPanel() {
           {offsetPathRow}
           {roundCornersRow}
           {zigzagRow}
+          {reversePathRow}
         </section>
       ) : null}
 

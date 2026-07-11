@@ -239,3 +239,23 @@ export const setAnchorType = (subpath: SubPath, index: number, type: AnchorType)
     }),
   };
 };
+
+/**
+ * Reverses the winding direction of a subpath. The anchor order is reversed and
+ * each anchor's in/out handles are swapped, so the drawn geometry is identical
+ * but traversed the opposite way. Useful for compound-path hole winding and
+ * boolean/even-odd fill behaviour.
+ */
+export const reverseSubPath = (subpath: SubPath): SubPath => ({
+  closed: subpath.closed,
+  anchors: subpath.anchors
+    .map((anchor) => ({
+      point: cloneVec(anchor.point),
+      handleIn: cloneHandle(anchor.handleOut),
+      handleOut: cloneHandle(anchor.handleIn),
+    }))
+    .reverse(),
+});
+
+export const reverseSubPaths = (subpaths: readonly SubPath[]): SubPath[] =>
+  subpaths.map(reverseSubPath);

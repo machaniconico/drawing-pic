@@ -1646,6 +1646,62 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(0);
   });
 
+  it("reverses selected path anchor order and swaps handles in place", () => {
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: { x: 5, y: 0 } },
+          { point: { x: 10, y: 0 }, handleIn: { x: -5, y: 0 }, handleOut: null },
+          { point: { x: 10, y: 10 }, handleIn: null, handleOut: null },
+        ],
+        closed: false,
+      },
+    ]);
+    editorStore.getState().addNode(path);
+    editorStore.getState().setSelection([path.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().reverseSelectedPaths();
+
+    const node = editorStore.getState().doc.nodes[path.id];
+    if (node?.type !== "path") {
+      throw new Error("expected path node");
+    }
+    expect(node.subpaths[0]!.anchors.map((a) => a.point)).toEqual([
+      { x: 10, y: 10 },
+      { x: 10, y: 0 },
+      { x: 0, y: 0 },
+    ]);
+    expect(node.subpaths[0]!.anchors[2]!.handleIn).toEqual({ x: 5, y: 0 });
+    expect(node.subpaths[0]!.anchors[2]!.handleOut).toBeNull();
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
+  it("does not push history when reversing a non-path, locked, or empty selection", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().reverseSelectedPaths();
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    const lockedPath = createPath([
+      { anchors: [{ point: { x: 0, y: 0 }, handleIn: null, handleOut: null }], closed: false },
+    ]);
+    lockedPath.locked = true;
+    editorStore.getState().addNode(lockedPath);
+    editorStore.getState().setSelection([lockedPath.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeLockedDoc = editorStore.getState().doc;
+
+    editorStore.getState().reverseSelectedPaths();
+    expect(editorStore.getState().doc).toBe(beforeLockedDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
   it("caps document history at 100 snapshots", () => {
     for (let i = 0; i < 105; i += 1) {
       editorStore.getState().addNode(createRect(i, i, 10, 10));
