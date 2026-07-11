@@ -2,6 +2,7 @@ import { original, produce } from "immer";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { offsetSubPaths } from "../core/geometry/offsetPath";
+import { roundCorners } from "../core/geometry/roundCorners";
 import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
@@ -126,6 +127,7 @@ export interface EditorActions {
   convertSelectionToPaths: () => void;
   outlineSelectedStrokes: () => void;
   offsetSelectedPaths: (distance: number) => void;
+  roundSelectedCorners: (radius: number) => void;
   copySelection: () => void;
   paste: () => void;
   pasteInPlace: () => void;
@@ -897,6 +899,50 @@ export const editorStore = createStore<EditorStore>()((set) => ({
         };
 
         state.doc.nodes[id] = outlineNode;
+        changed = true;
+      }
+
+      return changed;
+    });
+  },
+
+  roundSelectedCorners: (radius) => {
+    if (!(radius > 0) || !Number.isFinite(radius)) {
+      return;
+    }
+
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      let changed = false;
+
+      for (const id of state.selection) {
+        const node = sourceDoc.nodes[id];
+        if (!node || node.locked || (node.type !== "path" && node.type !== "rect" && node.type !== "ellipse")) {
+          continue;
+        }
+
+        const sourcePath = node.type === "path" ? node : computeConvertShapeToPath(node);
+        if (!sourcePath) {
+          continue;
+        }
+
+        const roundedSubpaths = roundCorners(sourcePath.subpaths, radius);
+
+        const roundedNode: PathNode = {
+          id: node.id,
+          name: node.name,
+          type: "path",
+          transform: structuredClone(node.transform),
+          opacity: node.opacity,
+          visible: node.visible,
+          locked: node.locked,
+          fill: structuredClone(sourcePath.fill),
+          stroke: sourcePath.stroke === null ? null : structuredClone(sourcePath.stroke),
+          blendMode: node.blendMode,
+          subpaths: roundedSubpaths,
+        };
+
+        state.doc.nodes[id] = roundedNode;
         changed = true;
       }
 

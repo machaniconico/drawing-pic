@@ -445,7 +445,9 @@ export function PropertiesPanel() {
   const convertSelectionToPaths = useEditorStore((state) => state.convertSelectionToPaths);
   const outlineSelectedStrokes = useEditorStore((state) => state.outlineSelectedStrokes);
   const offsetSelectedPaths = useEditorStore((state) => state.offsetSelectedPaths);
+  const roundSelectedCorners = useEditorStore((state) => state.roundSelectedCorners);
   const [offsetDistance, setOffsetDistance] = useState("10");
+  const [cornerRadius, setCornerRadius] = useState("10");
   const selectedNodes = getSelectedNodes({ doc, selection });
 
   if (selectedNodes.length === 0) {
@@ -471,6 +473,8 @@ export function PropertiesPanel() {
   const canOutlineStroke = selectedNodes.some(canOutlineStrokeNode);
   const offsetDistanceNumber = Number(offsetDistance);
   const canApplyOffset = Number.isFinite(offsetDistanceNumber) && offsetDistanceNumber !== 0;
+  const cornerRadiusNumber = Number(cornerRadius);
+  const canApplyRoundCorners = Number.isFinite(cornerRadiusNumber) && cornerRadiusNumber > 0;
 
   const applyOffsetPath = (): void => {
     if (!canApplyOffset) {
@@ -478,6 +482,14 @@ export function PropertiesPanel() {
     }
 
     offsetSelectedPaths(offsetDistanceNumber);
+  };
+
+  const applyRoundCorners = (): void => {
+    if (!canApplyRoundCorners) {
+      return;
+    }
+
+    roundSelectedCorners(cornerRadiusNumber);
   };
 
   const commitSelectionX = (x: number): void => {
@@ -595,6 +607,32 @@ export function PropertiesPanel() {
           type="button"
         >
           Offset
+        </button>
+      </span>
+    </label>
+  ) : null;
+
+  const roundCornersRow = canOffsetSelection ? (
+    <label className="properties-panel__row">
+      <span className="properties-panel__label">Round Corners</span>
+      <span className="properties-panel__offset-controls">
+        <input
+          aria-label="Corner radius"
+          className="properties-panel__number properties-panel__number--compact"
+          min={0}
+          onChange={(event) => setCornerRadius(event.currentTarget.value)}
+          step={1}
+          type="number"
+          value={cornerRadius}
+        />
+        <button
+          aria-label="Round corners"
+          className="properties-panel__button"
+          disabled={!canApplyRoundCorners}
+          onClick={applyRoundCorners}
+          type="button"
+        >
+          Round
         </button>
       </span>
     </label>
@@ -793,6 +831,7 @@ export function PropertiesPanel() {
               </button>
             ) : null}
             {offsetPathRow}
+            {roundCornersRow}
           </section>
         ) : null}
         {geometrySection}
@@ -1841,6 +1880,7 @@ export function PropertiesPanel() {
             </button>
           ) : null}
           {offsetPathRow}
+          {roundCornersRow}
         </section>
       ) : null}
 

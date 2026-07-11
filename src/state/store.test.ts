@@ -1495,6 +1495,93 @@ describe("editorStore", () => {
     expect(canUndo(editorStore.getState().history)).toBe(false);
   });
 
+  it("rounds selected path corners in place, preserving id, style, and selection", () => {
+    const fill: Paint = { type: "solid", color: { r: 10, g: 200, b: 90, a: 0.9 } };
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 40, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 40, y: 40 }, handleIn: null, handleOut: null },
+          { point: { x: 0, y: 40 }, handleIn: null, handleOut: null },
+        ],
+        closed: true,
+      },
+    ]);
+    path.name = "Card";
+    path.fill = fill;
+    path.transform = { a: 1, b: 0, c: 0, d: 1, e: 3, f: 7 };
+    editorStore.getState().addNode(path);
+    editorStore.getState().setSelection([path.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().roundSelectedCorners(10);
+
+    expect(editorStore.getState().selection).toEqual([path.id]);
+    const rounded = editorStore.getState().doc.nodes[path.id];
+    expect(rounded?.type).toBe("path");
+    if (rounded?.type !== "path") {
+      throw new Error("expected path node");
+    }
+    // Each of the 4 sharp corners becomes 2 tangent anchors.
+    expect(rounded.subpaths[0]!.anchors).toHaveLength(8);
+    expect(rounded.name).toBe("Card");
+    expect(rounded.fill).toEqual(fill);
+    expect(rounded.transform).toEqual({ a: 1, b: 0, c: 0, d: 1, e: 3, f: 7 });
+    // At least one anchor now carries a bezier handle (the fillet).
+    expect(rounded.subpaths[0]!.anchors.some((a) => a.handleIn !== null || a.handleOut !== null)).toBe(true);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
+  it("converts a selected rect to a rounded path node in place", () => {
+    const rect = createRect(0, 0, 30, 30);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().roundSelectedCorners(5);
+
+    const node = editorStore.getState().doc.nodes[rect.id];
+    expect(node?.type).toBe("path");
+    expect(editorStore.getState().selection).toEqual([rect.id]);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
+  it("does not push history when rounding by non-positive radius, empty selections, or no eligible nodes", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().roundSelectedCorners(0);
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    editorStore.getState().roundSelectedCorners(-4);
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    editorStore.getState().clearSelection();
+    editorStore.getState().roundSelectedCorners(5);
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+
+    const lockedRect = createRect(20, 0, 10, 10);
+    lockedRect.locked = true;
+    const group = createGroup("Unsupported group");
+    editorStore.getState().addNode(lockedRect);
+    editorStore.getState().addNode(group);
+    editorStore.getState().setSelection([lockedRect.id, group.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeNoEligibleDoc = editorStore.getState().doc;
+
+    editorStore.getState().roundSelectedCorners(5);
+
+    expect(editorStore.getState().doc).toBe(beforeNoEligibleDoc);
+    expect(editorStore.getState().doc.nodes[lockedRect.id]).toEqual(lockedRect);
+    expect(editorStore.getState().doc.nodes[group.id]).toEqual(group);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
   it("caps document history at 100 snapshots", () => {
     for (let i = 0; i < 105; i += 1) {
       editorStore.getState().addNode(createRect(i, i, 10, 10));
