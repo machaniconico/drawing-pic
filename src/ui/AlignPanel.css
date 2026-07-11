@@ -37,6 +37,14 @@
   font-size: 11px;
 }
 
+.align-panel__artboard-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #b8b8b8;
+  font-size: 11px;
+}
+
 .align-panel__key-object-select {
   flex: 1 1 auto;
   min-width: 0;

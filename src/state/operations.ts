@@ -379,14 +379,19 @@ export const alignNodes = (
   ids: readonly NodeId[],
   edge: AlignEdge,
   keyId?: NodeId | null,
+  toArtboard = false,
 ): TransformPatchMap => {
   const targets = usableBounds(doc, topLevelNodeIds(doc, ids));
   if (targets.length === 0) {
     return {};
   }
 
-  const keyTarget = keyId ? targets.find(({ id }) => id === keyId) : undefined;
-  const referenceBounds = keyTarget?.bounds ?? unionAll(targets.map(({ bounds }) => bounds));
+  // Aligning to the artboard uses the document rect as the reference and moves
+  // every selected node (there is no key object to hold in place).
+  const keyTarget = !toArtboard && keyId ? targets.find(({ id }) => id === keyId) : undefined;
+  const referenceBounds = toArtboard
+    ? { minX: 0, minY: 0, maxX: doc.width, maxY: doc.height }
+    : (keyTarget?.bounds ?? unionAll(targets.map(({ bounds }) => bounds)));
   if (isEmpty(referenceBounds)) {
     return {};
   }

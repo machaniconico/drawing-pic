@@ -117,7 +117,7 @@ export interface EditorActions {
   moveSelection: (dx: number, dy: number) => void;
   setSelectionPosition: (x: number, y: number) => void;
   setSelectionSize: (width: number, height: number) => void;
-  alignNodes: (edge: AlignEdge) => void;
+  alignNodes: (edge: AlignEdge, toArtboard?: boolean) => void;
   distributeNodes: (axis: DistributeAxis) => void;
   distributeSelectionByGap: (axis: DistributeAxis, gap: number) => void;
   flipSelection: (axis: FlipAxis) => void;
@@ -777,9 +777,12 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     });
   },
 
-  alignNodes: (edge) => {
+  alignNodes: (edge, toArtboard = false) => {
     withDocHistory(set, (state) =>
-      applyTransformPatches(state.doc, computeAlignNodes(state.doc, state.selection, edge, state.keyObjectId)),
+      applyTransformPatches(
+        state.doc,
+        computeAlignNodes(state.doc, state.selection, edge, state.keyObjectId, toArtboard),
+      ),
     );
   },
 

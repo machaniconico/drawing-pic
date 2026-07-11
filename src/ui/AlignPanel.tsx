@@ -54,6 +54,7 @@ export function AlignPanel() {
   const toggleClipMask = useEditorStore((state) => state.toggleClipMask);
   const combineSelectedPaths = useEditorStore((state) => state.combineSelectedPaths);
   const releaseSelectedCompoundPaths = useEditorStore((state) => state.releaseSelectedCompoundPaths);
+  const [alignToArtboard, setAlignToArtboard] = useState(false);
 
   const selectionCount = selection.length;
   const selectedNode = selectionCount === 1 ? nodes[selection[0]!] : undefined;
@@ -89,7 +90,7 @@ export function AlignPanel() {
         <h3 id="align-panel-align-heading" className="align-panel__group-title">
           ALIGN
         </h3>
-        {canAlign ? (
+        {canAlign && !alignToArtboard ? (
           <label className="align-panel__key-object">
             <span className="align-panel__key-object-label">Align to</span>
             <select
@@ -111,6 +112,16 @@ export function AlignPanel() {
             </select>
           </label>
         ) : null}
+        {selectionCount >= 1 ? (
+          <label className="align-panel__artboard-toggle">
+            <input
+              type="checkbox"
+              checked={alignToArtboard}
+              onChange={(event) => setAlignToArtboard(event.currentTarget.checked)}
+            />
+            <span>Align to artboard</span>
+          </label>
+        ) : null}
         <div className="align-panel__button-grid align-panel__button-grid--align">
           {alignActions.map((item) => (
             <button
@@ -118,8 +129,8 @@ export function AlignPanel() {
               type="button"
               className="align-panel__button"
               title={item.title}
-              disabled={!canAlign}
-              onClick={() => alignNodes(item.edge)}
+              disabled={alignToArtboard ? selectionCount < 1 : !canAlign}
+              onClick={() => alignNodes(item.edge, alignToArtboard)}
             >
               <span className="align-panel__button-icon" aria-hidden="true">
                 {item.icon}

@@ -401,6 +401,31 @@ describe("selection operations", () => {
     expect(patches[right.id]).toEqual({ e: 10, f: 5 });
   });
 
+  it("aligns a single node to the artboard, moving it (no key-object skip)", () => {
+    const doc = createDocument(200, 100);
+    const rect = createRect(10, 20, 40, 30);
+    addToFirstLayer(doc, [rect]);
+
+    // Left edge of the artboard is x=0.
+    expect(alignNodes(doc, [rect.id], "left", null, true)[rect.id]).toEqual({ e: 0, f: 20 });
+    // Horizontal centre of a 200-wide artboard: rect (w=40) centre → x=80.
+    expect(alignNodes(doc, [rect.id], "hcenter", null, true)[rect.id]).toEqual({ e: 80, f: 20 });
+    // Bottom edge of a 100-tall artboard: rect (h=30) → y=70.
+    expect(alignNodes(doc, [rect.id], "bottom", null, true)[rect.id]).toEqual({ e: 10, f: 70 });
+  });
+
+  it("ignores the key object when aligning to the artboard", () => {
+    const doc = createDocument(200, 100);
+    const a = createRect(10, 10, 20, 20);
+    const b = createRect(100, 40, 20, 20);
+    addToFirstLayer(doc, [a, b]);
+
+    // Even with a key object passed, artboard alignment moves every node.
+    const patches = alignNodes(doc, [a.id, b.id], "left", a.id, true);
+    expect(patches[a.id]).toEqual({ e: 0, f: 10 });
+    expect(patches[b.id]).toEqual({ e: 0, f: 40 });
+  });
+
   it("aligns nodes to the horizontal center of the selection bounds", () => {
     const doc = createDocument();
     const left = createRect(10, 20, 10, 10);

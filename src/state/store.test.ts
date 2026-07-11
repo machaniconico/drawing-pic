@@ -767,6 +767,20 @@ describe("editorStore", () => {
     expect(canRedo(editorStore.getState().history)).toBe(true);
   });
 
+  it("aligns a single selected node to the artboard", () => {
+    const rect = createRect(10, 20, 40, 30);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const docWidth = editorStore.getState().doc.width;
+
+    editorStore.getState().alignNodes("hcenter", true);
+
+    // Centre of the artboard minus half the 40-wide rect.
+    expect(editorStore.getState().doc.nodes[rect.id]?.transform.e).toBeCloseTo(docWidth / 2 - 20, 6);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
   it("aligns to key object bounds and keeps the key fixed as one undoable step", () => {
     const target = createRect(0, 0, 10, 10);
     const key = createRect(50, 0, 10, 10);
