@@ -7,7 +7,7 @@ import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
 import { zigzagSubPaths } from "../core/geometry/zigzag";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
-import { createDocument } from "../core/model/factory";
+import { createDocument, createPolygon, createStar } from "../core/model/factory";
 import { reverseSubPaths } from "../core/model/pathEdit";
 import type { Document, NodeId, Paint, PathNode, RGBA, SceneNode, Stroke } from "../core/model/types";
 import { hasStyle, isContainer } from "../core/model/types";
@@ -132,6 +132,8 @@ export interface EditorActions {
   roundSelectedCorners: (radius: number) => void;
   zigzagSelectedPaths: (size: number, ridges: number) => void;
   reverseSelectedPaths: () => void;
+  addPolygon: (sides: number) => void;
+  addStar: (points: number) => void;
   copySelection: () => void;
   paste: () => void;
   pasteInPlace: () => void;
@@ -992,6 +994,50 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       }
 
       return changed;
+    });
+  },
+
+  addPolygon: (sides) => {
+    withDocHistory(set, (state) => {
+      const parentId = getDefaultParentId(state.doc);
+      if (!parentId) {
+        return false;
+      }
+
+      const radius = Math.max(1, Math.min(state.doc.width, state.doc.height) * 0.2);
+      const node = createPolygon(state.doc.width / 2, state.doc.height / 2, radius, sides);
+      if (!addNodeToParent(state.doc, node, parentId)) {
+        return false;
+      }
+
+      state.selection = [node.id];
+      state.keyObjectId = null;
+      return true;
+    });
+  },
+
+  addStar: (points) => {
+    withDocHistory(set, (state) => {
+      const parentId = getDefaultParentId(state.doc);
+      if (!parentId) {
+        return false;
+      }
+
+      const outerRadius = Math.max(1, Math.min(state.doc.width, state.doc.height) * 0.2);
+      const node = createStar(
+        state.doc.width / 2,
+        state.doc.height / 2,
+        outerRadius,
+        outerRadius * 0.4,
+        points,
+      );
+      if (!addNodeToParent(state.doc, node, parentId)) {
+        return false;
+      }
+
+      state.selection = [node.id];
+      state.keyObjectId = null;
+      return true;
     });
   },
 

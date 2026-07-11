@@ -1702,6 +1702,40 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(0);
   });
 
+  it("adds a polygon centred in the document and selects it", () => {
+    const before = editorStore.getState().doc;
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().addPolygon(6);
+
+    const selection = editorStore.getState().selection;
+    expect(selection).toHaveLength(1);
+    const node = editorStore.getState().doc.nodes[selection[0]!];
+    expect(node?.type).toBe("path");
+    if (node?.type !== "path") {
+      throw new Error("expected path node");
+    }
+    expect(node.subpaths[0]!.anchors).toHaveLength(6);
+    expect(node.subpaths[0]!.closed).toBe(true);
+    expect(node.transform.e).toBeCloseTo(before.width / 2, 9);
+    expect(node.transform.f).toBeCloseTo(before.height / 2, 9);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
+  it("adds a star with 2·points vertices and selects it", () => {
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().addStar(5);
+
+    const selection = editorStore.getState().selection;
+    const node = editorStore.getState().doc.nodes[selection[0]!];
+    if (node?.type !== "path") {
+      throw new Error("expected path node");
+    }
+    expect(node.subpaths[0]!.anchors).toHaveLength(10);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
   it("caps document history at 100 snapshots", () => {
     for (let i = 0; i < 105; i += 1) {
       editorStore.getState().addNode(createRect(i, i, 10, 10));

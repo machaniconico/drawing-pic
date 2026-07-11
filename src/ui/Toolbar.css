@@ -40,3 +40,10 @@
   font-weight: 700;
   line-height: 1;
 }
+
+.toolbar__divider {
+  width: 24px;
+  height: 1px;
+  margin: 4px 0;
+  background: #3c3c3c;
+}

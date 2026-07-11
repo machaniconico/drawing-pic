@@ -10,7 +10,9 @@ import {
   createGroup,
   createLayer,
   createPath,
+  createPolygon,
   createRect,
+  createStar,
   createText,
   defaultStroke,
   newId,
@@ -177,5 +179,45 @@ describe("model factory", () => {
       handleIn: null,
       handleOut: null,
     });
+  });
+
+  it("creates a regular polygon as a closed corner path centred via transform", () => {
+    const poly = createPolygon(100, 50, 40, 6);
+    expect(poly.type).toBe("path");
+    expect(poly.transform.e).toBe(100);
+    expect(poly.transform.f).toBe(50);
+    expect(poly.subpaths).toHaveLength(1);
+    expect(poly.subpaths[0]!.closed).toBe(true);
+    expect(poly.subpaths[0]!.anchors).toHaveLength(6);
+    // First vertex is the top apex at local (0, -radius).
+    expect(poly.subpaths[0]!.anchors[0]!.point.x).toBeCloseTo(0, 9);
+    expect(poly.subpaths[0]!.anchors[0]!.point.y).toBeCloseTo(-40, 9);
+    // Every vertex sits on the circumscribed circle.
+    for (const anchor of poly.subpaths[0]!.anchors) {
+      expect(Math.hypot(anchor.point.x, anchor.point.y)).toBeCloseTo(40, 9);
+      expect(anchor.handleIn).toBeNull();
+      expect(anchor.handleOut).toBeNull();
+    }
+  });
+
+  it("clamps polygon sides to at least three", () => {
+    expect(createPolygon(0, 0, 10, 2).subpaths[0]!.anchors).toHaveLength(3);
+    expect(createPolygon(0, 0, 10, 5.9).subpaths[0]!.anchors).toHaveLength(5);
+  });
+
+  it("creates a star with alternating outer/inner radii and 2·points vertices", () => {
+    const star = createStar(0, 0, 50, 20, 5);
+    expect(star.type).toBe("path");
+    expect(star.subpaths[0]!.anchors).toHaveLength(10);
+    star.subpaths[0]!.anchors.forEach((anchor, index) => {
+      const radius = Math.hypot(anchor.point.x, anchor.point.y);
+      expect(radius).toBeCloseTo(index % 2 === 0 ? 50 : 20, 9);
+    });
+    // Apex outer point at the top.
+    expect(star.subpaths[0]!.anchors[0]!.point.y).toBeCloseTo(-50, 9);
+  });
+
+  it("clamps star points to at least three", () => {
+    expect(createStar(0, 0, 10, 4, 1).subpaths[0]!.anchors).toHaveLength(6);
   });
 });

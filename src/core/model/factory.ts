@@ -124,6 +124,78 @@ export const createPath = (subpaths: SubPath[] = []): PathNode => ({
   subpaths,
 });
 
+const polygonAnchors = (
+  radiusFor: (vertex: number) => number,
+  vertexCount: number,
+): SubPath["anchors"] => {
+  const anchors: SubPath["anchors"] = [];
+  for (let vertex = 0; vertex < vertexCount; vertex += 1) {
+    // Start at the top (−90°) and go clockwise so the first vertex is the apex.
+    const angle = -Math.PI / 2 + (Math.PI * 2 * vertex) / vertexCount;
+    const radius = radiusFor(vertex);
+    anchors.push({
+      point: { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius },
+      handleIn: null,
+      handleOut: null,
+    });
+  }
+  return anchors;
+};
+
+/**
+ * Regular n-gon centred on the node's local origin, positioned via transform.
+ * `sides` is clamped to at least 3. Emitted as a closed corner path so it works
+ * with every existing effect, boolean op, and exporter.
+ */
+export const createPolygon = (
+  cx: number,
+  cy: number,
+  radius: number,
+  sides: number,
+): PathNode => {
+  const sideCount = Math.max(3, Math.floor(sides));
+  return {
+    ...nodeDefaults("Polygon"),
+    ...styleDefaults(),
+    fill: solid({ r: 200, g: 200, b: 200, a: 1 }),
+    stroke: defaultStroke(),
+    type: "path",
+    transform: { ...IDENTITY, e: cx, f: cy },
+    subpaths: [{ anchors: polygonAnchors(() => radius, sideCount), closed: true }],
+  };
+};
+
+/**
+ * Star centred on the node's local origin, alternating outer/inner radii.
+ * `points` is clamped to at least 3 (→ 2·points vertices).
+ */
+export const createStar = (
+  cx: number,
+  cy: number,
+  outerRadius: number,
+  innerRadius: number,
+  points: number,
+): PathNode => {
+  const pointCount = Math.max(3, Math.floor(points));
+  return {
+    ...nodeDefaults("Star"),
+    ...styleDefaults(),
+    fill: solid({ r: 200, g: 200, b: 200, a: 1 }),
+    stroke: defaultStroke(),
+    type: "path",
+    transform: { ...IDENTITY, e: cx, f: cy },
+    subpaths: [
+      {
+        anchors: polygonAnchors(
+          (vertex) => (vertex % 2 === 0 ? outerRadius : innerRadius),
+          pointCount * 2,
+        ),
+        closed: true,
+      },
+    ],
+  };
+};
+
 export const createText = (text: string, at: Vec2): TextNode => ({
   ...nodeDefaults("Text"),
   ...styleDefaults(),
