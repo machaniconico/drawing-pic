@@ -314,6 +314,38 @@ describe("editorStore", () => {
     expect(canRedo(editorStore.getState().history)).toBe(true);
   });
 
+  it("fits the artboard to content, shifting content to the origin", () => {
+    const a = createRect(30, 40, 20, 20); // world (30,40)-(50,60)
+    const b = createRect(70, 10, 10, 10); // world (70,10)-(80,20)
+    editorStore.getState().addNode(a);
+    editorStore.getState().addNode(b);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().fitDocumentToContent();
+
+    const state = editorStore.getState();
+    // Content spans x:[30,80] y:[10,60] → 50 × 50 artboard.
+    expect(state.doc.width).toBe(50);
+    expect(state.doc.height).toBe(50);
+    // Content is shifted so its top-left corner sits at the origin.
+    const bounds = selectionBounds(state.doc, [a.id, b.id]);
+    expect(bounds.minX).toBeCloseTo(0, 6);
+    expect(bounds.minY).toBeCloseTo(0, 6);
+    expect(bounds.maxX).toBeCloseTo(50, 6);
+    expect(bounds.maxY).toBeCloseTo(50, 6);
+    expect(state.history.past).toHaveLength(1);
+  });
+
+  it("does not push history when fitting an empty document to content", () => {
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().fitDocumentToContent();
+
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
   it("sets document name and undoes it as one history step", () => {
     const before = editorStore.getState();
     const beforeDoc = before.doc;

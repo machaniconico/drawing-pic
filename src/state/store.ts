@@ -10,6 +10,8 @@ import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
 import { zigzagSubPaths } from "../core/geometry/zigzag";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
+import { isEmpty as isBBoxEmpty } from "../core/geometry/bbox";
+import { selectionBounds } from "../core/model/bounds";
 import { createDocument, createPolygon, createStar } from "../core/model/factory";
 import { reverseSubPaths, smoothSubPaths } from "../core/model/pathEdit";
 import type { Document, NodeId, Paint, PathNode, RGBA, SceneNode, Stroke, SubPath } from "../core/model/types";
@@ -178,6 +180,7 @@ export interface EditorActions {
   setGridSize: (size: number) => void;
   setShowGrid: (on: boolean) => void;
   setDocumentSize: (width: number, height: number) => void;
+  fitDocumentToContent: () => void;
   setDocumentName: (name: string) => void;
   setDocumentBackground: (color: RGBA | null) => void;
   loadDocument: (doc: Document) => void;
@@ -1797,6 +1800,48 @@ export const editorStore = createStore<EditorStore>()((set) => ({
       const nextHeight = Number.isFinite(height) ? Math.max(MIN_DOCUMENT_SIZE, height) : state.doc.height;
       if (state.doc.width === nextWidth && state.doc.height === nextHeight) {
         return false;
+      }
+
+      state.doc.width = nextWidth;
+      state.doc.height = nextHeight;
+      return true;
+    });
+  },
+
+  fitDocumentToContent: () => {
+    withDocHistory(set, (state) => {
+      const topIds: NodeId[] = [];
+      for (const layerId of state.doc.layerOrder) {
+        const layer = state.doc.nodes[layerId];
+        if (layer?.type === "layer") {
+          topIds.push(...layer.children);
+        }
+      }
+
+      const bounds = selectionBounds(state.doc, topIds);
+      if (isBBoxEmpty(bounds)) {
+        return false;
+      }
+
+      const nextWidth = Math.max(MIN_DOCUMENT_SIZE, Math.round(bounds.maxX - bounds.minX));
+      const nextHeight = Math.max(MIN_DOCUMENT_SIZE, Math.round(bounds.maxY - bounds.minY));
+      const dx = -bounds.minX;
+      const dy = -bounds.minY;
+      if (dx === 0 && dy === 0 && state.doc.width === nextWidth && state.doc.height === nextHeight) {
+        return false;
+      }
+
+      // Translating each top-level layer shifts all descendant content by the
+      // same world delta regardless of nested transforms (layer world ==
+      // layer transform), moving the content's top-left corner to the origin.
+      for (const layerId of state.doc.layerOrder) {
+        const layer = state.doc.nodes[layerId];
+        if (layer?.type === "layer") {
+          layer.transform = { ...layer.transform, e: layer.transform.e + dx, f: layer.transform.f + dy };
+        }
+      }
+      for (const guide of state.doc.guides) {
+        guide.position += guide.axis === "x" ? dx : dy;
       }
 
       state.doc.width = nextWidth;

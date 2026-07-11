@@ -128,6 +128,7 @@ export function DocSettings() {
   const doc = useEditorStore((state) => state.doc);
   const setDocumentName = useEditorStore((state) => state.setDocumentName);
   const setDocumentSize = useEditorStore((state) => state.setDocumentSize);
+  const fitDocumentToContent = useEditorStore((state) => state.fitDocumentToContent);
   const setDocumentBackground = useEditorStore((state) => state.setDocumentBackground);
   const backgroundHex = doc.background ? rgbaToHex(doc.background) : "#ffffff";
   const hasTransparentBackground = doc.background == null;
@@ -169,6 +170,16 @@ export function DocSettings() {
           />
         </label>
       </div>
+
+      <button
+        aria-label="Fit artboard to content"
+        className="doc-settings__fit-button"
+        onClick={fitDocumentToContent}
+        title="Resize the artboard to tightly fit all content"
+        type="button"
+      >
+        Fit to content
+      </button>
 
       <div className="doc-settings__field">
         <span className="doc-settings__label">Background</span>

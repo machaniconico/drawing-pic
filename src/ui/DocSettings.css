@@ -45,6 +45,22 @@
   font-variant-numeric: tabular-nums;
 }
 
+.doc-settings__fit-button {
+  align-self: flex-start;
+  padding: 4px 10px;
+  color: #dedede;
+  background: #333336;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.doc-settings__fit-button:hover {
+  background: #3a3a3d;
+  border-color: #4a4a4a;
+}
+
 .doc-settings__background-row {
   display: flex;
   align-items: center;

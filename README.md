@@ -50,6 +50,7 @@ they compose freely with each other, boolean ops, and every exporter:
   edge and by gap), flip, and rotate
 - Z-order controls, grouping, ungrouping, and clip masks
 - Rulers, guides (lockable/hideable/colored), grid, and configurable snapping
+- Artboard sizing, background, and one-click **fit to content**
 - Full undo/redo history (capped at 100 snapshots)
 
 ### Import / export
