@@ -67,8 +67,18 @@ export const localBounds = (node: SceneNode): BBox => {
 
 export const worldBounds = (doc: Document, id: NodeId): BBox => {
   const node = doc.nodes[id];
+  if (!node) return EMPTY_BBOX;
+
+  // Containers have no geometry of their own; their world bounds are the union
+  // of their descendants' (each child already composes the full ancestor
+  // transform chain). Without this, a selected group reports empty bounds,
+  // breaking the selection box, size readout, and zoom-to-selection.
+  if (node.type === "layer" || node.type === "group") {
+    return unionAll(node.children.map((childId) => worldBounds(doc, childId)));
+  }
+
   const matrix = worldTransform(doc, id);
-  if (!node || !matrix) return EMPTY_BBOX;
+  if (!matrix) return EMPTY_BBOX;
 
   return transformBBox(localBounds(node), matrix);
 };

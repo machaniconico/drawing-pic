@@ -142,6 +142,28 @@ describe("model bounds", () => {
     expect(worldBounds(doc, "rect1")).toEqual({ minX: 18, minY: 30, maxX: 48, maxY: 70 });
   });
 
+  it("computes a container's world bounds as the union of its descendants", () => {
+    const doc = makeDoc(
+      {
+        layer1: layer("layer1", ["group1"]),
+        group1: group("group1", ["rect1", "rect2"], translate(100, 100)),
+        rect1: rect("rect1", 20, 20, translate(0, 0)),
+        rect2: rect("rect2", 20, 20, translate(40, 30)),
+      },
+      ["layer1"],
+    );
+
+    // Group is translated by (100,100); its two rects span local (0,0)-(60,50).
+    expect(worldBounds(doc, "group1")).toEqual({ minX: 100, minY: 100, maxX: 160, maxY: 150 });
+    // Selecting the group must report the same (non-empty) bounds.
+    expect(selectionBounds(doc, ["group1"])).toEqual({ minX: 100, minY: 100, maxX: 160, maxY: 150 });
+  });
+
+  it("reports empty bounds for an empty container", () => {
+    const doc = makeDoc({ layer1: layer("layer1", ["group1"]), group1: group("group1", []) }, ["layer1"]);
+    expect(worldBounds(doc, "group1")).toEqual(localBounds(group("g", [])));
+  });
+
   it("returns the union of selected world bounds", () => {
     const doc = makeDoc(
       {
