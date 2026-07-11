@@ -37,6 +37,14 @@ export function ExportMenu() {
     downloadBlob(blob, exportFileName(doc.name, "svg"));
   };
 
+  const handleCopySvg = (): void => {
+    const svg = documentToSvg(doc, exportOptions);
+    void navigator.clipboard?.writeText(svg).catch((error: unknown) => {
+      console.error("Copy SVG to clipboard failed.", error);
+      window.alert("Could not copy SVG to the clipboard.");
+    });
+  };
+
   const handlePngExport = (): void => {
     void documentToPngBlob(doc, exportOptions)
       .then((blob) => {
@@ -118,6 +126,9 @@ export function ExportMenu() {
       />
       <button className="export-menu__button" type="button" onClick={handleSvgExport}>
         Export SVG
+      </button>
+      <button className="export-menu__button" type="button" onClick={handleCopySvg}>
+        Copy SVG
       </button>
       <button className="export-menu__button" type="button" onClick={handlePngExport}>
         Export PNG
