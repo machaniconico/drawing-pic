@@ -52,8 +52,9 @@ they compose freely with each other, boolean ops, and every exporter:
 
 ### Import / export
 
-- **Export** to SVG, PNG, and JSON project files
-- **Import** raster images
+- **Export** to SVG and PNG, with a scale factor and an optional
+  selection-only crop, plus JSON project save
+- **Open** saved JSON documents and **import** raster images
 - Snap and grid preferences persist across sessions
 
 ### Keyboard shortcuts
