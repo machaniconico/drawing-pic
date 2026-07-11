@@ -448,6 +448,7 @@ export function PropertiesPanel() {
   const roundSelectedCorners = useEditorStore((state) => state.roundSelectedCorners);
   const zigzagSelectedPaths = useEditorStore((state) => state.zigzagSelectedPaths);
   const simplifySelectedPaths = useEditorStore((state) => state.simplifySelectedPaths);
+  const smoothSelectedPaths = useEditorStore((state) => state.smoothSelectedPaths);
   const reverseSelectedPaths = useEditorStore((state) => state.reverseSelectedPaths);
   const [offsetDistance, setOffsetDistance] = useState("10");
   const [cornerRadius, setCornerRadius] = useState("10");
@@ -732,13 +733,22 @@ export function PropertiesPanel() {
     </label>
   ) : null;
 
-  const reversePathRow = canReversePath ? (
+  const reversePathRow = canOffsetSelection ? (
     <label className="properties-panel__row">
-      <span className="properties-panel__label">Path Direction</span>
+      <span className="properties-panel__label">Path</span>
       <span className="properties-panel__offset-controls">
+        <button
+          aria-label="Smooth path"
+          className="properties-panel__button"
+          onClick={smoothSelectedPaths}
+          type="button"
+        >
+          Smooth
+        </button>
         <button
           aria-label="Reverse path direction"
           className="properties-panel__button"
+          disabled={!canReversePath}
           onClick={reverseSelectedPaths}
           type="button"
         >

@@ -259,3 +259,21 @@ export const reverseSubPath = (subpath: SubPath): SubPath => ({
 
 export const reverseSubPaths = (subpaths: readonly SubPath[]): SubPath[] =>
   subpaths.map(reverseSubPath);
+
+/**
+ * Converts every anchor of a subpath to a smooth point, deriving colinear
+ * in/out handles from neighbouring anchor positions (via setAnchorType). Corner
+ * points become rounded; the anchor positions themselves are unchanged.
+ */
+export const smoothSubPath = (subpath: SubPath): SubPath => {
+  let result = cloneSubPath(subpath);
+  // setAnchorType derives tangents from neighbouring anchor *points* only, which
+  // the fold never moves, so applying it index-by-index is order-independent.
+  for (let index = 0; index < subpath.anchors.length; index += 1) {
+    result = setAnchorType(result, index, "smooth");
+  }
+  return result;
+};
+
+export const smoothSubPaths = (subpaths: readonly SubPath[]): SubPath[] =>
+  subpaths.map(smoothSubPath);

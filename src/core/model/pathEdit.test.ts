@@ -9,6 +9,8 @@ import {
   reverseSubPath,
   reverseSubPaths,
   setAnchorType,
+  smoothSubPath,
+  smoothSubPaths,
 } from "./pathEdit";
 
 const v = (x: number, y: number): Vec2 => ({ x, y });
@@ -180,5 +182,33 @@ describe("path editing operations", () => {
     expect(once).toHaveLength(2);
     expect(twice[0]!.anchors.map((a) => a.point)).toEqual(subpaths[0]!.anchors.map((a) => a.point));
     expect(twice[1]!.anchors.map((a) => a.point)).toEqual(subpaths[1]!.anchors.map((a) => a.point));
+  });
+
+  it("smooths every corner anchor while keeping points fixed", () => {
+    const original = subpath(
+      [anchor(v(0, 0)), anchor(v(9, 0)), anchor(v(18, 0))],
+      false,
+    );
+
+    const result = smoothSubPath(original);
+
+    expect(result.anchors.map((a) => a.point)).toEqual([v(0, 0), v(9, 0), v(18, 0)]);
+    // Interior anchor gets opposite colinear handles from its neighbours.
+    expectVecClose(result.anchors[1]!.handleIn, v(-3, 0));
+    expectVecClose(result.anchors[1]!.handleOut, v(3, 0));
+    // Endpoints get a one-sided handle.
+    expect(result.anchors[0]!.handleIn).toBeNull();
+    expect(result.anchors[0]!.handleOut).not.toBeNull();
+    expect(result.anchors[2]!.handleOut).toBeNull();
+    // Original is not mutated.
+    expect(original.anchors[1]!.handleIn).toBeNull();
+  });
+
+  it("smoothSubPaths maps every subpath", () => {
+    const result = smoothSubPaths([
+      subpath([anchor(v(0, 0)), anchor(v(4, 0)), anchor(v(4, 4))], true),
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.anchors.every((a) => a.handleIn !== null && a.handleOut !== null)).toBe(true);
   });
 });

@@ -9,7 +9,7 @@ import { zigzagSubPaths } from "../core/geometry/zigzag";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
 import { createDocument, createPolygon, createStar } from "../core/model/factory";
-import { reverseSubPaths } from "../core/model/pathEdit";
+import { reverseSubPaths, smoothSubPaths } from "../core/model/pathEdit";
 import type { Document, NodeId, Paint, PathNode, RGBA, SceneNode, Stroke } from "../core/model/types";
 import { hasStyle, isContainer } from "../core/model/types";
 import {
@@ -133,6 +133,7 @@ export interface EditorActions {
   roundSelectedCorners: (radius: number) => void;
   zigzagSelectedPaths: (size: number, ridges: number) => void;
   simplifySelectedPaths: (tolerance: number) => void;
+  smoothSelectedPaths: () => void;
   reverseSelectedPaths: () => void;
   addPolygon: (sides: number) => void;
   addStar: (points: number) => void;
@@ -985,6 +986,10 @@ export const editorStore = createStore<EditorStore>()((set) => ({
     withDocHistory(set, (state) =>
       applyInPlaceSubPathEffect(state, (subpaths) => simplifySubPaths(subpaths, tolerance)),
     );
+  },
+
+  smoothSelectedPaths: () => {
+    withDocHistory(set, (state) => applyInPlaceSubPathEffect(state, smoothSubPaths));
   },
 
   reverseSelectedPaths: () => {

@@ -1783,6 +1783,51 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(0);
   });
 
+  it("smooths selected paths in place, giving every anchor handles", () => {
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 10, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 10, y: 10 }, handleIn: null, handleOut: null },
+        ],
+        closed: true,
+      },
+    ]);
+    editorStore.getState().addNode(path);
+    editorStore.getState().setSelection([path.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().smoothSelectedPaths();
+
+    const node = editorStore.getState().doc.nodes[path.id];
+    if (node?.type !== "path") {
+      throw new Error("expected path node");
+    }
+    expect(
+      node.subpaths[0]!.anchors.every((a) => a.handleIn !== null && a.handleOut !== null),
+    ).toBe(true);
+    // Anchor positions are unchanged by smoothing.
+    expect(node.subpaths[0]!.anchors.map((a) => a.point)).toEqual([
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 10 },
+    ]);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
+  it("does not push history when smoothing an empty or ineligible selection", () => {
+    const group = createGroup("Group");
+    editorStore.getState().addNode(group);
+    editorStore.getState().setSelection([group.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().smoothSelectedPaths();
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
   it("caps document history at 100 snapshots", () => {
     for (let i = 0; i < 105; i += 1) {
       editorStore.getState().addNode(createRect(i, i, 10, 10));

@@ -33,6 +33,7 @@ they compose freely with each other, boolean ops, and every exporter:
 - **Round Corners** — replace sharp corners with tangent bezier fillets
 - **Zig Zag** — alternating ridge displacement along each segment
 - **Simplify** — drop redundant near-collinear anchors within a tolerance
+- **Smooth** — convert every anchor to a smooth auto-tangent point
 - **Reverse Path Direction** — flip winding for compound-path / even-odd fills
 - **Boolean** union/subtract/intersect/exclude, convert-to-path, and grouping /
   clipping masks
