@@ -2,6 +2,7 @@ import { original, produce } from "immer";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { offsetSubPaths } from "../core/geometry/offsetPath";
+import { puckerBloatSubPaths } from "../core/geometry/puckerBloat";
 import { roundCorners } from "../core/geometry/roundCorners";
 import { simplifySubPaths } from "../core/geometry/simplify";
 import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
@@ -137,6 +138,7 @@ export interface EditorActions {
   roundSelectedCorners: (radius: number) => void;
   zigzagSelectedPaths: (size: number, ridges: number) => void;
   simplifySelectedPaths: (tolerance: number) => void;
+  puckerBloatSelectedPaths: (amount: number) => void;
   smoothSelectedPaths: () => void;
   reverseSelectedPaths: () => void;
   addPolygon: (sides: number) => void;
@@ -1088,6 +1090,16 @@ export const editorStore = createStore<EditorStore>()((set) => ({
 
     withDocHistory(set, (state) =>
       applyInPlaceSubPathEffect(state, (subpaths) => simplifySubPaths(subpaths, tolerance)),
+    );
+  },
+
+  puckerBloatSelectedPaths: (amount) => {
+    if (amount === 0 || !Number.isFinite(amount)) {
+      return;
+    }
+
+    withDocHistory(set, (state) =>
+      applyInPlaceSubPathEffect(state, (subpaths) => puckerBloatSubPaths(subpaths, amount)),
     );
   },
 

@@ -1809,6 +1809,49 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(0);
   });
 
+  it("applies pucker/bloat radial handles to selected paths in place", () => {
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: -10, y: -10 }, handleIn: null, handleOut: null },
+          { point: { x: 10, y: -10 }, handleIn: null, handleOut: null },
+          { point: { x: 10, y: 10 }, handleIn: null, handleOut: null },
+          { point: { x: -10, y: 10 }, handleIn: null, handleOut: null },
+        ],
+        closed: true,
+      },
+    ]);
+    editorStore.getState().addNode(path);
+    editorStore.getState().setSelection([path.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().puckerBloatSelectedPaths(0.5);
+
+    const node = editorStore.getState().doc.nodes[path.id];
+    if (node?.type !== "path") {
+      throw new Error("expected path node");
+    }
+    const first = node.subpaths[0]!.anchors[0]!;
+    expect(first.point).toEqual({ x: -10, y: -10 });
+    expect(first.handleIn).toEqual({ x: -5, y: -5 });
+    expect(first.handleOut).toEqual({ x: -5, y: -5 });
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
+  it("does not push history when pucker/bloat amount is zero or non-finite", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().puckerBloatSelectedPaths(0);
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    editorStore.getState().puckerBloatSelectedPaths(Number.POSITIVE_INFINITY);
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
   it("does not push history when simplify has a negative tolerance or no eligible nodes", () => {
     const rect = createRect(0, 0, 10, 10);
     editorStore.getState().addNode(rect);

@@ -34,6 +34,7 @@ they compose freely with each other, boolean ops, and every exporter:
 - **Zig Zag** — alternating ridge displacement along each segment
 - **Simplify** — drop redundant near-collinear anchors within a tolerance
 - **Smooth** — convert every anchor to a smooth auto-tangent point
+- **Pucker & Bloat** — radial handle distortion (bulge out or spike in)
 - **Reverse Path Direction** — flip winding for compound-path / even-odd fills
 - **Boolean** union/subtract/intersect/exclude, convert-to-path, and grouping /
   clipping masks

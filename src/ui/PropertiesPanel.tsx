@@ -448,6 +448,7 @@ export function PropertiesPanel() {
   const roundSelectedCorners = useEditorStore((state) => state.roundSelectedCorners);
   const zigzagSelectedPaths = useEditorStore((state) => state.zigzagSelectedPaths);
   const simplifySelectedPaths = useEditorStore((state) => state.simplifySelectedPaths);
+  const puckerBloatSelectedPaths = useEditorStore((state) => state.puckerBloatSelectedPaths);
   const smoothSelectedPaths = useEditorStore((state) => state.smoothSelectedPaths);
   const reverseSelectedPaths = useEditorStore((state) => state.reverseSelectedPaths);
   const [offsetDistance, setOffsetDistance] = useState("10");
@@ -455,6 +456,7 @@ export function PropertiesPanel() {
   const [zigzagSize, setZigzagSize] = useState("10");
   const [zigzagRidges, setZigzagRidges] = useState("4");
   const [simplifyTolerance, setSimplifyTolerance] = useState("1");
+  const [puckerAmount, setPuckerAmount] = useState("0.3");
   const selectedNodes = getSelectedNodes({ doc, selection });
 
   if (selectedNodes.length === 0) {
@@ -525,6 +527,17 @@ export function PropertiesPanel() {
     }
 
     simplifySelectedPaths(simplifyToleranceNumber);
+  };
+
+  const puckerAmountNumber = Number(puckerAmount);
+  const canApplyPucker = Number.isFinite(puckerAmountNumber) && puckerAmountNumber !== 0;
+
+  const applyPuckerBloat = (): void => {
+    if (!canApplyPucker) {
+      return;
+    }
+
+    puckerBloatSelectedPaths(puckerAmountNumber);
   };
 
   const commitSelectionX = (x: number): void => {
@@ -728,6 +741,31 @@ export function PropertiesPanel() {
           type="button"
         >
           Simplify
+        </button>
+      </span>
+    </label>
+  ) : null;
+
+  const puckerBloatRow = canOffsetSelection ? (
+    <label className="properties-panel__row">
+      <span className="properties-panel__label">Pucker / Bloat</span>
+      <span className="properties-panel__offset-controls">
+        <input
+          aria-label="Pucker and bloat amount"
+          className="properties-panel__number properties-panel__number--compact"
+          onChange={(event) => setPuckerAmount(event.currentTarget.value)}
+          step={0.1}
+          type="number"
+          value={puckerAmount}
+        />
+        <button
+          aria-label="Apply pucker and bloat"
+          className="properties-panel__button"
+          disabled={!canApplyPucker}
+          onClick={applyPuckerBloat}
+          type="button"
+        >
+          Apply
         </button>
       </span>
     </label>
@@ -954,6 +992,7 @@ export function PropertiesPanel() {
             {roundCornersRow}
             {zigzagRow}
             {simplifyRow}
+            {puckerBloatRow}
             {reversePathRow}
           </section>
         ) : null}
@@ -2006,6 +2045,7 @@ export function PropertiesPanel() {
           {roundCornersRow}
           {zigzagRow}
           {simplifyRow}
+          {puckerBloatRow}
           {reversePathRow}
         </section>
       ) : null}
