@@ -342,6 +342,7 @@ export default function App() {
         </div>
         <div className="app__doc-meta">
           {doc.name} · {doc.width} × {doc.height}px · {activeTool}
+          {selection.length > 0 ? ` · ${selection.length} selected` : ""}
         </div>
       </header>
       <main className="app__workspace">
