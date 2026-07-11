@@ -5,6 +5,7 @@ import { offsetSubPaths } from "../core/geometry/offsetPath";
 import { puckerBloatSubPaths } from "../core/geometry/puckerBloat";
 import { roundCorners } from "../core/geometry/roundCorners";
 import { simplifySubPaths } from "../core/geometry/simplify";
+import { twistSubPaths } from "../core/geometry/twist";
 import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
 import { zigzagSubPaths } from "../core/geometry/zigzag";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
@@ -139,6 +140,7 @@ export interface EditorActions {
   zigzagSelectedPaths: (size: number, ridges: number) => void;
   simplifySelectedPaths: (tolerance: number) => void;
   puckerBloatSelectedPaths: (amount: number) => void;
+  twistSelectedPaths: (angleRadians: number) => void;
   smoothSelectedPaths: () => void;
   reverseSelectedPaths: () => void;
   addPolygon: (sides: number) => void;
@@ -1100,6 +1102,16 @@ export const editorStore = createStore<EditorStore>()((set) => ({
 
     withDocHistory(set, (state) =>
       applyInPlaceSubPathEffect(state, (subpaths) => puckerBloatSubPaths(subpaths, amount)),
+    );
+  },
+
+  twistSelectedPaths: (angleRadians) => {
+    if (angleRadians === 0 || !Number.isFinite(angleRadians)) {
+      return;
+    }
+
+    withDocHistory(set, (state) =>
+      applyInPlaceSubPathEffect(state, (subpaths) => twistSubPaths(subpaths, angleRadians)),
     );
   },
 

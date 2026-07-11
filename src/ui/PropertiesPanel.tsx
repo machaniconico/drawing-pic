@@ -449,6 +449,7 @@ export function PropertiesPanel() {
   const zigzagSelectedPaths = useEditorStore((state) => state.zigzagSelectedPaths);
   const simplifySelectedPaths = useEditorStore((state) => state.simplifySelectedPaths);
   const puckerBloatSelectedPaths = useEditorStore((state) => state.puckerBloatSelectedPaths);
+  const twistSelectedPaths = useEditorStore((state) => state.twistSelectedPaths);
   const smoothSelectedPaths = useEditorStore((state) => state.smoothSelectedPaths);
   const reverseSelectedPaths = useEditorStore((state) => state.reverseSelectedPaths);
   const [offsetDistance, setOffsetDistance] = useState("10");
@@ -457,6 +458,7 @@ export function PropertiesPanel() {
   const [zigzagRidges, setZigzagRidges] = useState("4");
   const [simplifyTolerance, setSimplifyTolerance] = useState("1");
   const [puckerAmount, setPuckerAmount] = useState("0.3");
+  const [twistAngle, setTwistAngle] = useState("30");
   const selectedNodes = getSelectedNodes({ doc, selection });
 
   if (selectedNodes.length === 0) {
@@ -538,6 +540,17 @@ export function PropertiesPanel() {
     }
 
     puckerBloatSelectedPaths(puckerAmountNumber);
+  };
+
+  const twistAngleNumber = Number(twistAngle);
+  const canApplyTwist = Number.isFinite(twistAngleNumber) && twistAngleNumber !== 0;
+
+  const applyTwist = (): void => {
+    if (!canApplyTwist) {
+      return;
+    }
+
+    twistSelectedPaths((twistAngleNumber * Math.PI) / 180);
   };
 
   const commitSelectionX = (x: number): void => {
@@ -771,6 +784,31 @@ export function PropertiesPanel() {
     </label>
   ) : null;
 
+  const twistRow = canOffsetSelection ? (
+    <label className="properties-panel__row">
+      <span className="properties-panel__label">Twist</span>
+      <span className="properties-panel__offset-controls">
+        <input
+          aria-label="Twist angle in degrees"
+          className="properties-panel__number properties-panel__number--compact"
+          step={5}
+          type="number"
+          value={twistAngle}
+          onChange={(event) => setTwistAngle(event.currentTarget.value)}
+        />
+        <button
+          aria-label="Apply twist"
+          className="properties-panel__button"
+          disabled={!canApplyTwist}
+          onClick={applyTwist}
+          type="button"
+        >
+          Twist
+        </button>
+      </span>
+    </label>
+  ) : null;
+
   const reversePathRow = canOffsetSelection ? (
     <label className="properties-panel__row">
       <span className="properties-panel__label">Path</span>
@@ -993,6 +1031,7 @@ export function PropertiesPanel() {
             {zigzagRow}
             {simplifyRow}
             {puckerBloatRow}
+            {twistRow}
             {reversePathRow}
           </section>
         ) : null}
@@ -2046,6 +2085,7 @@ export function PropertiesPanel() {
           {zigzagRow}
           {simplifyRow}
           {puckerBloatRow}
+          {twistRow}
           {reversePathRow}
         </section>
       ) : null}

@@ -35,6 +35,7 @@ they compose freely with each other, boolean ops, and every exporter:
 - **Simplify** — drop redundant near-collinear anchors within a tolerance
 - **Smooth** — convert every anchor to a smooth auto-tangent point
 - **Pucker & Bloat** — radial handle distortion (bulge out or spike in)
+- **Twist** — rotate anchors around the centroid, scaled by distance
 - **Reverse Path Direction** — flip winding for compound-path / even-odd fills
 - **Boolean** union/subtract/intersect/exclude, convert-to-path, and grouping /
   clipping masks

@@ -1838,6 +1838,49 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(1);
   });
 
+  it("twists selected paths around their centroid in place", () => {
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 10, y: 0 }, handleIn: null, handleOut: null },
+        ],
+        closed: false,
+      },
+    ]);
+    editorStore.getState().addNode(path);
+    editorStore.getState().setSelection([path.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().twistSelectedPaths(Math.PI / 2);
+
+    const node = editorStore.getState().doc.nodes[path.id];
+    if (node?.type !== "path") {
+      throw new Error("expected path node");
+    }
+    // Centroid (5,0), maxDist 5, full 90° at both ends: (10,0)→(5,5), (0,0)→(5,-5).
+    const points = node.subpaths[0]!.anchors.map((a) => a.point);
+    expect(points[0]!.x).toBeCloseTo(5, 6);
+    expect(points[0]!.y).toBeCloseTo(-5, 6);
+    expect(points[1]!.x).toBeCloseTo(5, 6);
+    expect(points[1]!.y).toBeCloseTo(5, 6);
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
+  it("does not push history when twist angle is zero or non-finite", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().twistSelectedPaths(0);
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    editorStore.getState().twistSelectedPaths(Number.NaN);
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
   it("does not push history when pucker/bloat amount is zero or non-finite", () => {
     const rect = createRect(0, 0, 10, 10);
     editorStore.getState().addNode(rect);
