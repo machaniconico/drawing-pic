@@ -1112,6 +1112,22 @@ describe("editorStore", () => {
     expect(canRedo(editorStore.getState().history)).toBe(true);
   });
 
+  it("reports non-empty selection bounds for a group after grouping", () => {
+    const a = createRect(10, 10, 20, 20); // world (10,10)-(30,30)
+    const b = createRect(50, 40, 30, 10); // world (50,40)-(80,50)
+    editorStore.getState().addNode(a);
+    editorStore.getState().addNode(b);
+    editorStore.getState().setSelection([a.id, b.id]);
+    editorStore.getState().groupSelection();
+
+    const groupId = editorStore.getState().selection[0]!;
+    expect(editorStore.getState().doc.nodes[groupId]?.type).toBe("group");
+    // Selecting the group must yield the union bounds of its children, not an
+    // empty box (regression: container worldBounds used to be empty).
+    const bounds = selectionBounds(editorStore.getState().doc, [groupId]);
+    expect(bounds).toEqual({ minX: 10, minY: 10, maxX: 80, maxY: 50 });
+  });
+
   it("toggles the clip flag on a selected group as one undoable history step", () => {
     const artwork = createRect(0, 0, 40, 40);
     const mask = createRect(5, 5, 20, 20);
