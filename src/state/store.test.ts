@@ -1828,6 +1828,39 @@ describe("editorStore", () => {
     expect(editorStore.getState().history.past).toHaveLength(0);
   });
 
+  it("combines selected shapes into one compound path and removes the merged siblings", () => {
+    const outer = createRect(0, 0, 100, 100);
+    const inner = createRect(30, 30, 40, 40);
+    editorStore.getState().addNode(outer);
+    editorStore.getState().addNode(inner);
+    editorStore.getState().setSelection([outer.id, inner.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().combineSelectedPaths();
+
+    expect(editorStore.getState().selection).toEqual([outer.id]);
+    const node = editorStore.getState().doc.nodes[outer.id];
+    if (node?.type !== "path") {
+      throw new Error("expected path node");
+    }
+    expect(node.subpaths).toHaveLength(2);
+    // The merged-in node is gone.
+    expect(editorStore.getState().doc.nodes[inner.id]).toBeUndefined();
+    expect(editorStore.getState().history.past).toHaveLength(1);
+  });
+
+  it("does not push history when combining fewer than two combinable shapes", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeDoc = editorStore.getState().doc;
+
+    editorStore.getState().combineSelectedPaths();
+    expect(editorStore.getState().doc).toBe(beforeDoc);
+    expect(editorStore.getState().history.past).toHaveLength(0);
+  });
+
   it("caps document history at 100 snapshots", () => {
     for (let i = 0; i < 105; i += 1) {
       editorStore.getState().addNode(createRect(i, i, 10, 10));

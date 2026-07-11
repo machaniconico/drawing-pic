@@ -21,6 +21,7 @@ import {
   booleanSelection,
   bringToFront,
   cloneSubtree,
+  combinePaths,
   convertShapeToPath,
   distributeByGap,
   distributeNodes,
@@ -984,6 +985,61 @@ describe("selection operations", () => {
     expect(result).not.toBeNull();
     expect(result?.removeIds).toEqual([first.id, second.id]);
     expect(result?.node.subpaths).toEqual([]);
+  });
+
+  it("combines shapes into one compound path in the target's local space", () => {
+    const doc = createDocument();
+    const outer = createRect(0, 0, 100, 100);
+    const inner = createRect(30, 30, 40, 40);
+    addToFirstLayer(doc, [outer, inner]);
+
+    const result = combinePaths(doc, [outer.id, inner.id]);
+
+    expect(result).not.toBeNull();
+    // Target keeps its id; only the inner shape is removed.
+    expect(result?.node.id).toBe(outer.id);
+    expect(result?.removeIds).toEqual([inner.id]);
+    expect(result?.node.type).toBe("path");
+    // Outer (1) + inner (1) subpaths merged.
+    expect(result?.node.subpaths).toHaveLength(2);
+    // Inner rect anchors are expressed in the outer's local space. Outer's
+    // transform is translate(0,0), so the inner square keeps its world coords.
+    const innerPoints = result?.node.subpaths[1]?.anchors.map((a) => a.point) ?? [];
+    for (const p of innerPoints) {
+      expect(p.x).toBeGreaterThanOrEqual(30 - 1e-9);
+      expect(p.x).toBeLessThanOrEqual(70 + 1e-9);
+      expect(p.y).toBeGreaterThanOrEqual(30 - 1e-9);
+      expect(p.y).toBeLessThanOrEqual(70 + 1e-9);
+    }
+  });
+
+  it("maps merged subpaths through the target's inverse transform", () => {
+    const doc = createDocument();
+    const target = createRect(0, 0, 10, 10);
+    // Offset the target so its local origin differs from world.
+    target.transform = { a: 1, b: 0, c: 0, d: 1, e: 100, f: 0 };
+    const other = createRect(100, 0, 10, 10); // same world position as target
+    addToFirstLayer(doc, [target, other]);
+
+    const result = combinePaths(doc, [target.id, other.id]);
+
+    // The other rect shares the target's world box, so in target-local space it
+    // must land on the same [0,10] square as the target's own subpath.
+    const merged = result?.node.subpaths[1]?.anchors.map((a) => a.point) ?? [];
+    for (const p of merged) {
+      expect(p.x).toBeGreaterThanOrEqual(-1e-9);
+      expect(p.x).toBeLessThanOrEqual(10 + 1e-9);
+    }
+  });
+
+  it("returns null when fewer than two combinable shapes are selected", () => {
+    const doc = createDocument();
+    const rect = createRect(0, 0, 10, 10);
+    const group = createGroup("Group");
+    addToFirstLayer(doc, [rect, group]);
+
+    expect(combinePaths(doc, [rect.id])).toBeNull();
+    expect(combinePaths(doc, [rect.id, group.id])).toBeNull();
   });
 });
 

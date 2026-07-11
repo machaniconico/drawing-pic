@@ -37,6 +37,8 @@ they compose freely with each other, boolean ops, and every exporter:
 - **Reverse Path Direction** — flip winding for compound-path / even-odd fills
 - **Boolean** union/subtract/intersect/exclude, convert-to-path, and grouping /
   clipping masks
+- **Compound Path** — merge selected shapes into one path (holes via reversing
+  an inner subpath under the non-zero fill rule)
 
 ### Layout & workflow
 

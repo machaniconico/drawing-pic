@@ -1,5 +1,5 @@
 import { center, height, isEmpty, unionAll, width, type BBox } from "../core/geometry/bbox";
-import { apply, compose, IDENTITY, invert, rotationAround, scaling, translate, type Matrix } from "../core/geometry/matrix";
+import { apply, applyVector, compose, IDENTITY, invert, rotationAround, scaling, translate, type Matrix } from "../core/geometry/matrix";
 import { type BooleanOp, flattenNodeToPolygons, polygonBoolean } from "../core/geometry/polygonBoolean";
 import type { Vec2 } from "../core/geometry/vector";
 import { createGroup, newId as createNodeId } from "../core/model/factory";
@@ -877,6 +877,79 @@ export const booleanSelection = (
       subpaths,
     },
     removeIds: candidates,
+  };
+};
+
+const combinableShape = (node: SceneNode | undefined): boolean =>
+  node !== undefined &&
+  !node.locked &&
+  (node.type === "path" || node.type === "rect" || node.type === "ellipse");
+
+/**
+ * Merges the subpaths of every selected path/rect/ellipse into the first
+ * (document-order) candidate, forming a single compound path. Each source's
+ * subpaths are transformed into the target's local space so geometry — bezier
+ * handles included — is preserved exactly; the target keeps its id, transform,
+ * z-position, and style. The remaining candidates are returned in `removeIds`.
+ * Returns null unless at least two candidates exist.
+ *
+ * Fills use the non-zero winding rule, so a hole is made by reversing the
+ * inner subpath's direction (see reverseSubPath) after combining.
+ */
+export const combinePaths = (doc: Document, ids: readonly NodeId[]): BooleanSelectionResult | null => {
+  const candidates = topLevelNodeIds(doc, ids).filter((id) => combinableShape(doc.nodes[id]));
+  if (candidates.length < 2) {
+    return null;
+  }
+
+  const targetNode = doc.nodes[candidates[0]!]!;
+  const targetPath = targetNode.type === "path" ? targetNode : convertShapeToPath(targetNode);
+  if (!targetPath) {
+    return null;
+  }
+
+  const targetInverse = invert(targetPath.transform);
+  if (!targetInverse) {
+    return null;
+  }
+
+  const subpaths: SubPath[] = structuredClone(targetPath.subpaths);
+  for (const id of candidates.slice(1)) {
+    const source = doc.nodes[id]!;
+    const sourcePath = source.type === "path" ? source : convertShapeToPath(source);
+    if (!sourcePath) {
+      continue;
+    }
+
+    // target-local = targetInverse ∘ sourceTransform (source-local → world → target-local).
+    const toTargetLocal = compose(targetInverse, sourcePath.transform);
+    for (const subpath of sourcePath.subpaths) {
+      subpaths.push({
+        closed: subpath.closed,
+        anchors: subpath.anchors.map((anchor) => ({
+          point: apply(toTargetLocal, anchor.point),
+          handleIn: anchor.handleIn ? applyVector(toTargetLocal, anchor.handleIn) : null,
+          handleOut: anchor.handleOut ? applyVector(toTargetLocal, anchor.handleOut) : null,
+        })),
+      });
+    }
+  }
+
+  return {
+    node: {
+      id: targetNode.id,
+      name: targetNode.name,
+      type: "path",
+      transform: structuredClone(targetPath.transform),
+      opacity: targetPath.opacity,
+      visible: targetPath.visible,
+      locked: targetPath.locked,
+      fill: structuredClone(targetPath.fill),
+      stroke: targetPath.stroke === null ? null : structuredClone(targetPath.stroke),
+      blendMode: targetPath.blendMode,
+      subpaths,
+    },
+    removeIds: candidates.slice(1),
   };
 };
 

@@ -52,6 +52,7 @@ export function AlignPanel() {
   const sendToBack = useEditorStore((state) => state.sendToBack);
   const setKeyObject = useEditorStore((state) => state.setKeyObject);
   const toggleClipMask = useEditorStore((state) => state.toggleClipMask);
+  const combineSelectedPaths = useEditorStore((state) => state.combineSelectedPaths);
 
   const selectionCount = selection.length;
   const selectedNode = selectionCount === 1 ? nodes[selection[0]!] : undefined;
@@ -60,6 +61,15 @@ export function AlignPanel() {
   const canDistributeByGap = canAlign;
   const canArrange = selectionCount >= 1;
   const canToggleClipMask = selectionCount >= 2 || selectedNode?.type === "group";
+  const canCombinePaths =
+    selection.filter((id) => {
+      const node = nodes[id];
+      return (
+        node !== undefined &&
+        !node.locked &&
+        (node.type === "path" || node.type === "rect" || node.type === "ellipse")
+      );
+    }).length >= 2;
   const activeKeyObjectId = keyObjectId !== null && selection.includes(keyObjectId) ? keyObjectId : "";
   const arrangeActions: ArrangeAction[] = [
     { action: bringToFront, icon: "FF", label: "Bring to Front", title: "Bring selection to front" },
@@ -212,6 +222,18 @@ export function AlignPanel() {
               CL
             </span>
             <span className="align-panel__button-label">Clip</span>
+          </button>
+          <button
+            type="button"
+            className="align-panel__button align-panel__button--wide"
+            title="Combine selected shapes into one compound path"
+            disabled={!canCombinePaths}
+            onClick={combineSelectedPaths}
+          >
+            <span className="align-panel__button-icon" aria-hidden="true">
+              CP
+            </span>
+            <span className="align-panel__button-label">Compound</span>
           </button>
         </div>
       </section>

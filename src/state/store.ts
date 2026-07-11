@@ -18,6 +18,7 @@ import {
   bringToFront as computeBringToFront,
   booleanSelection as computeBooleanSelection,
   cloneSubtree,
+  combinePaths as computeCombinePaths,
   convertShapeToPath as computeConvertShapeToPath,
   distributeByGap as computeDistributeByGap,
   distributeNodes as computeDistributeNodes,
@@ -127,6 +128,7 @@ export interface EditorActions {
   ungroupSelection: () => void;
   toggleClipMask: () => void;
   booleanOp: (op: BooleanOp) => void;
+  combineSelectedPaths: () => void;
   convertSelectionToPaths: () => void;
   outlineSelectedStrokes: () => void;
   offsetSelectedPaths: (distance: number) => void;
@@ -867,6 +869,26 @@ export const editorStore = createStore<EditorStore>()((set) => ({
 
       state.doc.nodes[result.node.id] = result.node;
       insertBooleanResult(state.doc, parent.parentId, result.node.id, result.removeIds);
+      for (const id of result.removeIds) {
+        removeFromParent(state.doc, id);
+        delete state.doc.nodes[id];
+      }
+      state.selection = [result.node.id];
+      clearMissingKeyObject(state);
+      return true;
+    });
+  },
+
+  combineSelectedPaths: () => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const result = computeCombinePaths(sourceDoc, state.selection);
+      if (!result) {
+        return false;
+      }
+
+      // The target keeps its id and z-position; only the merged-in siblings go.
+      state.doc.nodes[result.node.id] = result.node;
       for (const id of result.removeIds) {
         removeFromParent(state.doc, id);
         delete state.doc.nodes[id];
