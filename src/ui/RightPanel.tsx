@@ -7,6 +7,7 @@ import { SnapSettings } from "./SnapSettings";
 import { ExportMenu } from "./ExportMenu";
 import { ImportButton } from "./ImportButton";
 import { DocSettings } from "./DocSettings";
+import { SwatchesPanel } from "./SwatchesPanel";
 import "./RightPanel.css";
 
 export function RightPanel() {
@@ -50,6 +51,20 @@ export function RightPanel() {
         </header>
         <div className="right-panel__content right-panel__content--properties">
           <PropertiesPanel />
+        </div>
+      </section>
+
+      <div className="right-panel__divider" role="presentation" />
+
+      <section
+        aria-labelledby="right-panel-swatches-heading"
+        className="right-panel__section right-panel__section--swatches"
+      >
+        <header className="right-panel__header">
+          <h2 id="right-panel-swatches-heading">Swatches</h2>
+        </header>
+        <div className="right-panel__content right-panel__content--swatches">
+          <SwatchesPanel />
         </div>
       </section>
 
