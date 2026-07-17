@@ -16,7 +16,9 @@ jobs:
         if: ${{ hashFiles('package.json') != '' }}
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 24 LTS: pnpm 10 uses node:sqlite internally, which only exists
+          # on Node 22.5+. Node 20 fails install with ERR_UNKNOWN_BUILTIN_MODULE.
+          node-version: 24
 
       - name: Install dependencies
         if: ${{ hashFiles('package.json') != '' }}
@@ -46,4 +48,18 @@ jobs:
             echo "Add a 'test' script to package.json, or create a '.auto-merge-no-test-ok'"
             echo "file in the repo root to explicitly opt out (NOT a real safety gate)."
             exit 1
+          fi
+
+      - name: Typecheck and build
+        if: ${{ hashFiles('pnpm-lock.yaml') != '' }}
+        run: |
+          if node -e "process.exit((require('./package.json').scripts||{}).typecheck?0:1)"; then
+            pnpm typecheck
+          else
+            echo "no typecheck script — skipping"
+          fi
+          if node -e "process.exit((require('./package.json').scripts||{}).build?0:1)"; then
+            pnpm build
+          else
+            echo "no build script — skipping"
           fi

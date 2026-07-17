@@ -28,7 +28,8 @@
   color: #c8c8cc;
 }
 
-.export-menu__number-input {
+.export-menu__number-input,
+.export-menu__select {
   min-width: 0;
   height: 30px;
   box-sizing: border-box;
@@ -40,9 +41,38 @@
   padding: 0 8px;
 }
 
-.export-menu__number-input:focus-visible {
+.export-menu__number-input:focus-visible,
+.export-menu__select:focus-visible,
+.export-menu__range-input:focus-visible {
   outline: 2px solid #8ab4f8;
   outline-offset: 2px;
+}
+
+.export-menu__select {
+  appearance: auto;
+}
+
+.export-menu__quality-field {
+  grid-column: 1 / -1;
+}
+
+.export-menu__quality-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.export-menu__range-input {
+  min-width: 0;
+  accent-color: #8ab4f8;
+}
+
+.export-menu__quality-control output {
+  color: #f2f2f2;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .export-menu__checkbox {

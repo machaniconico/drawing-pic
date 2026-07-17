@@ -1,2 +1,5 @@
-allowBuilds:
-  esbuild: set this to true or false
+# esbuild ships its native binary via a build script; pnpm 10+ ignores
+# dependency build scripts by default and errors under --frozen-lockfile
+# (ERR_PNPM_IGNORED_BUILDS). Explicitly allow esbuild's build to run.
+onlyBuiltDependencies:
+  - esbuild

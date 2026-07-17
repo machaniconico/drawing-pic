@@ -27,6 +27,7 @@ import { hitTest } from "../core/model/hittest";
 import { formatAngle, formatDistance, measureBetween } from "../core/model/measure";
 import { deleteAnchor, insertAnchor, moveAnchor, moveHandle, setAnchorType, type HandleSide } from "../core/model/pathEdit";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
+import { computeSmartGuides, type SmartGuide } from "../core/model/smartGuides";
 import {
   computeSnap,
   computeTransformSnap,
@@ -581,16 +582,30 @@ const computeMoveGesture = (
   }
 
   const movedBounds = translateBBox(drag.initialBounds, rawDx, rawDy);
+  const objectCandidates = objectSnapCandidates(drag.candidateBounds, snapSettings);
+  const smartGuides = computeSmartGuides(
+    movedBounds,
+    objectCandidates,
+    SNAP_THRESHOLD_SCREEN_PX / viewport.zoom,
+  );
   const snap = computeSnap(
     movedBounds,
-    objectSnapCandidates(drag.candidateBounds, snapSettings),
+    objectCandidates,
     SNAP_THRESHOLD_SCREEN_PX / viewport.zoom,
     guideSnapCandidates(drag.originalDoc.guides, snapSettings),
   );
   const gridDx = gridSnapDelta(movedBounds.minX, snapSettings);
   const gridDy = gridSnapDelta(movedBounds.minY, snapSettings);
-  const snapDx = snap.guidesX.length > 0 ? snap.dx : gridDx;
-  const snapDy = snap.guidesY.length > 0 ? snap.dy : gridDy;
+  const smartGuidesX = smartGuides.guides.filter((guide) => guide.axis === "x");
+  const smartGuidesY = smartGuides.guides.filter((guide) => guide.axis === "y");
+  const usesSmartGuideX = snap.alignmentGuidesX.length > 0 && smartGuidesX.length > 0;
+  const usesSmartGuideY = snap.alignmentGuidesY.length > 0 && smartGuidesY.length > 0;
+  const snapDx = usesSmartGuideX
+    ? smartGuides.delta.x
+    : snap.guidesX.length > 0 ? snap.dx : gridDx;
+  const snapDy = usesSmartGuideY
+    ? smartGuides.delta.y
+    : snap.guidesY.length > 0 ? snap.dy : gridDy;
 
   return {
     dx: rawDx + snapDx,
@@ -598,11 +613,16 @@ const computeMoveGesture = (
     guides: {
       guidesX: snap.guidesX,
       guidesY: snap.guidesY,
-      alignmentGuidesX: snap.alignmentGuidesX,
-      alignmentGuidesY: snap.alignmentGuidesY,
+      alignmentGuidesX: usesSmartGuideX ? smartGuidesToAlignmentLines(smartGuidesX) : [],
+      alignmentGuidesY: usesSmartGuideY ? smartGuidesToAlignmentLines(smartGuidesY) : [],
     },
   };
 };
+
+const smartGuidesToAlignmentLines = (guides: readonly SmartGuide[]): SnapAlignmentLine[] =>
+  guides.map((guide) => guide.axis === "x"
+    ? { position: guide.start.x, spanMin: guide.start.y, spanMax: guide.end.y }
+    : { position: guide.start.y, spanMin: guide.start.x, spanMax: guide.end.x });
 
 type XTransformEdge = "minX" | "maxX";
 type YTransformEdge = "minY" | "maxY";

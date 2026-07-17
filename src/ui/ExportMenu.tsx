@@ -1,6 +1,10 @@
 import { useRef, useState } from "react";
 import { deserializeDocument, serializeDocument } from "../io/docSerialize";
 import { documentToPngBlob } from "../io/pngExport";
+import {
+  documentToRasterBlob,
+  type RasterExportFormat,
+} from "../io/rasterExport";
 import { documentToSvg } from "../io/svgExport";
 import { useEditorStore } from "../state/store";
 import "./ExportMenu.css";
@@ -16,7 +20,10 @@ const downloadBlob = (blob: Blob, filename: string): void => {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 };
 
-const exportFileName = (name: string, extension: "svg" | "png" | "json"): string => {
+type ExportExtension = "svg" | "png" | "jpeg" | "webp" | "json";
+type RasterFormat = "png" | RasterExportFormat;
+
+const exportFileName = (name: string, extension: ExportExtension): string => {
   const base = name.trim().length > 0 ? name.trim() : "Untitled";
   return `${base.replace(/[\\/:*?"<>|]+/g, "-")}.${extension}`;
 };
@@ -25,6 +32,8 @@ export function ExportMenu() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [scale, setScale] = useState(1);
   const [selectionOnly, setSelectionOnly] = useState(false);
+  const [rasterFormat, setRasterFormat] = useState<RasterFormat>("png");
+  const [quality, setQuality] = useState(0.9);
   const doc = useEditorStore((state) => state.doc);
   const selection = useEditorStore((state) => state.selection);
   const loadDocument = useEditorStore((state) => state.loadDocument);
@@ -37,13 +46,22 @@ export function ExportMenu() {
     downloadBlob(blob, exportFileName(doc.name, "svg"));
   };
 
-  const handlePngExport = (): void => {
-    void documentToPngBlob(doc, exportOptions)
+  const handleRasterExport = (): void => {
+    const blobPromise =
+      rasterFormat === "png"
+        ? documentToPngBlob(doc, exportOptions)
+        : documentToRasterBlob(doc, {
+            ...exportOptions,
+            format: rasterFormat,
+            quality,
+          });
+
+    void blobPromise
       .then((blob) => {
-        downloadBlob(blob, exportFileName(doc.name, "png"));
+        downloadBlob(blob, exportFileName(doc.name, rasterFormat));
       })
       .catch((error: unknown) => {
-        console.error("PNG export failed.", error);
+        console.error(`${rasterFormat.toUpperCase()} export failed.`, error);
       });
   };
 
@@ -60,6 +78,11 @@ export function ExportMenu() {
   const handleScaleChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
     const nextScale = event.currentTarget.valueAsNumber;
     setScale(Number.isFinite(nextScale) ? Math.max(0.1, nextScale) : 1);
+  };
+
+  const handleQualityChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
+    const nextQuality = event.currentTarget.valueAsNumber;
+    setQuality(Number.isFinite(nextQuality) ? Math.min(1, Math.max(0, nextQuality)) : 0.9);
   };
 
   const handleJsonFileChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
@@ -100,6 +123,35 @@ export function ExportMenu() {
           onChange={handleScaleChange}
         />
       </label>
+      <label className="export-menu__field">
+        <span className="export-menu__label">Raster format</span>
+        <select
+          className="export-menu__select"
+          value={rasterFormat}
+          onChange={(event) => setRasterFormat(event.currentTarget.value as RasterFormat)}
+        >
+          <option value="png">PNG</option>
+          <option value="jpeg">JPEG</option>
+          <option value="webp">WebP</option>
+        </select>
+      </label>
+      {rasterFormat !== "png" ? (
+        <label className="export-menu__field export-menu__quality-field">
+          <span className="export-menu__label">Quality</span>
+          <span className="export-menu__quality-control">
+            <input
+              className="export-menu__range-input"
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={quality}
+              onChange={handleQualityChange}
+            />
+            <output>{Math.round(quality * 100)}%</output>
+          </span>
+        </label>
+      ) : null}
       <label className="export-menu__checkbox">
         <input
           type="checkbox"
@@ -119,8 +171,8 @@ export function ExportMenu() {
       <button className="export-menu__button" type="button" onClick={handleSvgExport}>
         Export SVG
       </button>
-      <button className="export-menu__button" type="button" onClick={handlePngExport}>
-        Export PNG
+      <button className="export-menu__button" type="button" onClick={handleRasterExport}>
+        Export {rasterFormat === "jpeg" ? "JPEG" : rasterFormat === "webp" ? "WebP" : "PNG"}
       </button>
     </div>
   );
