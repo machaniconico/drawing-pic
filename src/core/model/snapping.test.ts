@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { fromRect } from "../geometry/bbox";
-import { computeSnap, computeTransformSnap, snapRotation, snapToGrid } from "./snapping";
+import {
+  computeEqualSpacingIndicators,
+  computeNearestDistanceBadges,
+  computeSnap,
+  computeTransformSnap,
+  snapRotation,
+  snapToGrid,
+} from "./snapping";
 
 const degToRad = (degrees: number): number => (degrees * Math.PI) / 180;
 
@@ -283,5 +290,83 @@ describe("model snapping", () => {
       alignmentGuidesX: [],
       alignmentGuidesY: [],
     });
+  });
+
+  it("reports the edge distance to the nearest object for a measurement badge", () => {
+    const result = computeNearestDistanceBadges(
+      fromRect(0, 0, 10, 10),
+      [fromRect(100, 0, 10, 10), fromRect(30, 0, 20, 10)],
+    );
+
+    expect(result).toEqual([
+      {
+        axis: "x",
+        distance: 20,
+        start: { x: 10, y: 5 },
+        end: { x: 30, y: 5 },
+      },
+    ]);
+  });
+
+  it("reports both axis distances when the nearest object is diagonal", () => {
+    expect(
+      computeNearestDistanceBadges(
+        fromRect(20, 20, 10, 10),
+        [fromRect(0, 0, 10, 10)],
+      ),
+    ).toEqual([
+      {
+        axis: "x",
+        distance: 10,
+        start: { x: 10, y: 15 },
+        end: { x: 20, y: 15 },
+      },
+      {
+        axis: "y",
+        distance: 10,
+        start: { x: 15, y: 10 },
+        end: { x: 15, y: 20 },
+      },
+    ]);
+  });
+
+  it("creates equal-spacing indicators for three aligned objects", () => {
+    expect(
+      computeEqualSpacingIndicators(
+        fromRect(20, 0, 10, 10),
+        [fromRect(0, 0, 10, 10), fromRect(40, 0, 10, 10)],
+        0,
+      ),
+    ).toEqual([
+      {
+        axis: "x",
+        distance: 10,
+        start: { x: 10, y: 5 },
+        end: { x: 20, y: 5 },
+      },
+      {
+        axis: "x",
+        distance: 10,
+        start: { x: 30, y: 5 },
+        end: { x: 40, y: 5 },
+      },
+    ]);
+  });
+
+  it("treats the equal-spacing tolerance boundary as inclusive", () => {
+    const candidates = [fromRect(0, 0, 10, 10), fromRect(40, 0, 10, 10)];
+
+    expect(computeEqualSpacingIndicators(fromRect(20.5, 0, 10, 10), candidates, 1)).toHaveLength(2);
+    expect(computeEqualSpacingIndicators(fromRect(20.5, 0, 10, 10), candidates, 0.99)).toEqual([]);
+  });
+
+  it("does not report equal spacing for objects outside the same row or column", () => {
+    expect(
+      computeEqualSpacingIndicators(
+        fromRect(20, 30, 10, 10),
+        [fromRect(0, 0, 10, 10), fromRect(40, 0, 10, 10)],
+        1,
+      ),
+    ).toEqual([]);
   });
 });

@@ -27,13 +27,16 @@ import { hitTest } from "../core/model/hittest";
 import { formatAngle, formatDistance, measureBetween } from "../core/model/measure";
 import { deleteAnchor, insertAnchor, moveAnchor, moveHandle, setAnchorType, type HandleSide } from "../core/model/pathEdit";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
-import { computeSmartGuides, type SmartGuide } from "../core/model/smartGuides";
 import {
+  computeEqualSpacingIndicators,
+  computeNearestDistanceBadges,
   computeSnap,
   computeTransformSnap,
   snapRotation,
   snapToGrid,
+  type EqualSpacingIndicator,
   type SnapAlignmentLine,
+  type SnapMeasurementBadge,
   type TransformSnapEdgeResult,
   type TransformSnapGuide,
   type TransformSnapResult,
@@ -185,6 +188,8 @@ interface SnapGuides {
   guidesY: number[];
   alignmentGuidesX: SnapAlignmentLine[];
   alignmentGuidesY: SnapAlignmentLine[];
+  measurementBadges: SnapMeasurementBadge[];
+  equalSpacingIndicators: EqualSpacingIndicator[];
 }
 
 interface MoveGesture {
@@ -233,6 +238,7 @@ const PEN_CLOSE_THRESHOLD = 6;
 const PEN_ANCHOR_SIZE = 6;
 const DRAG_MOVE_THRESHOLD = 2;
 const SNAP_THRESHOLD_SCREEN_PX = 6;
+const EQUAL_SPACING_TOLERANCE_SCREEN_PX = 1;
 const MATRIX_EPSILON = 1e-9;
 const SCALE_EPSILON = 1e-6;
 const SNAP_ROTATION_RADIANS = Math.PI / 12;
@@ -262,6 +268,8 @@ const emptySnapGuides = (): SnapGuides => ({
   guidesY: [],
   alignmentGuidesX: [],
   alignmentGuidesY: [],
+  measurementBadges: [],
+  equalSpacingIndicators: [],
 });
 
 const OPPOSITE_RESIZE_HANDLES: Record<ResizeHandleId, ResizeHandleId> = {
@@ -583,11 +591,6 @@ const computeMoveGesture = (
 
   const movedBounds = translateBBox(drag.initialBounds, rawDx, rawDy);
   const objectCandidates = objectSnapCandidates(drag.candidateBounds, snapSettings);
-  const smartGuides = computeSmartGuides(
-    movedBounds,
-    objectCandidates,
-    SNAP_THRESHOLD_SCREEN_PX / viewport.zoom,
-  );
   const snap = computeSnap(
     movedBounds,
     objectCandidates,
@@ -596,16 +599,9 @@ const computeMoveGesture = (
   );
   const gridDx = gridSnapDelta(movedBounds.minX, snapSettings);
   const gridDy = gridSnapDelta(movedBounds.minY, snapSettings);
-  const smartGuidesX = smartGuides.guides.filter((guide) => guide.axis === "x");
-  const smartGuidesY = smartGuides.guides.filter((guide) => guide.axis === "y");
-  const usesSmartGuideX = snap.alignmentGuidesX.length > 0 && smartGuidesX.length > 0;
-  const usesSmartGuideY = snap.alignmentGuidesY.length > 0 && smartGuidesY.length > 0;
-  const snapDx = usesSmartGuideX
-    ? smartGuides.delta.x
-    : snap.guidesX.length > 0 ? snap.dx : gridDx;
-  const snapDy = usesSmartGuideY
-    ? smartGuides.delta.y
-    : snap.guidesY.length > 0 ? snap.dy : gridDy;
+  const snapDx = snap.guidesX.length > 0 ? snap.dx : gridDx;
+  const snapDy = snap.guidesY.length > 0 ? snap.dy : gridDy;
+  const snappedBounds = translateBBox(movedBounds, snapDx, snapDy);
 
   return {
     dx: rawDx + snapDx,
@@ -613,16 +609,17 @@ const computeMoveGesture = (
     guides: {
       guidesX: snap.guidesX,
       guidesY: snap.guidesY,
-      alignmentGuidesX: usesSmartGuideX ? smartGuidesToAlignmentLines(smartGuidesX) : [],
-      alignmentGuidesY: usesSmartGuideY ? smartGuidesToAlignmentLines(smartGuidesY) : [],
+      alignmentGuidesX: snap.alignmentGuidesX,
+      alignmentGuidesY: snap.alignmentGuidesY,
+      measurementBadges: computeNearestDistanceBadges(snappedBounds, objectCandidates),
+      equalSpacingIndicators: computeEqualSpacingIndicators(
+        snappedBounds,
+        objectCandidates,
+        EQUAL_SPACING_TOLERANCE_SCREEN_PX / viewport.zoom,
+      ),
     },
   };
 };
-
-const smartGuidesToAlignmentLines = (guides: readonly SmartGuide[]): SnapAlignmentLine[] =>
-  guides.map((guide) => guide.axis === "x"
-    ? { position: guide.start.x, spanMin: guide.start.y, spanMax: guide.end.y }
-    : { position: guide.start.y, spanMin: guide.start.x, spanMax: guide.end.x });
 
 type XTransformEdge = "minX" | "maxX";
 type YTransformEdge = "minY" | "maxY";
@@ -679,6 +676,8 @@ const transformSnapGuidesForActiveEdges = (
     guidesY: yEdge === null || snap[yEdge].guide === null ? [] : [snap[yEdge].guide],
     alignmentGuidesX: mergeSnapAlignmentLines(alignmentGuidesX),
     alignmentGuidesY: mergeSnapAlignmentLines(alignmentGuidesY),
+    measurementBadges: [],
+    equalSpacingIndicators: [],
   };
 };
 
@@ -1434,6 +1433,8 @@ const computeNodeAnchorGesture = (
       guidesY: snap.guidesY,
       alignmentGuidesX: snap.alignmentGuidesX,
       alignmentGuidesY: snap.alignmentGuidesY,
+      measurementBadges: [],
+      equalSpacingIndicators: [],
     },
   };
 };
@@ -2096,9 +2097,15 @@ const drawSnapGuides = (
   ctx: CanvasRenderingContext2D,
   guides: SnapGuides,
   viewport: EditorViewport,
+  size: Size,
   dpr: number,
 ): void => {
-  if (guides.alignmentGuidesX.length === 0 && guides.alignmentGuidesY.length === 0) {
+  if (
+    guides.alignmentGuidesX.length === 0 &&
+    guides.alignmentGuidesY.length === 0 &&
+    guides.measurementBadges.length === 0 &&
+    guides.equalSpacingIndicators.length === 0
+  ) {
     return;
   }
 
@@ -2124,6 +2131,74 @@ const drawSnapGuides = (
     ctx.moveTo(start.x, start.y + 0.5);
     ctx.lineTo(end.x, end.y + 0.5);
     ctx.stroke();
+  }
+
+  ctx.strokeStyle = "#ff2d8f";
+  ctx.lineWidth = 1.25;
+  ctx.setLineDash([3, 3]);
+  for (const indicator of guides.equalSpacingIndicators) {
+    const start = worldToScreen(indicator.start, viewport);
+    const end = worldToScreen(indicator.end, viewport);
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    if (indicator.axis === "x") {
+      ctx.moveTo(start.x, start.y - 4);
+      ctx.lineTo(start.x, start.y + 4);
+      ctx.moveTo(end.x, end.y - 4);
+      ctx.lineTo(end.x, end.y + 4);
+    } else {
+      ctx.moveTo(start.x - 4, start.y);
+      ctx.lineTo(start.x + 4, start.y);
+      ctx.moveTo(end.x - 4, end.y);
+      ctx.lineTo(end.x + 4, end.y);
+    }
+    ctx.stroke();
+  }
+
+  ctx.setLineDash([]);
+  ctx.font = "11px system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+  ctx.textBaseline = "middle";
+  for (const badge of guides.measurementBadges) {
+    const start = worldToScreen(badge.start, viewport);
+    const end = worldToScreen(badge.end, viewport);
+    const midpointScreen = {
+      x: (start.x + end.x) / 2,
+      y: (start.y + end.y) / 2,
+    };
+
+    ctx.strokeStyle = "rgba(255, 45, 143, 0.8)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    if (badge.axis === "x") {
+      ctx.moveTo(start.x, start.y - 3);
+      ctx.lineTo(start.x, start.y + 3);
+      ctx.moveTo(end.x, end.y - 3);
+      ctx.lineTo(end.x, end.y + 3);
+    } else {
+      ctx.moveTo(start.x - 3, start.y);
+      ctx.lineTo(start.x + 3, start.y);
+      ctx.moveTo(end.x - 3, end.y);
+      ctx.lineTo(end.x + 3, end.y);
+    }
+    ctx.stroke();
+
+    const label = `${formatDistance(badge.distance)} px`;
+    const paddingX = 5;
+    const height = 18;
+    const width = Math.ceil(ctx.measureText(label).width + paddingX * 2);
+    const desiredX = midpointScreen.x - width / 2 + (badge.axis === "y" ? 8 : 0);
+    const desiredY = midpointScreen.y - height / 2 + (badge.axis === "x" ? -9 : 0);
+    const x = clamp(desiredX, 4, Math.max(4, size.width - width - 4));
+    const y = clamp(desiredY, 4, Math.max(4, size.height - height - 4));
+    ctx.fillStyle = "rgba(255, 255, 255, 0.96)";
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = "rgba(255, 45, 143, 0.65)";
+    ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
+    ctx.fillStyle = "#c2185b";
+    ctx.fillText(label, x + paddingX, y + height / 2);
   }
 
   ctx.restore();
@@ -2366,7 +2441,7 @@ export default function CanvasView() {
         if (activeTool === "node") {
           drawNodeEditOverlay(ctx, doc, selection, viewport, dpr, selectedPathAnchorRef.current);
         }
-        drawSnapGuides(ctx, snapGuidesRef.current, viewport, dpr);
+        drawSnapGuides(ctx, snapGuidesRef.current, viewport, size, dpr);
         drawRotationReadout(ctx, rotationReadoutRef.current, size, dpr);
         drawMeasureOverlay(ctx, measureOverlayRef.current, viewport, size, dpr);
         drawShapePreview(ctx, dragRef.current, viewport, dpr);

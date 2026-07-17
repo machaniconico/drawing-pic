@@ -1,4 +1,5 @@
 import type { BBox } from "../geometry/bbox";
+import type { Vec2 } from "../geometry/vector";
 import type { Guide } from "./types";
 
 export interface SnapResult {
@@ -14,6 +15,20 @@ export interface SnapAlignmentLine {
   position: number;
   spanMin: number;
   spanMax: number;
+}
+
+export interface SnapMeasurementBadge {
+  readonly axis: "x" | "y";
+  readonly distance: number;
+  readonly start: Vec2;
+  readonly end: Vec2;
+}
+
+export interface EqualSpacingIndicator {
+  readonly axis: "x" | "y";
+  readonly distance: number;
+  readonly start: Vec2;
+  readonly end: Vec2;
 }
 
 export interface TransformSnapEdgeResult {
@@ -76,6 +91,224 @@ const yAnchors = (box: BBox): readonly number[] => [
   midpoint(box.minY, box.maxY),
   box.maxY,
 ];
+
+const axisGap = (
+  firstMin: number,
+  firstMax: number,
+  secondMin: number,
+  secondMax: number,
+): number => {
+  if (firstMax < secondMin) {
+    return secondMin - firstMax;
+  }
+  if (secondMax < firstMin) {
+    return firstMin - secondMax;
+  }
+  return 0;
+};
+
+const closestCoordinate = (
+  firstMin: number,
+  firstMax: number,
+  secondMin: number,
+  secondMax: number,
+): number => {
+  const overlapMin = Math.max(firstMin, secondMin);
+  const overlapMax = Math.min(firstMax, secondMax);
+  if (overlapMin <= overlapMax) {
+    return midpoint(overlapMin, overlapMax);
+  }
+  return firstMax < secondMin
+    ? midpoint(firstMax, secondMin)
+    : midpoint(secondMax, firstMin);
+};
+
+const measurementBetweenBoxes = (
+  moving: BBox,
+  candidate: BBox,
+): SnapMeasurementBadge[] => {
+  const xGap = axisGap(moving.minX, moving.maxX, candidate.minX, candidate.maxX);
+  const yGap = axisGap(moving.minY, moving.maxY, candidate.minY, candidate.maxY);
+  const badges: SnapMeasurementBadge[] = [];
+
+  if (xGap > SNAP_EPSILON) {
+    const y = closestCoordinate(moving.minY, moving.maxY, candidate.minY, candidate.maxY);
+    const startX = moving.maxX < candidate.minX ? moving.maxX : candidate.maxX;
+    const endX = moving.maxX < candidate.minX ? candidate.minX : moving.minX;
+    badges.push({
+      axis: "x",
+      distance: xGap,
+      start: { x: startX, y },
+      end: { x: endX, y },
+    });
+  }
+
+  if (yGap > SNAP_EPSILON) {
+    const x = closestCoordinate(moving.minX, moving.maxX, candidate.minX, candidate.maxX);
+    const startY = moving.maxY < candidate.minY ? moving.maxY : candidate.maxY;
+    const endY = moving.maxY < candidate.minY ? candidate.minY : moving.minY;
+    badges.push({
+      axis: "y",
+      distance: yGap,
+      start: { x, y: startY },
+      end: { x, y: endY },
+    });
+  }
+
+  return badges;
+};
+
+/** Returns edge-to-edge distance badges for the geometrically nearest object. */
+export const computeNearestDistanceBadges = (
+  moving: BBox,
+  candidates: readonly BBox[],
+): SnapMeasurementBadge[] => {
+  let nearest: BBox | null = null;
+  let nearestDistance = Infinity;
+
+  for (const candidate of candidates) {
+    const xGap = axisGap(moving.minX, moving.maxX, candidate.minX, candidate.maxX);
+    const yGap = axisGap(moving.minY, moving.maxY, candidate.minY, candidate.maxY);
+    const distance = Math.hypot(xGap, yGap);
+    if (distance < nearestDistance) {
+      nearest = candidate;
+      nearestDistance = distance;
+    }
+  }
+
+  return nearest === null ? [] : measurementBetweenBoxes(moving, nearest);
+};
+
+const orthogonalRangesOverlap = (
+  boxes: readonly BBox[],
+  axis: "x" | "y",
+  tolerance: number,
+): boolean => {
+  const overlapMin = Math.max(...boxes.map((box) => axis === "x" ? box.minY : box.minX));
+  const overlapMax = Math.min(...boxes.map((box) => axis === "x" ? box.maxY : box.maxX));
+  return overlapMin <= overlapMax + tolerance;
+};
+
+const spacingIndicatorsForTriple = (
+  moving: BBox,
+  first: BBox,
+  second: BBox,
+  axis: "x" | "y",
+  tolerance: number,
+): EqualSpacingIndicator[] => {
+  const boxes = [moving, first, second];
+  if (!orthogonalRangesOverlap(boxes, axis, tolerance)) {
+    return [];
+  }
+
+  const minKey = axis === "x" ? "minX" : "minY";
+  const maxKey = axis === "x" ? "maxX" : "maxY";
+  const ordered = [...boxes].sort((a, b) => a[minKey] - b[minKey]);
+  const left = ordered[0];
+  const middle = ordered[1];
+  const right = ordered[2];
+  if (left === undefined || middle === undefined || right === undefined) {
+    return [];
+  }
+
+  const firstGap = middle[minKey] - left[maxKey];
+  const secondGap = right[minKey] - middle[maxKey];
+  if (
+    firstGap < -SNAP_EPSILON ||
+    secondGap < -SNAP_EPSILON ||
+    Math.abs(firstGap - secondGap) > Math.max(0, tolerance)
+  ) {
+    return [];
+  }
+
+  const distance = (firstGap + secondGap) / 2;
+  const crossMin = Math.max(...boxes.map((box) => axis === "x" ? box.minY : box.minX));
+  const crossMax = Math.min(...boxes.map((box) => axis === "x" ? box.maxY : box.maxX));
+  const cross = midpoint(crossMin, crossMax);
+  return axis === "x"
+    ? [
+        {
+          axis,
+          distance,
+          start: { x: left.maxX, y: cross },
+          end: { x: middle.minX, y: cross },
+        },
+        {
+          axis,
+          distance,
+          start: { x: middle.maxX, y: cross },
+          end: { x: right.minX, y: cross },
+        },
+      ]
+    : [
+        {
+          axis,
+          distance,
+          start: { x: cross, y: left.maxY },
+          end: { x: cross, y: middle.minY },
+        },
+        {
+          axis,
+          distance,
+          start: { x: cross, y: middle.maxY },
+          end: { x: cross, y: right.minY },
+        },
+      ];
+};
+
+const addUniqueSpacingIndicator = (
+  indicators: EqualSpacingIndicator[],
+  indicator: EqualSpacingIndicator,
+): void => {
+  const duplicate = indicators.some(
+    (candidate) =>
+      candidate.axis === indicator.axis &&
+      Math.abs(candidate.start.x - indicator.start.x) <= SNAP_EPSILON &&
+      Math.abs(candidate.start.y - indicator.start.y) <= SNAP_EPSILON &&
+      Math.abs(candidate.end.x - indicator.end.x) <= SNAP_EPSILON &&
+      Math.abs(candidate.end.y - indicator.end.y) <= SNAP_EPSILON,
+  );
+  if (!duplicate) {
+    indicators.push(indicator);
+  }
+};
+
+/** Detects equal edge gaps in aligned triples that include the moving object. */
+export const computeEqualSpacingIndicators = (
+  moving: BBox,
+  candidates: readonly BBox[],
+  tolerance: number,
+): EqualSpacingIndicator[] => {
+  if (candidates.length < 2 || tolerance < 0) {
+    return [];
+  }
+
+  const indicators: EqualSpacingIndicator[] = [];
+  for (let firstIndex = 0; firstIndex < candidates.length - 1; firstIndex += 1) {
+    const first = candidates[firstIndex];
+    if (first === undefined) {
+      continue;
+    }
+    for (let secondIndex = firstIndex + 1; secondIndex < candidates.length; secondIndex += 1) {
+      const second = candidates[secondIndex];
+      if (second === undefined) {
+        continue;
+      }
+      for (const axis of ["x", "y"] as const) {
+        for (const indicator of spacingIndicatorsForTriple(
+          moving,
+          first,
+          second,
+          axis,
+          tolerance,
+        )) {
+          addUniqueSpacingIndicator(indicators, indicator);
+        }
+      }
+    }
+  }
+  return indicators;
+};
 
 const computeAxisSnap = (
   movingAnchors: readonly number[],
