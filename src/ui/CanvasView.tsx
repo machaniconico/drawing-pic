@@ -23,6 +23,7 @@ import {
 import { apply, applyVector, compose, IDENTITY, invert, rotation, scaling, translate, type Matrix } from "../core/geometry/matrix";
 import type { Vec2 } from "../core/geometry/vector";
 import { corner, createEllipse, createPath, createRect, createText } from "../core/model/factory";
+import { gradientGeometryFromDrag } from "../core/model/gradientGeom";
 import { hitTest } from "../core/model/hittest";
 import { formatAngle, formatDistance, measureBetween } from "../core/model/measure";
 import { deleteAnchor, insertAnchor, moveAnchor, moveHandle, setAnchorType, type HandleSide } from "../core/model/pathEdit";
@@ -71,6 +72,7 @@ interface BaseDragState {
     | "node-anchor"
     | "node-handle"
     | "guide"
+    | "gradient"
     | "measure";
   pointerId: number;
   startScreen: Vec2;
@@ -161,6 +163,15 @@ interface MeasureDragState extends BaseDragState {
   additive: false;
 }
 
+interface GradientDragState extends BaseDragState {
+  mode: "gradient";
+  additive: false;
+  changed: boolean;
+  targetId: NodeId;
+  originalDoc: Document;
+  originalHistory: EditorStore["history"];
+}
+
 type DragState =
   | SimpleDragState
   | MoveDragState
@@ -170,6 +181,7 @@ type DragState =
   | NodeAnchorDragState
   | NodeHandleDragState
   | GuideDragState
+  | GradientDragState
   | MeasureDragState;
 
 interface PenDraft {
@@ -1219,6 +1231,98 @@ const nodeWorldTransform = (doc: Document, id: NodeId): Matrix => {
   }
 
   return path.reduce((acc, node) => compose(acc, node.transform), IDENTITY);
+};
+
+const applyGradientGesture = (drag: GradientDragState, endWorld: Vec2): boolean => {
+  const originalNode = drag.originalDoc.nodes[drag.targetId];
+  if (
+    !originalNode ||
+    !hasStyle(originalNode) ||
+    (originalNode.fill.type !== "linear" && originalNode.fill.type !== "radial")
+  ) {
+    return false;
+  }
+
+  const inverseWorld = invert(nodeWorldTransform(drag.originalDoc, drag.targetId));
+  if (inverseWorld === null) {
+    return false;
+  }
+
+  const startLocal = apply(inverseWorld, drag.startWorld);
+  const endLocal = apply(inverseWorld, endWorld);
+  let changed = false;
+
+  editorStore.setState(
+    produce((state: EditorStore) => {
+      const node = state.doc.nodes[drag.targetId];
+      if (!node || !hasStyle(node) || node.locked || !node.visible) {
+        return;
+      }
+
+      if (originalNode.fill.type === "linear") {
+        const geometry = gradientGeometryFromDrag("linear", startLocal, endLocal);
+        if (
+          node.fill.type === "linear" &&
+          node.fill.start.x === geometry.start.x &&
+          node.fill.start.y === geometry.start.y &&
+          node.fill.end.x === geometry.end.x &&
+          node.fill.end.y === geometry.end.y
+        ) {
+          return;
+        }
+        node.fill = { ...originalNode.fill, ...geometry };
+        changed = true;
+        return;
+      }
+
+      const geometry = gradientGeometryFromDrag("radial", startLocal, endLocal);
+      if (
+        node.fill.type === "radial" &&
+        node.fill.center.x === geometry.center.x &&
+        node.fill.center.y === geometry.center.y &&
+        node.fill.radius === geometry.radius
+      ) {
+        return;
+      }
+      node.fill = { ...originalNode.fill, ...geometry };
+      changed = true;
+    }),
+  );
+
+  return changed;
+};
+
+const commitGradientGesture = (drag: GradientDragState): void => {
+  editorStore.setState({
+    history: pushHistory(drag.originalHistory, drag.originalDoc),
+  });
+};
+
+const gradientChangedFromOriginal = (drag: GradientDragState): boolean => {
+  const originalNode = drag.originalDoc.nodes[drag.targetId];
+  const currentNode = editorStore.getState().doc.nodes[drag.targetId];
+  if (!originalNode || !currentNode || !hasStyle(originalNode) || !hasStyle(currentNode)) {
+    return false;
+  }
+
+  if (originalNode.fill.type === "linear" && currentNode.fill.type === "linear") {
+    return (
+      originalNode.fill.start.x !== currentNode.fill.start.x ||
+      originalNode.fill.start.y !== currentNode.fill.start.y ||
+      originalNode.fill.end.x !== currentNode.fill.end.x ||
+      originalNode.fill.end.y !== currentNode.fill.end.y
+    );
+  }
+
+  if (originalNode.fill.type === "radial" && currentNode.fill.type === "radial") {
+    return (
+      originalNode.fill.center.x !== currentNode.fill.center.x ||
+      originalNode.fill.center.y !== currentNode.fill.center.y ||
+      originalNode.fill.radius !== currentNode.fill.radius
+    );
+  }
+
+  return false;
 };
 
 const getEditablePathNode = (
@@ -2472,6 +2576,23 @@ export default function CanvasView() {
       if (event.code === "Space" && !event.repeat) {
         spaceHeldRef.current = true;
       }
+
+      const target = event.target;
+      const isTyping =
+        target instanceof HTMLElement &&
+        (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+      if (
+        event.key.toLowerCase() === "g" &&
+        !event.repeat &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        !isTyping
+      ) {
+        event.preventDefault();
+        editorStore.getState().setActiveTool("gradient");
+      }
     };
     const onKeyUp = (event: KeyboardEvent): void => {
       if (event.code === "Space") {
@@ -2647,6 +2768,42 @@ export default function CanvasView() {
         additive: false,
         moved: false,
       };
+      return;
+    }
+
+    if (state.activeTool === "gradient") {
+      event.preventDefault();
+      const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+      if (hit === null || !state.selection.includes(hit)) {
+        return;
+      }
+
+      const node = state.doc.nodes[hit];
+      if (
+        !node ||
+        !hasStyle(node) ||
+        node.locked ||
+        !node.visible ||
+        (node.fill.type !== "linear" && node.fill.type !== "radial")
+      ) {
+        return;
+      }
+
+      canvas.setPointerCapture(event.pointerId);
+      dragRef.current = {
+        mode: "gradient",
+        pointerId: event.pointerId,
+        startScreen: point,
+        lastScreen: point,
+        startWorld: worldPoint,
+        additive: false,
+        moved: false,
+        changed: false,
+        targetId: hit,
+        originalDoc: structuredClone(state.doc) as Document,
+        originalHistory: state.history,
+      };
+      scheduleInteractiveDraw();
       return;
     }
 
@@ -3017,6 +3174,34 @@ export default function CanvasView() {
     event.preventDefault();
     const moved = drag.moved || hasDragMoved(drag.startScreen, point);
 
+    if (drag.mode === "gradient") {
+      if (state.activeTool !== "gradient") {
+        editorStore.setState({
+          doc: drag.originalDoc,
+          history: drag.originalHistory,
+        });
+        if (canvas.hasPointerCapture(event.pointerId)) {
+          canvas.releasePointerCapture(event.pointerId);
+        }
+        dragRef.current = null;
+        scheduleInteractiveDraw();
+        return;
+      }
+
+      const currentWorld = screenToWorld(point, state.viewport);
+      const changed = moved && applyGradientGesture(drag, currentWorld);
+      dragRef.current = {
+        ...drag,
+        lastScreen: point,
+        moved,
+        changed: drag.changed || changed,
+      };
+      if (!changed) {
+        scheduleInteractiveDraw();
+      }
+      return;
+    }
+
     if (drag.mode === "measure") {
       if (state.activeTool !== "measure") {
         cancelMeasureDrag();
@@ -3219,7 +3404,19 @@ export default function CanvasView() {
       return;
     }
 
-    if (drag.mode === "guide") {
+    if (drag.mode === "gradient") {
+      if (state.activeTool !== "gradient") {
+        editorStore.setState({
+          doc: drag.originalDoc,
+          history: drag.originalHistory,
+        });
+      } else if (moved) {
+        applyGradientGesture(drag, currentWorld);
+        if (gradientChangedFromOriginal(drag)) {
+          commitGradientGesture(drag);
+        }
+      }
+    } else if (drag.mode === "guide") {
       if (isGuideDroppedOnRuler(drag.axis, point)) {
         removeGuideForGesture(drag);
       } else {
@@ -3342,6 +3539,26 @@ export default function CanvasView() {
     }
     snapGuidesRef.current = emptySnapGuides();
     rotationReadoutRef.current = null;
+    dragRef.current = null;
+    scheduleInteractiveDraw();
+  };
+
+  const cancelPointerDrag = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
+    const canvas = canvasRef.current;
+    const drag = dragRef.current;
+    if (canvas === null || drag?.mode !== "gradient" || drag.pointerId !== event.pointerId) {
+      finishDrag(event);
+      return;
+    }
+
+    event.preventDefault();
+    editorStore.setState({
+      doc: drag.originalDoc,
+      history: drag.originalHistory,
+    });
+    if (canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId);
+    }
     dragRef.current = null;
     scheduleInteractiveDraw();
   };
@@ -3536,7 +3753,7 @@ export default function CanvasView() {
       <canvas
         aria-label="Document canvas"
         className={`canvas-view__canvas ${cursorClass}`}
-        onPointerCancel={finishDrag}
+        onPointerCancel={cancelPointerDrag}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={finishDrag}

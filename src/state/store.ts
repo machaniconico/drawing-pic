@@ -79,6 +79,7 @@ export type ToolId =
   | "ellipse"
   | "pen"
   | "text"
+  | "gradient"
   | "hand"
   | "eyedropper"
   | "measure";
