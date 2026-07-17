@@ -4,6 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "description": "Vector-first drawing tool (Illustrator-style)",
+  "packageManager": "pnpm@10.33.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
