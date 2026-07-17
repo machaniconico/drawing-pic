@@ -1,6 +1,7 @@
 import { center, height, isEmpty, unionAll, width, type BBox } from "../core/geometry/bbox";
 import { apply, compose, IDENTITY, invert, rotationAround, scaling, translate, type Matrix } from "../core/geometry/matrix";
 import { type BooleanOp, flattenNodeToPolygons, polygonBoolean } from "../core/geometry/polygonBoolean";
+import { pathfinder, type PathfinderOp } from "../core/geometry/pathfinder";
 import type { Vec2 } from "../core/geometry/vector";
 import { createGroup, newId as createNodeId } from "../core/model/factory";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
@@ -54,6 +55,12 @@ export interface UngroupSelectionResult {
 export interface BooleanSelectionResult {
   node: PathNode;
   removeIds: NodeId[];
+}
+
+export interface PathfinderSelectionResult {
+  nodes: PathNode[];
+  removeIds: NodeId[];
+  parentId: NodeId | null;
 }
 
 export interface SampledStyle {
@@ -825,6 +832,69 @@ const parentWorldTransform = (doc: Document, parentId: NodeId | null): Matrix =>
   }
 
   return path.reduce((acc, node) => compose(acc, node.transform), IDENTITY);
+};
+
+const documentPaintOrder = (doc: Document): NodeId[] => {
+  const result: NodeId[] = [];
+  const visit = (id: NodeId): void => {
+    const node = doc.nodes[id];
+    if (!node) {
+      return;
+    }
+    result.push(id);
+    if (isContainer(node)) {
+      node.children.forEach(visit);
+    }
+  };
+  doc.layerOrder.forEach(visit);
+  return result;
+};
+
+export const pathfinderSelection = (
+  doc: Document,
+  ids: readonly NodeId[],
+  op: PathfinderOp,
+): PathfinderSelectionResult | null => {
+  const selected = new Set(topLevelNodeIds(doc, ids));
+  const candidates = documentPaintOrder(doc).filter(
+    (id) => selected.has(id) && isBooleanShape(doc.nodes[id]),
+  );
+  if (candidates.length < 2) {
+    return null;
+  }
+
+  const styleSourceId = op === "minus-front" ? candidates[0]! : candidates.at(-1)!;
+  const parent = findNodeParent(doc, styleSourceId);
+  if (!parent) {
+    return null;
+  }
+
+  const parentInverse = invert(parentWorldTransform(doc, parent.parentId));
+  if (!parentInverse) {
+    return null;
+  }
+
+  const nodes = pathfinder(
+    candidates.map((id) => doc.nodes[id]!),
+    op,
+    doc,
+  ).map((node): PathNode => ({
+    ...node,
+    subpaths: node.subpaths.map((subpath) => ({
+      ...subpath,
+      anchors: subpath.anchors.map((anchor) => ({
+        point: apply(parentInverse, anchor.point),
+        handleIn: null,
+        handleOut: null,
+      })),
+    })),
+  }));
+
+  return {
+    nodes,
+    removeIds: candidates,
+    parentId: parent.parentId,
+  };
 };
 
 export const booleanSelection = (

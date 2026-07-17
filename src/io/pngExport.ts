@@ -17,6 +17,10 @@ export interface PngExportOptions {
   nodeIds?: readonly NodeId[];
 }
 
+export interface RasterCanvasOptions extends PngExportOptions {
+  opaqueBackground?: boolean;
+}
+
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
@@ -118,6 +122,17 @@ const requireContext = (canvas: HTMLCanvasElement): CanvasRenderingContext2D => 
   return ctx;
 };
 
+const opaqueBackgroundFill = (doc: Document): string => {
+  const background = doc.background;
+  if (background === null || background === undefined) return "#ffffff";
+
+  return `rgb(${clamp(Math.round(background.r), 0, 255)}, ${clamp(
+    Math.round(background.g),
+    0,
+    255,
+  )}, ${clamp(Math.round(background.b), 0, 255)})`;
+};
+
 const cloneSubtree = (
   sourceDoc: Document,
   targetNodes: Record<NodeId, SceneNode>,
@@ -185,32 +200,52 @@ const isolatedSelectionDocument = (
   };
 };
 
+export const renderDocumentToCanvas = (
+  doc: Document,
+  opts?: RasterCanvasOptions,
+): HTMLCanvasElement => {
+  const canvas = document.createElement("canvas");
+  const crop = exportCrop(doc, opts?.nodeIds);
+  const bounds = crop.bounds;
+  const scale = exportScale(opts?.scale);
+  const cropWidth = bboxWidth(bounds);
+  const cropHeight = bboxHeight(bounds);
+
+  canvas.width = cropWidth * scale;
+  canvas.height = cropHeight * scale;
+
+  const ctx = requireContext(canvas);
+
+  if (crop.isSelection) {
+    renderDocument(ctx, isolatedSelectionDocument(doc, crop.roots), {
+      pan: { x: -bounds.minX * scale, y: -bounds.minY * scale },
+      zoom: scale,
+    });
+  } else {
+    renderDocument(ctx, doc, {
+      pan: { x: -bounds.minX * scale, y: -bounds.minY * scale },
+      zoom: scale,
+    });
+  }
+
+  if (opts?.opaqueBackground) {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = "destination-over";
+    ctx.fillStyle = opaqueBackgroundFill(doc);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }
+
+  return canvas;
+};
+
 export const documentToPngBlob = (doc: Document, opts?: PngExportOptions): Promise<Blob> =>
   new Promise((resolve, reject) => {
-    const canvas = document.createElement("canvas");
-    const crop = exportCrop(doc, opts?.nodeIds);
-    const bounds = crop.bounds;
-    const scale = exportScale(opts?.scale);
-    const cropWidth = bboxWidth(bounds);
-    const cropHeight = bboxHeight(bounds);
-
-    canvas.width = cropWidth * scale;
-    canvas.height = cropHeight * scale;
+    let canvas: HTMLCanvasElement;
 
     try {
-      const ctx = requireContext(canvas);
-
-      if (crop.isSelection) {
-        renderDocument(ctx, isolatedSelectionDocument(doc, crop.roots), {
-          pan: { x: -bounds.minX * scale, y: -bounds.minY * scale },
-          zoom: scale,
-        });
-      } else {
-        renderDocument(ctx, doc, {
-          pan: { x: -bounds.minX * scale, y: -bounds.minY * scale },
-          zoom: scale,
-        });
-      }
+      canvas = renderDocumentToCanvas(doc, opts);
     } catch (error) {
       reject(error);
       return;

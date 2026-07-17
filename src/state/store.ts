@@ -4,6 +4,7 @@ import { createStore } from "zustand/vanilla";
 import { offsetSubPaths } from "../core/geometry/offsetPath";
 import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
+import type { PathfinderOp } from "../core/geometry/pathfinder";
 import type { Vec2 } from "../core/geometry/vector";
 import { createDocument } from "../core/model/factory";
 import type { Document, NodeId, Paint, PathNode, RGBA, SceneNode, Stroke } from "../core/model/types";
@@ -23,6 +24,7 @@ import {
   moveSelectionTo as computeMoveSelectionTo,
   nodesWithMatchingFill as computeNodesWithMatchingFill,
   nodesWithMatchingStroke as computeNodesWithMatchingStroke,
+  pathfinderSelection as computePathfinderSelection,
   rotateNodesAround as computeRotateNodesAround,
   rotateNodes90 as computeRotateNodes90,
   resizeSelectionTo as computeResizeSelectionTo,
@@ -123,6 +125,7 @@ export interface EditorActions {
   ungroupSelection: () => void;
   toggleClipMask: () => void;
   booleanOp: (op: BooleanOp) => void;
+  applyPathfinder: (op: PathfinderOp) => void;
   convertSelectionToPaths: () => void;
   outlineSelectedStrokes: () => void;
   offsetSelectedPaths: (distance: number) => void;
@@ -517,6 +520,45 @@ const insertBooleanResult = (doc: Document, parentId: NodeId | null, resultId: N
   }
 };
 
+const insertPathfinderResults = (
+  doc: Document,
+  parentId: NodeId | null,
+  resultIds: readonly NodeId[],
+  removeIds: readonly NodeId[],
+): void => {
+  const removed = new Set(removeIds);
+  const replaceOrder = (order: NodeId[]): NodeId[] => {
+    const next: NodeId[] = [];
+    let inserted = false;
+
+    for (const id of order) {
+      if (!removed.has(id)) {
+        next.push(id);
+        continue;
+      }
+      if (!inserted) {
+        next.push(...resultIds);
+        inserted = true;
+      }
+    }
+
+    if (!inserted) {
+      next.push(...resultIds);
+    }
+    return next;
+  };
+
+  if (parentId === null) {
+    doc.layerOrder = replaceOrder(doc.layerOrder);
+    return;
+  }
+
+  const parent = doc.nodes[parentId];
+  if (parent && isContainer(parent)) {
+    parent.children = replaceOrder(parent.children);
+  }
+};
+
 const withDocHistory = (
   set: (
     partial:
@@ -818,6 +860,33 @@ export const editorStore = createStore<EditorStore>()((set) => ({
         delete state.doc.nodes[id];
       }
       state.selection = [result.node.id];
+      clearMissingKeyObject(state);
+      return true;
+    });
+  },
+
+  applyPathfinder: (op) => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const result = computePathfinderSelection(sourceDoc, state.selection, op);
+      if (!result) {
+        return false;
+      }
+
+      for (const node of result.nodes) {
+        state.doc.nodes[node.id] = node;
+      }
+      insertPathfinderResults(
+        state.doc,
+        result.parentId,
+        result.nodes.map((node) => node.id),
+        result.removeIds,
+      );
+      for (const id of result.removeIds) {
+        removeFromParent(state.doc, id);
+        delete state.doc.nodes[id];
+      }
+      state.selection = result.nodes.map((node) => node.id);
       clearMissingKeyObject(state);
       return true;
     });

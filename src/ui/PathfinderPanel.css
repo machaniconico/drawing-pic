@@ -1,0 +1,102 @@
+.pathfinder-panel {
+  width: 100%;
+  min-width: 0;
+  color: #e6e6e6;
+  font-size: 12px;
+}
+
+.pathfinder-panel__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.pathfinder-panel__button {
+  display: flex;
+  min-width: 0;
+  min-height: 54px;
+  padding: 6px 4px 5px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #dedede;
+  background: #2b2b2d;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pathfinder-panel__button:hover:not(:disabled) {
+  color: #fff;
+  background: #303033;
+  border-color: #2d8cf0;
+}
+
+.pathfinder-panel__button:focus-visible {
+  outline: 1px solid rgba(45, 140, 240, 0.7);
+  outline-offset: 1px;
+  border-color: #2d8cf0;
+}
+
+.pathfinder-panel__button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pathfinder-panel__icon {
+  position: relative;
+  width: 30px;
+  height: 22px;
+}
+
+.pathfinder-panel__shape {
+  position: absolute;
+  width: 17px;
+  height: 17px;
+  border: 1px solid #8fc8ff;
+  border-radius: 3px;
+}
+
+.pathfinder-panel__shape--back {
+  left: 2px;
+  bottom: 1px;
+  background: rgba(143, 200, 255, 0.3);
+}
+
+.pathfinder-panel__shape--front {
+  top: 1px;
+  right: 2px;
+  background: rgba(143, 200, 255, 0.72);
+}
+
+.pathfinder-panel__icon--minus-front .pathfinder-panel__shape--front,
+.pathfinder-panel__icon--minus-back .pathfinder-panel__shape--back,
+.pathfinder-panel__icon--exclude .pathfinder-panel__shape--front {
+  background: #2b2b2d;
+}
+
+.pathfinder-panel__icon--intersect .pathfinder-panel__shape,
+.pathfinder-panel__icon--divide .pathfinder-panel__shape {
+  background: transparent;
+}
+
+.pathfinder-panel__icon--divide::after {
+  content: "";
+  position: absolute;
+  inset: 3px 7px 2px;
+  border-left: 1px solid #d5ecff;
+  transform: rotate(45deg);
+  transform-origin: center;
+}
+
+.pathfinder-panel__label {
+  max-width: 100%;
+  overflow: hidden;
+  color: inherit;
+  font-size: 10px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
