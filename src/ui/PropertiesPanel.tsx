@@ -15,6 +15,8 @@ import {
 import { nodeRotationAngle } from "../state/operations";
 import { getSelectedNodes } from "../state/selectors";
 import { useEditorStore } from "../state/store";
+import { ColorPicker } from "./ColorPicker";
+import { hexToRgba, rgbaToHex } from "./colorConvert";
 import { linearGradientAngle, linearGradientCoordinatesForAngle } from "./gradientAngle";
 import "./PropertiesPanel.css";
 
@@ -75,9 +77,6 @@ const DEFAULT_STROKE: Stroke = {
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
-const toHexByte = (value: number): string =>
-  clamp(Math.round(value), 0, 255).toString(16).padStart(2, "0");
-
 const cloneRgba = (color: RGBA): RGBA => ({
   r: clamp(color.r, 0, 255),
   g: clamp(color.g, 0, 255),
@@ -85,20 +84,10 @@ const cloneRgba = (color: RGBA): RGBA => ({
   a: clamp(color.a, 0, 1),
 });
 
-const rgbaToHex = (color: RGBA): string =>
-  `#${toHexByte(color.r)}${toHexByte(color.g)}${toHexByte(color.b)}`;
-
-const hexToRgba = (hex: string, alpha = 1): RGBA => {
-  const normalized = hex.trim().replace(/^#/, "");
-  const value = /^[0-9a-fA-F]{6}$/.test(normalized) ? normalized : "000000";
-
-  return {
-    r: Number.parseInt(value.slice(0, 2), 16),
-    g: Number.parseInt(value.slice(2, 4), 16),
-    b: Number.parseInt(value.slice(4, 6), 16),
-    a: clamp(alpha, 0, 1),
-  };
-};
+const hexToRgbaWithAlpha = (hex: string, alpha: number): RGBA => ({
+  ...(hexToRgba(hex) ?? DEFAULT_COLOR),
+  a: clamp(alpha, 0, 1),
+});
 
 const formatUnitNumber = (value: number): string =>
   Number.isFinite(value) ? String(Math.round(clamp(value, 0, 1) * 1000) / 1000) : "0";
@@ -116,9 +105,6 @@ const canOutlineStrokeNode = (node: { readonly stroke?: Stroke | null; readonly 
   node.stroke.paint.type !== "none" &&
   node.stroke.width > 0;
 
-const paintColor = (paint: Paint): RGBA | null =>
-  paint.type === "solid" ? paint.color : null;
-
 const primaryPaintColor = (paint: Paint): RGBA | null => {
   switch (paint.type) {
     case "solid":
@@ -132,15 +118,10 @@ const primaryPaintColor = (paint: Paint): RGBA | null => {
   }
 };
 
-const paintHex = (paint: Paint, fallback = "#000000"): string => {
-  const color = paintColor(paint);
-  return color ? rgbaToHex(color) : fallback;
-};
-
 const paintLabel = (paint: Paint): string => {
   switch (paint.type) {
     case "solid":
-      return rgbaToHex(paint.color);
+      return rgbaToHex(paint.color, false);
     case "none":
       return "None";
     case "linear":
@@ -616,12 +597,12 @@ export function PropertiesPanel() {
       representativeFill.type === "none" || representativeFill.type === "solid"
         ? representativeFill.type
         : "mixed";
-    const representativeFillColor = rgbaToHex(
+    const representativeFillColor = cloneRgba(
       primaryPaintColor(representativeFill) ?? DEFAULT_COLOR,
     );
     const representativeStroke =
       styledNodes.find((selectedNode) => selectedNode.stroke !== null)?.stroke ?? DEFAULT_STROKE;
-    const representativeStrokeColor = rgbaToHex(
+    const representativeStrokeColor = cloneRgba(
       primaryPaintColor(representativeStroke.paint) ?? DEFAULT_COLOR,
     );
 
@@ -646,11 +627,11 @@ export function PropertiesPanel() {
       });
     };
 
-    const setSelectionFill = (hex: string): void => {
+    const setSelectionFill = (color: RGBA): void => {
       applyStyleToSelection({
         fill: {
           type: "solid",
-          color: hexToRgba(hex, paintColor(representativeFill)?.a ?? 1),
+          color: cloneRgba(color),
         },
       });
     };
@@ -662,12 +643,12 @@ export function PropertiesPanel() {
       dash: [...representativeStroke.dash],
     });
 
-    const setSelectionStrokePaint = (hex: string): void => {
+    const setSelectionStrokePaint = (color: RGBA): void => {
       applyStyleToSelection({
         stroke: selectionStrokeWith(
           {
             type: "solid",
-            color: hexToRgba(hex, paintColor(representativeStroke.paint)?.a ?? 1),
+            color: cloneRgba(color),
           },
           representativeStroke.width,
         ),
@@ -744,33 +725,29 @@ export function PropertiesPanel() {
               <option value="solid">Solid</option>
             </select>
           </label>
-          <label className="properties-panel__row">
+          <div className="properties-panel__row">
             <span className="properties-panel__label">Fill</span>
             <span className="properties-panel__paint-control">
-              <input
-                aria-label="Selection fill color"
-                className="properties-panel__color"
+              <ColorPicker
+                ariaLabel="Selection fill color"
                 disabled={representativeFill.type === "none"}
-                onChange={(event) => setSelectionFill(event.currentTarget.value)}
-                type="color"
+                onChange={setSelectionFill}
                 value={representativeFillColor}
               />
               <span className="properties-panel__readout">{paintLabel(representativeFill)}</span>
             </span>
-          </label>
-          <label className="properties-panel__row">
+          </div>
+          <div className="properties-panel__row">
             <span className="properties-panel__label">Stroke</span>
             <span className="properties-panel__paint-control">
-              <input
-                aria-label="Selection stroke color"
-                className="properties-panel__color"
-                onChange={(event) => setSelectionStrokePaint(event.currentTarget.value)}
-                type="color"
+              <ColorPicker
+                ariaLabel="Selection stroke color"
+                onChange={setSelectionStrokePaint}
                 value={representativeStrokeColor}
               />
               <span className="properties-panel__readout">{paintLabel(representativeStroke.paint)}</span>
             </span>
-          </label>
+          </div>
           <label className="properties-panel__row">
             <span className="properties-panel__label">Stroke width</span>
             <input
@@ -841,7 +818,7 @@ export function PropertiesPanel() {
     });
   };
 
-  const setFill = (hex: string): void => {
+  const setFill = (color: RGBA): void => {
     if (!hasStyle(node)) {
       return;
     }
@@ -849,24 +826,7 @@ export function PropertiesPanel() {
     updateNode(node.id, {
       fill: {
         type: "solid",
-        color: hexToRgba(hex, paintColor(node.fill)?.a ?? 1),
-      },
-    });
-  };
-
-  const setSolidFillAlpha = (value: number): void => {
-    const nextAlpha = readNumber(value);
-    if (!hasStyle(node) || node.fill.type !== "solid" || nextAlpha === null) {
-      return;
-    }
-
-    updateNode(node.id, {
-      fill: {
-        type: "solid",
-        color: {
-          ...node.fill.color,
-          a: clamp(nextAlpha, 0, 1),
-        },
+        color: cloneRgba(color),
       },
     });
   };
@@ -955,7 +915,7 @@ export function PropertiesPanel() {
     hex: string,
   ): void => {
     const stops = normalizeGradientStops(gradient.stops).map((stop, index) =>
-      index === stopIndex ? { ...stop, color: hexToRgba(hex, stop.color.a) } : stop,
+      index === stopIndex ? { ...stop, color: hexToRgbaWithAlpha(hex, stop.color.a) } : stop,
     );
 
     updateGradientPaint(target, gradientWithStops(gradient, stops));
@@ -1092,7 +1052,7 @@ export function PropertiesPanel() {
     });
   };
 
-  const setStrokePaint = (stroke: Stroke | null, hex: string): void => {
+  const setStrokePaint = (stroke: Stroke | null, color: RGBA): void => {
     if (!hasStyle(node) || stroke === null) {
       return;
     }
@@ -1102,7 +1062,7 @@ export function PropertiesPanel() {
         ...stroke,
         paint: {
           type: "solid",
-          color: hexToRgba(hex, paintColor(stroke.paint)?.a ?? 1),
+          color: cloneRgba(color),
         },
       },
     });
@@ -1264,7 +1224,7 @@ export function PropertiesPanel() {
                 setGradientStopColor(target, gradient, index, event.currentTarget.value)
               }
               type="color"
-              value={rgbaToHex(stop.color)}
+              value={rgbaToHex(stop.color, false)}
             />
             <input
               aria-label={scopedLabel(`Stop ${index + 1} alpha`)}
@@ -1507,28 +1467,17 @@ export function PropertiesPanel() {
             </label>
 
             {styledNode.fill.type === "solid" ? (
-              <label className="properties-panel__row">
+              <div className="properties-panel__row">
                 <span className="properties-panel__label">Fill</span>
                 <span className="properties-panel__paint-control">
-                  <input
-                    aria-label="Fill color"
-                    className="properties-panel__color"
-                    onChange={(event) => setFill(event.currentTarget.value)}
-                    type="color"
-                    value={paintHex(styledNode.fill, "#000000")}
+                  <ColorPicker
+                    ariaLabel="Fill color"
+                    onChange={setFill}
+                    value={styledNode.fill.color}
                   />
-                  <input
-                    aria-label="Fill alpha"
-                    className="properties-panel__number properties-panel__number--compact"
-                    max={1}
-                    min={0}
-                    onChange={(event) => setSolidFillAlpha(event.currentTarget.valueAsNumber)}
-                    step={0.01}
-                    type="number"
-                    value={formatUnitNumber(styledNode.fill.color.a)}
-                  />
+                  <span className="properties-panel__readout">{paintLabel(styledNode.fill)}</span>
                 </span>
-              </label>
+              </div>
             ) : (
               <div className="properties-panel__row">
                 <span className="properties-panel__label">Fill</span>
@@ -1600,19 +1549,17 @@ export function PropertiesPanel() {
             </label>
 
             {stroke?.paint.type === "solid" ? (
-              <label className="properties-panel__row">
+              <div className="properties-panel__row">
                 <span className="properties-panel__label">Stroke</span>
                 <span className="properties-panel__paint-control">
-                  <input
-                    aria-label="Stroke color"
-                    className="properties-panel__color"
-                    onChange={(event) => setStrokePaint(stroke, event.currentTarget.value)}
-                    type="color"
-                    value={paintHex(stroke.paint)}
+                  <ColorPicker
+                    ariaLabel="Stroke color"
+                    onChange={(color) => setStrokePaint(stroke, color)}
+                    value={stroke.paint.color}
                   />
                   <span className="properties-panel__readout">{paintLabel(stroke.paint)}</span>
                 </span>
-              </label>
+              </div>
             ) : (
               <div className="properties-panel__row">
                 <span className="properties-panel__label">Stroke</span>
