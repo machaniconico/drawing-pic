@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import type { ToolId } from "./state/store";
 import { useEditorStore } from "./state/store";
 import CanvasView from "./ui/CanvasView";
+import FileMenu from "./ui/FileMenu";
 import { RightPanel } from "./ui/RightPanel";
 import Toolbar from "./ui/Toolbar";
 import ZoomControls, {
@@ -293,6 +294,7 @@ export default function App() {
     <div className="app">
       <header className="app__menubar">
         <div className="app__brand">Drawing Pic</div>
+        <FileMenu />
         <div className="app__doc-meta">
           {doc.name} · {doc.width} × {doc.height}px · {activeTool}
         </div>

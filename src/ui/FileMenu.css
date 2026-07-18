@@ -1,0 +1,47 @@
+.file-menu {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-right: auto;
+  margin-left: 12px;
+}
+
+.file-menu__button {
+  min-height: 24px;
+  padding: 2px 9px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: #dedede;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.file-menu__button:hover {
+  border-color: #505050;
+  background: #333333;
+  color: #ffffff;
+}
+
+.file-menu__button:focus-visible {
+  outline: 2px solid #75beff;
+  outline-offset: 1px;
+}
+
+.file-menu__button:active {
+  background: #3e3e3e;
+}
+
+.file-menu__input {
+  display: none;
+}
+
+.file-menu__error {
+  max-width: min(420px, 40vw);
+  overflow: hidden;
+  margin-left: 6px;
+  color: #f48771;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
