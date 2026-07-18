@@ -821,7 +821,7 @@ const pathToNode = (doc: Document, targetId: NodeId): SceneNode[] | null => {
   return null;
 };
 
-const parentWorldTransform = (doc: Document, parentId: NodeId | null): Matrix => {
+export const parentWorldTransform = (doc: Document, parentId: NodeId | null): Matrix => {
   if (parentId === null) {
     return IDENTITY;
   }

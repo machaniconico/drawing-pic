@@ -1,6 +1,7 @@
 import { newId } from "../model/factory";
 import type { Document, PathNode, SceneNode, SubPath } from "../model/types";
 import { pathfinder } from "./pathfinder";
+import { pointInPolygonSet, pointInRing, ringArea } from "./polygonBoolean";
 import type { Vec2 } from "./vector";
 
 export type ShapeBuilderMode = "union" | "delete";
@@ -10,15 +11,7 @@ export interface ShapeBuilderResult {
   hitRegion: PathNode;
 }
 
-const ringArea = (subpath: SubPath): number => {
-  let area = 0;
-  for (let index = 0; index < subpath.anchors.length; index += 1) {
-    const a = subpath.anchors[index]!.point;
-    const b = subpath.anchors[(index + 1) % subpath.anchors.length]!.point;
-    area += a.x * b.y - b.x * a.y;
-  }
-  return area / 2;
-};
+const subpathRing = (subpath: SubPath): Vec2[] => subpath.anchors.map((anchor) => anchor.point);
 
 const pointOnSegment = (point: Vec2, a: Vec2, b: Vec2): boolean => {
   const cross = (point.x - a.x) * (b.y - a.y) - (point.y - a.y) * (b.x - a.x);
@@ -29,34 +22,24 @@ const pointOnSegment = (point: Vec2, a: Vec2, b: Vec2): boolean => {
   return dot <= 1e-9;
 };
 
-const pointInRing = (point: Vec2, subpath: SubPath): boolean => {
-  let inside = false;
-  const anchors = subpath.anchors;
-  for (let index = 0, previous = anchors.length - 1; index < anchors.length; previous = index, index += 1) {
-    const a = anchors[index]!.point;
-    const b = anchors[previous]!.point;
+const containsInShapeBuilderRing = (point: Vec2, ring: readonly Vec2[]): boolean => {
+  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
+    const a = ring[index]!;
+    const b = ring[previous]!;
     if (pointOnSegment(point, a, b)) {
       return true;
     }
-    if (a.y > point.y !== b.y > point.y) {
-      const x = ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x;
-      if (point.x < x) {
-        inside = !inside;
-      }
-    }
   }
-  return inside;
+  return pointInRing(point, ring);
 };
 
-const containsPoint = (node: PathNode, point: Vec2): boolean => {
-  let winding = 0;
-  for (const subpath of node.subpaths) {
-    if (subpath.closed && subpath.anchors.length >= 3 && pointInRing(point, subpath)) {
-      winding += ringArea(subpath) >= 0 ? 1 : -1;
-    }
-  }
-  return winding !== 0;
-};
+const containsPoint = (node: PathNode, point: Vec2): boolean => pointInPolygonSet(
+  point,
+  node.subpaths
+    .filter((subpath) => subpath.closed && subpath.anchors.length >= 3)
+    .map(subpathRing),
+  containsInShapeBuilderRing,
+);
 
 const cloneWithSubpaths = (source: PathNode, subpaths: SubPath[], name: string): PathNode => ({
   ...source,
@@ -72,8 +55,8 @@ const cloneWithSubpaths = (source: PathNode, subpaths: SubPath[], name: string):
 export const splitShapeBuilderRegions = (divided: readonly PathNode[]): PathNode[] => {
   const result: PathNode[] = [];
   for (const node of divided) {
-    const exteriors = node.subpaths.filter((subpath) => ringArea(subpath) > 0);
-    const holes = node.subpaths.filter((subpath) => ringArea(subpath) < 0);
+    const exteriors = node.subpaths.filter((subpath) => ringArea(subpathRing(subpath)) > 0);
+    const holes = node.subpaths.filter((subpath) => ringArea(subpathRing(subpath)) < 0);
     if (exteriors.length === 0) {
       result.push(cloneWithSubpaths(node, node.subpaths, "Shape Builder Region"));
       continue;
@@ -84,8 +67,8 @@ export const splitShapeBuilderRegions = (divided: readonly PathNode[]): PathNode
       const sample = hole.anchors[0]?.point;
       if (!sample) continue;
       const owner = components
-        .filter(({ outer }) => pointInRing(sample, outer))
-        .sort((left, right) => Math.abs(ringArea(left.outer)) - Math.abs(ringArea(right.outer)))[0];
+        .filter(({ outer }) => containsInShapeBuilderRing(sample, subpathRing(outer)))
+        .sort((left, right) => Math.abs(ringArea(subpathRing(left.outer))) - Math.abs(ringArea(subpathRing(right.outer))))[0];
       owner?.holes.push(hole);
     }
     for (const component of components) {
