@@ -315,7 +315,42 @@ describe("documentToSvg", () => {
     expect(svg).toContain(
       '<textPath href="#text_curve" startOffset="18.5">Along &amp; around</textPath>',
     );
+    expect(svg).not.toContain("svg-export-text-path-");
     expect(svg).not.toContain("xlink:href");
+  });
+
+  it("bakes the path-to-text world transform into text-on-path geometry", () => {
+    const doc = createDocument(240, 160, "Transformed text on path");
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 40, y: 0 }, handleIn: null, handleOut: null },
+        ],
+        closed: false,
+      },
+    ]);
+    path.id = "transformed_curve";
+    path.transform = { a: 0, b: 2, c: -2, d: 0, e: 100, f: 50 };
+    const text = createText("Along", { x: 10, y: 20 });
+    Object.assign(text, { pathId: path.id, startOffset: 5 });
+    addNode(doc, path);
+    addNode(doc, text);
+
+    const svg = documentToSvg(doc);
+
+    expect(svg).toContain(
+      '<defs><path id="svg-export-text-path-1" d="M 90 30 L 90 110" /></defs>',
+    );
+    expect(svg).toContain(
+      '<text transform="matrix(1 0 0 1 10 20)" opacity="1"',
+    );
+    expect(svg).toContain(
+      '<textPath href="#svg-export-text-path-1" startOffset="5">Along</textPath>',
+    );
+    expect(svg).toContain(
+      '<path transform="matrix(0 2 -2 0 100 50)" opacity="1" id="transformed_curve"',
+    );
   });
 
   it("keeps straight text output unchanged when no valid path is linked", () => {
