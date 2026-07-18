@@ -151,19 +151,19 @@ export function DocSettings() {
         />
       </label>
 
-      <div className="doc-settings__size-grid" aria-label="Document size">
+      <div className="doc-settings__size-grid" aria-label="Active artboard size">
         <label className="doc-settings__field">
-          <span className="doc-settings__label">Width</span>
+          <span className="doc-settings__label">Artboard width</span>
           <CommitNumberInput
-            ariaLabel="Document width"
+            ariaLabel="Active artboard width"
             value={doc.width}
             onCommit={commitWidth}
           />
         </label>
         <label className="doc-settings__field">
-          <span className="doc-settings__label">Height</span>
+          <span className="doc-settings__label">Artboard height</span>
           <CommitNumberInput
-            ariaLabel="Document height"
+            ariaLabel="Active artboard height"
             value={doc.height}
             onCommit={commitHeight}
           />

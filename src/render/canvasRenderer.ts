@@ -54,11 +54,15 @@ const artboardFill = (background: RGBA | null | undefined): string => {
 
 const drawArtboard = (
   ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
   width: number,
   height: number,
   background: RGBA | null | undefined,
+  active: boolean,
 ): void => {
   ctx.save();
+  ctx.translate(x, y);
   ctx.shadowColor = "rgba(15, 23, 42, 0.18)";
   ctx.shadowBlur = 18;
   ctx.shadowOffsetX = 0;
@@ -68,9 +72,11 @@ const drawArtboard = (
   ctx.restore();
 
   ctx.save();
-  ctx.strokeStyle = "rgba(15, 23, 42, 0.22)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(0.5, 0.5, Math.max(0, width - 1), Math.max(0, height - 1));
+  ctx.translate(x, y);
+  ctx.strokeStyle = active ? "rgba(45, 140, 240, 0.95)" : "rgba(15, 23, 42, 0.22)";
+  ctx.lineWidth = active ? 2 : 1;
+  const inset = active ? 1 : 0.5;
+  ctx.strokeRect(inset, inset, Math.max(0, width - inset * 2), Math.max(0, height - inset * 2));
   ctx.restore();
 };
 
@@ -517,13 +523,56 @@ export const renderDocument = (
 ): void => {
   const zoom = Number.isFinite(viewport.zoom) && viewport.zoom > 0 ? viewport.zoom : 1;
   const pan = viewportPan(viewport);
+  const artboards = doc.artboards && doc.artboards.length > 0
+    ? doc.artboards
+    : [{
+        id: `${doc.id}_artboard_1`,
+        name: "Artboard 1",
+        x: 0,
+        y: 0,
+        width: doc.width,
+        height: doc.height,
+      }];
+  const activeArtboardId = artboards.some((artboard) => artboard.id === doc.activeArtboardId)
+    ? doc.activeArtboardId
+    : artboards[0]!.id;
+  const activeArtboard = artboards.find((artboard) => artboard.id === activeArtboardId)!;
+  const canvasStyle = ctx.canvas.style;
+  const isDetachedExportCanvas = canvasStyle.width === "" && canvasStyle.height === "";
+  const isSelectionExport = doc.layerOrder.some((id) => id.startsWith("png-export-selection-layer-"));
+  const isActiveArtboardExport =
+    isDetachedExportCanvas &&
+    !isSelectionExport &&
+    Math.abs(ctx.canvas.width - activeArtboard.width * zoom) <= 1 &&
+    Math.abs(ctx.canvas.height - activeArtboard.height * zoom) <= 1;
+  const origin = isActiveArtboardExport
+    ? { x: activeArtboard.x, y: activeArtboard.y }
+    : { x: 0, y: 0 };
 
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  ctx.setTransform(zoom, 0, 0, zoom, pan.x, pan.y);
+  ctx.setTransform(
+    zoom,
+    0,
+    0,
+    zoom,
+    pan.x - origin.x * zoom,
+    pan.y - origin.y * zoom,
+  );
 
-  drawArtboard(ctx, doc.width, doc.height, doc.background);
+  const visibleArtboards = isActiveArtboardExport ? [activeArtboard] : artboards;
+  for (const artboard of visibleArtboards) {
+    drawArtboard(
+      ctx,
+      artboard.x,
+      artboard.y,
+      artboard.width,
+      artboard.height,
+      doc.background,
+      artboard.id === activeArtboardId,
+    );
+  }
 
   const renderSubtree: RenderPatternSubtree = (targetCtx, sourceId, resolvePattern) => {
     const path = pathToNode(doc, sourceId);

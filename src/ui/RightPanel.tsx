@@ -7,6 +7,7 @@ import { SnapSettings } from "./SnapSettings";
 import { ExportMenu } from "./ExportMenu";
 import { ImportButton } from "./ImportButton";
 import { DocSettings } from "./DocSettings";
+import { ArtboardsPanel } from "./ArtboardsPanel";
 import { SwatchesPanel } from "./SwatchesPanel";
 import "./RightPanel.css";
 
@@ -23,6 +24,20 @@ export function RightPanel() {
         <div className="right-panel__content right-panel__content--export">
           <ImportButton />
           <ExportMenu />
+        </div>
+      </section>
+
+      <div className="right-panel__divider" role="presentation" />
+
+      <section
+        aria-labelledby="right-panel-artboards-heading"
+        className="right-panel__section right-panel__section--artboards"
+      >
+        <header className="right-panel__header">
+          <h2 id="right-panel-artboards-heading">Artboards</h2>
+        </header>
+        <div className="right-panel__content right-panel__content--artboards">
+          <ArtboardsPanel />
         </div>
       </section>
 

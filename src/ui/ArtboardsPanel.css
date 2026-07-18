@@ -1,0 +1,110 @@
+.artboards-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.artboards-panel__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.artboards-panel__item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto 24px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+}
+
+.artboards-panel__item--active {
+  background: rgba(45, 140, 240, 0.12);
+  border-color: rgba(45, 140, 240, 0.55);
+}
+
+.artboards-panel__activate,
+.artboards-panel__remove,
+.artboards-panel__add {
+  color: #ededed;
+  background: #303033;
+  border: 1px solid #454548;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.artboards-panel__activate,
+.artboards-panel__remove {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+}
+
+.artboards-panel__indicator {
+  display: block;
+  width: 8px;
+  height: 8px;
+  margin: auto;
+  background: #777;
+  border-radius: 50%;
+}
+
+.artboards-panel__activate[aria-pressed="true"] .artboards-panel__indicator {
+  background: #2d8cf0;
+  box-shadow: 0 0 0 2px rgba(45, 140, 240, 0.24);
+}
+
+.artboards-panel__name {
+  min-width: 0;
+  height: 24px;
+  padding: 2px 5px;
+  color: #ededed;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: inherit;
+}
+
+.artboards-panel__name:focus {
+  background: #252526;
+  border-color: #2d8cf0;
+  outline: none;
+}
+
+.artboards-panel__dimensions {
+  color: #9b9b9b;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.artboards-panel__remove:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.artboards-panel__add {
+  min-height: 26px;
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.artboards-panel__add:hover,
+.artboards-panel__activate:hover,
+.artboards-panel__remove:not(:disabled):hover {
+  background: #3a3a3d;
+  border-color: #5a5a5d;
+}
+
+.artboards-panel button:focus-visible,
+.artboards-panel input:focus-visible {
+  outline: 1px solid rgba(45, 140, 240, 0.8);
+  outline-offset: 1px;
+}
