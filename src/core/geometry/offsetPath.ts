@@ -1,4 +1,5 @@
 import type { Vec2 } from "./vector";
+import { ringArea } from "./polygonBoolean";
 import type { LineJoin, SubPath } from "../model/types";
 
 const EPS = 1e-9;
@@ -50,16 +51,6 @@ const cubicPoint = (p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, t: number): Vec2 => 
     x: mt2 * mt * p0.x + 3 * mt2 * t * p1.x + 3 * mt * t2 * p2.x + t2 * t * p3.x,
     y: mt2 * mt * p0.y + 3 * mt2 * t * p1.y + 3 * mt * t2 * p2.y + t2 * t * p3.y,
   };
-};
-
-const ringArea = (points: readonly Vec2[]): number => {
-  let area = 0;
-  for (let index = 0; index < points.length; index += 1) {
-    const a = points[index]!;
-    const b = points[(index + 1) % points.length]!;
-    area += a.x * b.y - b.x * a.y;
-  }
-  return area / 2;
 };
 
 export const flattenSubPathToPolyline = (subpath: SubPath): Vec2[] => {
