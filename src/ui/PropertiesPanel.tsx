@@ -916,32 +916,6 @@ export function PropertiesPanel() {
     updateGradientPaint(target, gradientWithStops(gradient, stops));
   };
 
-  const setGradientStopAlpha = (
-    target: PaintTarget,
-    gradient: GradientPaint,
-    stopIndex: number,
-    value: number,
-  ): void => {
-    const nextAlpha = readNumber(value);
-    if (nextAlpha === null) {
-      return;
-    }
-
-    const stops = normalizeGradientStops(gradient.stops).map((stop, index) =>
-      index === stopIndex
-        ? {
-            ...stop,
-            color: {
-              ...stop.color,
-              a: clamp(nextAlpha, 0, 1),
-            },
-          }
-        : stop,
-    );
-
-    updateGradientPaint(target, gradientWithStops(gradient, stops));
-  };
-
   const addGradientStop = (target: PaintTarget, gradient: GradientPaint): void => {
     updateGradientPaint(
       target,
@@ -1216,18 +1190,6 @@ export function PropertiesPanel() {
               ariaLabel={scopedLabel(`Stop ${index + 1} color`)}
               onChange={(color) => setGradientStopColor(target, gradient, index, color)}
               value={stop.color}
-            />
-            <input
-              aria-label={scopedLabel(`Stop ${index + 1} alpha`)}
-              className="properties-panel__number properties-panel__number--compact"
-              max={1}
-              min={0}
-              onChange={(event) =>
-                setGradientStopAlpha(target, gradient, index, event.currentTarget.valueAsNumber)
-              }
-              step={0.01}
-              type="number"
-              value={formatUnitNumber(stop.color.a)}
             />
             <button
               aria-label={scopedLabel(`Remove stop ${index + 1}`)}

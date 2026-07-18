@@ -26,6 +26,23 @@ const POPOVER_WIDTH = 218;
 const POPOVER_GAP = 6;
 const VIEWPORT_MARGIN = 8;
 
+export const resolveHexBlur = (draft: string, current: RGBA, dirty: boolean) => {
+  const currentDraft = rgbaToHex(current);
+
+  if (!dirty) {
+    return { color: null, draft: currentDraft };
+  }
+
+  const color = hexToRgba(draft);
+
+  return color === null
+    ? { color: null, draft: currentDraft }
+    : {
+        color: rgbaToHex(color) === currentDraft ? null : color,
+        draft: rgbaToHex(color),
+      };
+};
+
 export function ColorPicker({
   ariaLabel,
   disabled = false,
@@ -40,6 +57,10 @@ export function ColorPicker({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const hexInputRef = useRef<HTMLInputElement>(null);
+  const hexFocusedRef = useRef(false);
+  const hexDraftDirtyRef = useRef(false);
+  const latestHexRef = useRef(rgbaToHex(value));
+  const cancelHexCommitRef = useRef(false);
   const labelId = useId();
 
   const updatePopoverPosition = useCallback((): void => {
@@ -68,11 +89,16 @@ export function ColorPicker({
 
   useEffect(() => {
     const converted = rgbaToHsva(value);
+    const nextHex = rgbaToHex(value);
+    latestHexRef.current = nextHex;
     setHsva((current) => ({
       ...converted,
       h: converted.s === 0 ? current.h : converted.h,
     }));
-    setHexDraft(rgbaToHex(value));
+    if (!hexFocusedRef.current) {
+      setHexDraft(nextHex);
+      hexDraftDirtyRef.current = false;
+    }
   }, [value]);
 
   useLayoutEffect(() => {
@@ -88,6 +114,7 @@ export function ColorPicker({
 
     const closeOnOutsidePointer = (event: PointerEvent): void => {
       if (!rootRef.current?.contains(event.target as Node)) {
+        hexInputRef.current?.blur();
         setOpen(false);
       }
     };
@@ -167,12 +194,15 @@ export function ColorPicker({
     });
   };
 
-  const updateHex = (draft: string): void => {
-    setHexDraft(draft);
-    const parsed = hexToRgba(draft);
-    if (parsed !== null) {
-      onChange(parsed);
+  const commitHex = (draft: string): void => {
+    const resolved = resolveHexBlur(draft, value, hexDraftDirtyRef.current);
+    setHexDraft(resolved.draft);
+
+    if (resolved.color !== null) {
+      onChange(resolved.color);
     }
+
+    hexDraftDirtyRef.current = false;
   };
 
   const parsedDraft = hexToRgba(hexDraft);
@@ -272,12 +302,39 @@ export function ColorPicker({
                 aria-label="Hex color"
                 autoCapitalize="off"
                 autoComplete="off"
-                onBlur={() => {
-                  if (parsedDraft === null) {
-                    setHexDraft(rgbaToHex(value));
+                onBlur={(event) => {
+                  hexFocusedRef.current = false;
+
+                  if (cancelHexCommitRef.current) {
+                    cancelHexCommitRef.current = false;
+                    hexDraftDirtyRef.current = false;
+                    setHexDraft(latestHexRef.current);
+                    return;
+                  }
+
+                  commitHex(event.currentTarget.value);
+                }}
+                onChange={(event) => {
+                  hexDraftDirtyRef.current = true;
+                  setHexDraft(event.currentTarget.value);
+                }}
+                onFocus={() => {
+                  hexFocusedRef.current = true;
+                  hexDraftDirtyRef.current = false;
+                  cancelHexCommitRef.current = false;
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    event.currentTarget.blur();
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    cancelHexCommitRef.current = true;
+                    setHexDraft(latestHexRef.current);
+                    event.currentTarget.blur();
                   }
                 }}
-                onChange={(event) => updateHex(event.currentTarget.value)}
                 ref={hexInputRef}
                 spellCheck={false}
                 value={hexDraft}
