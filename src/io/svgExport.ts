@@ -12,6 +12,7 @@ import {
 import { worldBounds } from "../core/model/bounds";
 import type {
   Anchor,
+  DefinitionNode,
   Document,
   GradientStop,
   NodeId,
@@ -152,7 +153,7 @@ const blendModeAttr = (blendMode: GlobalCompositeOperation | undefined): string 
     : attr("style", `mix-blend-mode:${cssBlendMode}`);
 };
 
-const nodeBlendMode = (node: SceneNode): GlobalCompositeOperation | undefined =>
+const nodeBlendMode = (node: DefinitionNode): GlobalCompositeOperation | undefined =>
   (node as { blendMode?: GlobalCompositeOperation }).blendMode;
 
 const pointWithHandle = (point: Vec2, handle: Vec2 | null): Vec2 =>
@@ -515,7 +516,7 @@ const strokeAttrs = (stroke: Stroke | null, ctx: SvgContext, width = stroke?.wid
   return output;
 };
 
-const nodeCommonAttrs = (node: SceneNode): string =>
+const nodeCommonAttrs = (node: DefinitionNode): string =>
   transformAttr(node.transform) +
   numericAttr("opacity", clamp(node.opacity, 0, 1)) +
   blendModeAttr(nodeBlendMode(node));
@@ -713,11 +714,44 @@ const renderGeometryAttrs = (node: AlignedStrokeNode): string => {
 
 const renderNode = (
   doc: Document,
-  node: SceneNode,
+  node: DefinitionNode,
   ctx: SvgContext,
   options: { ignoreOwnVisibility?: boolean } = {},
+  resolvingSymbols: ReadonlySet<NodeId> = new Set(),
 ): string => {
   if (!node.visible && !options.ignoreOwnVisibility) return "";
+
+  if (node.type === "symbol-instance") {
+    const definition = doc.symbols?.[node.symbolId];
+    if (definition === undefined || resolvingSymbols.has(node.symbolId)) return "";
+
+    const childIds = new Set<NodeId>();
+    for (const definitionNode of definition.nodes) {
+      if (isContainer(definitionNode)) {
+        definitionNode.children.forEach((childId) => childIds.add(childId));
+      }
+    }
+
+    const definitionDoc: Document = {
+      ...doc,
+      nodes: {
+        ...doc.nodes,
+        ...Object.fromEntries(
+          definition.nodes.map((definitionNode) => [definitionNode.id, definitionNode]),
+        ),
+      } as Document["nodes"],
+    };
+    const nextResolvingSymbols = new Set(resolvingSymbols);
+    nextResolvingSymbols.add(node.symbolId);
+    const content = definition.nodes
+      .filter((definitionNode) => !childIds.has(definitionNode.id))
+      .map((definitionNode) =>
+        renderNode(definitionDoc, definitionNode, ctx, {}, nextResolvingSymbols),
+      )
+      .join("");
+
+    return `<g${nodeCommonAttrs(node)}>${content}</g>`;
+  }
 
   if (isContainer(node)) {
     const childNodes = node.children
@@ -726,7 +760,7 @@ const renderNode = (
     const isClipGroup = node.type === "group" && node.clip && childNodes.length >= 2;
     const renderedChildren = isClipGroup ? childNodes.slice(0, -1) : childNodes;
     const children = renderedChildren
-      .map((child) => renderNode(doc, child, ctx))
+      .map((child) => renderNode(doc, child, ctx, {}, resolvingSymbols))
       .join("");
     const mask = childNodes[childNodes.length - 1];
     const clipPath =

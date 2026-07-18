@@ -11,7 +11,12 @@ import {
   defaultStroke,
   solid,
 } from "../core/model/factory";
-import type { Document, NodeId, SceneNode } from "../core/model/types";
+import type {
+  Document,
+  NodeId,
+  SceneNode,
+  SymbolInstanceNode,
+} from "../core/model/types";
 import { documentToSvg } from "./svgExport";
 
 const firstLayerId = (doc: Document): NodeId => doc.layerOrder[0]!;
@@ -26,6 +31,34 @@ const addNode = (doc: Document, node: SceneNode, parentId = firstLayerId(doc)): 
 
 const setBlendMode = <T extends SceneNode>(node: T, blendMode: GlobalCompositeOperation): T =>
   Object.assign(node, { blendMode });
+
+const symbolInstanceNode = (
+  id: NodeId,
+  symbolId: NodeId,
+  x = 0,
+  y = 0,
+): SymbolInstanceNode => ({
+  id,
+  name: "Symbol instance",
+  type: "symbol-instance",
+  symbolId,
+  transform: { ...IDENTITY, e: x, f: y },
+  opacity: 1,
+  visible: true,
+  locked: false,
+});
+
+const addSymbolInstance = (
+  doc: Document,
+  instance: SymbolInstanceNode,
+  parentId = firstLayerId(doc),
+): void => {
+  doc.nodes[instance.id] = instance as unknown as SceneNode;
+  const parent = doc.nodes[parentId];
+  if (parent?.type === "layer" || parent?.type === "group") {
+    parent.children.push(instance.id);
+  }
+};
 
 describe("documentToSvg", () => {
   it("emits the document background as the first body element when present", () => {
@@ -515,6 +548,83 @@ describe("documentToSvg", () => {
     expect(svg).toContain('<g transform="matrix(1 0 0 1 4 5)" opacity="1">');
     expect(svg).toContain('width="3" height="4"');
     expect(svg).not.toContain('width="20" height="20"');
+  });
+
+  it("inlines a symbol definition subtree under the instance transform", () => {
+    const doc = createDocument(200, 200, "Symbol export");
+    const rect = createRect(3, 4, 20, 12);
+    rect.id = "symbol-rect";
+    rect.fill = solid({ r: 12, g: 34, b: 56, a: 1 });
+    rect.stroke = null;
+    const group = createGroup("Symbol group", [rect.id]);
+    group.id = "symbol-group";
+    group.transform = { ...IDENTITY, e: 5, f: 6 };
+    doc.symbols = {
+      badge: { id: "badge", name: "Badge", nodes: [group, rect] },
+    };
+    addSymbolInstance(doc, symbolInstanceNode("badge-instance", "badge", 40, 50));
+
+    const svg = documentToSvg(doc);
+
+    expect(svg).toContain('<g transform="matrix(1 0 0 1 40 50)" opacity="1">');
+    expect(svg).toContain('<g transform="matrix(1 0 0 1 5 6)" opacity="1">');
+    expect(svg).toContain(
+      '<rect transform="matrix(1 0 0 1 3 4)" opacity="1" x="0" y="0" width="20" height="12" fill="#0c2238" fill-opacity="1" stroke="none" />',
+    );
+  });
+
+  it("exports every instance that shares the same symbol definition", () => {
+    const doc = createDocument(200, 200, "Shared symbol instances");
+    const rect = createRect(0, 0, 8, 9);
+    rect.id = "shared-symbol-rect";
+    rect.fill = solid({ r: 1, g: 2, b: 3, a: 1 });
+    rect.stroke = null;
+    doc.symbols = {
+      shared: { id: "shared", name: "Shared", nodes: [rect] },
+    };
+    addSymbolInstance(doc, symbolInstanceNode("shared-instance-1", "shared", 10, 20));
+    addSymbolInstance(doc, symbolInstanceNode("shared-instance-2", "shared", 30, 40));
+
+    const svg = documentToSvg(doc);
+
+    expect(svg).toContain('<g transform="matrix(1 0 0 1 10 20)" opacity="1">');
+    expect(svg).toContain('<g transform="matrix(1 0 0 1 30 40)" opacity="1">');
+    expect(svg.match(/fill="#010203"/g)).toHaveLength(2);
+  });
+
+  it("stops self-referential and mutually recursive symbol cycles", () => {
+    const doc = createDocument(200, 200, "Cyclic symbols");
+    const selfReference = symbolInstanceNode("self-reference", "self");
+    const selfGroup = createGroup("Self group", [selfReference.id]);
+    selfGroup.id = "self-group";
+    const firstToSecond = symbolInstanceNode("first-to-second", "second");
+    const firstGroup = createGroup("First group", [firstToSecond.id]);
+    firstGroup.id = "first-group";
+    const secondToFirst = symbolInstanceNode("second-to-first", "first");
+    const secondGroup = createGroup("Second group", [secondToFirst.id]);
+    secondGroup.id = "second-group";
+    doc.symbols = {
+      self: {
+        id: "self",
+        name: "Self",
+        nodes: [selfGroup, selfReference],
+      },
+      first: {
+        id: "first",
+        name: "First",
+        nodes: [firstGroup, firstToSecond],
+      },
+      second: {
+        id: "second",
+        name: "Second",
+        nodes: [secondGroup, secondToFirst],
+      },
+    };
+    addSymbolInstance(doc, symbolInstanceNode("self-instance", "self", 10, 20));
+    addSymbolInstance(doc, symbolInstanceNode("mutual-instance", "first", 30, 40));
+
+    expect(() => documentToSvg(doc)).not.toThrow();
+    expect(documentToSvg(doc).length).toBeLessThan(2_000);
   });
 
   it("emits CSS mix-blend-mode for compatible blend modes on elements and containers", () => {
