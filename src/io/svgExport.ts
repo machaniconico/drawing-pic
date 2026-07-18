@@ -30,6 +30,10 @@ import { isContainer } from "../core/model/types";
 type GradientPaint = Extract<Paint, { type: "linear" | "radial" }>;
 type PatternPaint = Extract<Paint, { type: "pattern" }>;
 type AlignedStrokeNode = RectNode | EllipseNode | PathNode;
+type TextPathNode = Extract<DefinitionNode, { type: "text" }> & {
+  pathId?: NodeId;
+  startOffset?: number;
+};
 
 export interface SvgExportOptions {
   scale?: number;
@@ -230,6 +234,35 @@ const ellipseGeometryAttrs = (node: EllipseNode): string =>
   )}${numericAttr("ry", Math.abs(node.ry))}`;
 
 const pathGeometryAttrs = (node: PathNode): string => attr("d", pathToD(node));
+
+const textPathNode = (node: Extract<DefinitionNode, { type: "text" }>): TextPathNode =>
+  node as TextPathNode;
+
+const resolvedTextPathId = (
+  doc: Document,
+  node: Extract<DefinitionNode, { type: "text" }>,
+): NodeId | null => {
+  const pathId = textPathNode(node).pathId;
+  return pathId !== undefined && doc.nodes[pathId]?.type === "path" ? pathId : null;
+};
+
+const isTextPathTarget = (doc: Document, pathId: NodeId): boolean =>
+  Object.values(doc.nodes).some(
+    (node) => node.type === "text" && resolvedTextPathId(doc, node) === pathId,
+  );
+
+const renderTextContent = (
+  doc: Document,
+  node: Extract<DefinitionNode, { type: "text" }>,
+): string => {
+  const pathId = resolvedTextPathId(doc, node);
+  if (pathId === null) return escapeXml(node.text);
+
+  const startOffset = textPathNode(node).startOffset;
+  return `<textPath${attr("href", `#${pathId}`)}${
+    startOffset === undefined ? "" : numericAttr("startOffset", startOffset)
+  }>${escapeXml(node.text)}</textPath>`;
+};
 
 const renderLocalGeometry = (node: AlignedStrokeNode): string => {
   switch (node.type) {
@@ -643,7 +676,9 @@ const renderClipGeometryNode = (doc: Document, node: SceneNode): string => {
         0,
       )}${numericAttr("rx", Math.abs(node.rx))}${numericAttr("ry", Math.abs(node.ry))} />`;
     case "path":
-      return `<path${transformAttr(node.transform)}${attr("d", pathToD(node))} />`;
+      return `<path${transformAttr(node.transform)}${
+        isTextPathTarget(doc, node.id) ? attr("id", node.id) : ""
+      }${attr("d", pathToD(node))} />`;
     case "text":
       return `<text${transformAttr(node.transform)}${attr("font-family", node.fontFamily)}${numericAttr(
         "font-size",
@@ -651,7 +686,7 @@ const renderClipGeometryNode = (doc: Document, node: SceneNode): string => {
       )}${numericAttr("font-weight", node.fontWeight)}${attr("font-style", node.fontStyle)}${numericAttr(
         "letter-spacing",
         node.letterSpacing,
-      )}${attr("text-anchor", textAnchor(node.textAlign))}>${escapeXml(node.text)}</text>`;
+      )}${attr("text-anchor", textAnchor(node.textAlign))}>${renderTextContent(doc, node)}</text>`;
     case "image":
       return `<rect${transformAttr(node.transform)}${numericAttr("x", 0)}${numericAttr(
         "y",
@@ -673,6 +708,7 @@ const alignedStrokeNode = (node: SceneNode): AlignedStrokeNode | null => {
 };
 
 const renderAlignedStrokeNode = (
+  doc: Document,
   node: SceneNode,
   ctx: SvgContext,
 ): string | null => {
@@ -684,10 +720,11 @@ const renderAlignedStrokeNode = (
 
   const clipPath = clipPathId(ctx, strokeAlignmentClipContent(alignedNode, stroke.align));
   const common = nodeCommonAttrs(alignedNode);
+  const id = isTextPathTarget(doc, alignedNode.id) ? attr("id", alignedNode.id) : "";
   const geometry = renderGeometryAttrs(alignedNode);
 
   return (
-    `<${alignedNode.type}${common}${geometry}${paintAttrs(
+    `<${alignedNode.type}${common}${id}${geometry}${paintAttrs(
       alignedNode.fill,
       "fill",
       "fill-opacity",
@@ -771,7 +808,7 @@ const renderNode = (
     return `<g${nodeCommonAttrs(node)}${clipPath}>${children}</g>`;
   }
 
-  const alignedStroke = renderAlignedStrokeNode(node, ctx);
+  const alignedStroke = renderAlignedStrokeNode(doc, node, ctx);
   if (alignedStroke !== null) return alignedStroke;
 
   switch (node.type) {
@@ -801,7 +838,9 @@ const renderNode = (
         ctx,
       )}${strokeAttrs(node.stroke, ctx)} />`;
     case "path":
-      return `<path${nodeCommonAttrs(node)}${attr("d", pathToD(node))}${paintAttrs(
+      return `<path${nodeCommonAttrs(node)}${
+        isTextPathTarget(doc, node.id) ? attr("id", node.id) : ""
+      }${attr("d", pathToD(node))}${paintAttrs(
         node.fill,
         "fill",
         "fill-opacity",
@@ -819,7 +858,7 @@ const renderNode = (
         "fill",
         "fill-opacity",
         ctx,
-      )}${strokeAttrs(node.stroke, ctx)}>${escapeXml(node.text)}</text>`;
+      )}${strokeAttrs(node.stroke, ctx)}>${renderTextContent(doc, node)}</text>`;
     case "image":
       return `<image${nodeCommonAttrs(node)}${attr("href", node.src)}${numericAttr(
         "width",

@@ -150,6 +150,8 @@ export interface EditorActions {
   addNode: (node: SceneNode, parentId?: NodeId) => void;
   removeNodes: (ids: NodeId[]) => void;
   updateNode: (id: NodeId, patch: Partial<SceneNode>) => void;
+  putTextOnPath: (textId: NodeId, pathId: NodeId) => void;
+  removeTextFromPath: (textId: NodeId) => void;
   applyStyleToSelection: (patch: { opacity?: number; fill?: Paint; stroke?: Stroke | null }) => void;
   addSwatch: (color: RGBA) => void;
   removeSwatch: (id: string) => void;
@@ -924,6 +926,44 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
       }
 
       Object.assign(node, patch);
+      return true;
+    });
+  },
+
+  putTextOnPath: (textId, pathId) => {
+    withDocHistory(set, (state) => {
+      const text = state.doc.nodes[textId];
+      const path = state.doc.nodes[pathId];
+      if (
+        text?.type !== "text" ||
+        path?.type !== "path" ||
+        text.id === path.id ||
+        !isNodeInIsolation(state.doc, textId, state.isolationPath) ||
+        !isNodeInIsolation(state.doc, pathId, state.isolationPath) ||
+        text.pathId === pathId
+      ) {
+        return false;
+      }
+
+      text.pathId = pathId;
+      text.startOffset ??= 0;
+      return true;
+    });
+  },
+
+  removeTextFromPath: (textId) => {
+    withDocHistory(set, (state) => {
+      const text = state.doc.nodes[textId];
+      if (
+        text?.type !== "text" ||
+        text.pathId === undefined ||
+        !isNodeInIsolation(state.doc, textId, state.isolationPath)
+      ) {
+        return false;
+      }
+
+      delete text.pathId;
+      delete text.startOffset;
       return true;
     });
   },

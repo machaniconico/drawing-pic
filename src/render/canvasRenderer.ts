@@ -1,7 +1,8 @@
 import { isEmpty, transform as transformBBox, unionAll, type BBox } from "../core/geometry/bbox";
-import { invert, toCanvasArgs } from "../core/geometry/matrix";
+import { apply, applyVector, compose, IDENTITY, invert, toCanvasArgs, type Matrix } from "../core/geometry/matrix";
 import type { Vec2 } from "../core/geometry/vector";
 import { localBounds, symbolDefinitionBounds } from "../core/model/bounds";
+import { layoutTextOnPath } from "../core/model/textOnPath";
 import type {
   Document,
   DefinitionNode,
@@ -13,6 +14,7 @@ import type {
   RectNode,
   SceneNode,
   Stroke,
+  SubPath,
   TextNode,
 } from "../core/model/types";
 import { applyFill, applyStroke, type PatternPaintResolver } from "./paint";
@@ -294,6 +296,46 @@ const drawPath = (
   );
 };
 
+const nodeWorldTransform = (doc: Document, targetId: string): Matrix | null => {
+  const visit = (
+    nodeId: string,
+    parentTransform: Matrix,
+    visiting: ReadonlySet<string>,
+  ): Matrix | null => {
+    if (visiting.has(nodeId)) return null;
+    const node = doc.nodes[nodeId];
+    if (node === undefined) return null;
+
+    const worldTransform = compose(parentTransform, node.transform);
+    if (node.id === targetId) return worldTransform;
+    if (node.type !== "layer" && node.type !== "group") return null;
+
+    const nextVisiting = new Set(visiting);
+    nextVisiting.add(nodeId);
+    for (const childId of node.children) {
+      const result = visit(childId, worldTransform, nextVisiting);
+      if (result !== null) return result;
+    }
+    return null;
+  };
+
+  for (const layerId of doc.layerOrder) {
+    const result = visit(layerId, IDENTITY, new Set());
+    if (result !== null) return result;
+  }
+  return null;
+};
+
+const transformSubpaths = (subpaths: readonly SubPath[], matrix: Matrix): SubPath[] =>
+  subpaths.map((subpath) => ({
+    closed: subpath.closed,
+    anchors: subpath.anchors.map((anchor) => ({
+      point: apply(matrix, anchor.point),
+      handleIn: anchor.handleIn === null ? null : applyVector(matrix, anchor.handleIn),
+      handleOut: anchor.handleOut === null ? null : applyVector(matrix, anchor.handleOut),
+    })),
+  }));
+
 const configureText = (ctx: CanvasRenderingContext2D, node: TextNode): void => {
   const textContext = ctx as CanvasRenderingContext2D & { letterSpacing?: string };
   textContext.letterSpacing = `${node.letterSpacing}px`;
@@ -304,10 +346,54 @@ const configureText = (ctx: CanvasRenderingContext2D, node: TextNode): void => {
 
 const drawText = (
   ctx: CanvasRenderingContext2D,
+  doc: Document,
   node: TextNode,
   resolvePattern?: PatternPaintResolver,
 ): void => {
   configureText(ctx, node);
+
+  if (node.pathId !== undefined) {
+    const path = doc.nodes[node.pathId];
+    const pathWorld = path?.type === "path" ? nodeWorldTransform(doc, path.id) : null;
+    const textWorld = nodeWorldTransform(doc, node.id);
+    const inverseTextWorld = textWorld === null ? null : invert(textWorld);
+    if (path?.type === "path" && pathWorld !== null && inverseTextWorld !== null) {
+      const pathInTextSpace = transformSubpaths(
+        path.subpaths,
+        compose(inverseTextWorld, pathWorld),
+      );
+      const textContext = ctx as CanvasRenderingContext2D & { letterSpacing?: string };
+      textContext.letterSpacing = "0px";
+      const placements = layoutTextOnPath(
+        node.text.replace(/\r\n|\r|\n/g, ""),
+        pathInTextSpace,
+        { measureText: (char) => Math.max(0, ctx.measureText(char).width + node.letterSpacing) },
+        node.startOffset ?? 0,
+      );
+      ctx.textAlign = "center";
+
+      if (applyFill(ctx, node.fill, resolvePattern)) {
+        for (const placement of placements) {
+          ctx.save();
+          ctx.translate(placement.position.x, placement.position.y);
+          ctx.rotate(placement.angle);
+          ctx.fillText(placement.char, 0, 0);
+          ctx.restore();
+        }
+      }
+
+      if (applyStroke(ctx, node.stroke, resolvePattern)) {
+        for (const placement of placements) {
+          ctx.save();
+          ctx.translate(placement.position.x, placement.position.y);
+          ctx.rotate(placement.angle);
+          ctx.strokeText(placement.char, 0, 0);
+          ctx.restore();
+        }
+      }
+      return;
+    }
+  }
 
   const lines = node.text.split(/\r\n|\r|\n/);
   const lineAdvance = node.fontSize * node.lineHeight;
@@ -529,7 +615,7 @@ const drawNode = (
       drawPath(ctx, node, resolvePattern);
       break;
     case "text":
-      drawText(ctx, node, resolvePattern);
+      drawText(ctx, doc, node, resolvePattern);
       break;
     case "image":
       drawImage(ctx, node, onImageLoad);

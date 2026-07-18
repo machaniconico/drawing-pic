@@ -144,6 +144,10 @@ export interface EllipseNode extends ShapeBase {
 export interface TextNode extends ShapeBase {
   type: "text";
   text: string;
+  /** Optional path whose local geometry the text follows. */
+  pathId?: NodeId;
+  /** Arc-length offset from the beginning of pathId. */
+  startOffset?: number;
   fontFamily: string;
   fontSize: number;
   fontWeight: number;
