@@ -15,6 +15,7 @@ import {
 import { nodeRotationAngle } from "../state/operations";
 import { getSelectedNodes } from "../state/selectors";
 import { useEditorStore } from "../state/store";
+import { linearGradientAngle, linearGradientCoordinatesForAngle } from "./gradientAngle";
 import "./PropertiesPanel.css";
 
 type FillType = Paint["type"];
@@ -102,14 +103,8 @@ const hexToRgba = (hex: string, alpha = 1): RGBA => {
 const formatUnitNumber = (value: number): string =>
   Number.isFinite(value) ? String(Math.round(clamp(value, 0, 1) * 1000) / 1000) : "0";
 
-const linearGradientAngle = (gradient: LinearGradient): number => {
-  const degrees =
-    (Math.atan2(gradient.end.y - gradient.start.y, gradient.end.x - gradient.start.x) * 180) /
-    Math.PI;
-  const normalizedDegrees = ((degrees % 360) + 360) % 360;
-
-  return Math.round(normalizedDegrees * 10) / 10;
-};
+const formatGradientCoordinate = (value: number): string =>
+  Number.isFinite(value) ? String(Math.round(value * 1000) / 1000) : "0";
 
 const canOffsetPathNode = (node: { readonly type: string }): boolean =>
   node.type === "path" || node.type === "rect" || node.type === "ellipse";
@@ -1032,11 +1027,11 @@ export function PropertiesPanel() {
       stops: normalizeGradientStops(gradient.stops),
       start: {
         ...gradient.start,
-        [axis]: point === "start" ? clamp(nextValue, 0, 1) : gradient.start[axis],
+        [axis]: point === "start" ? nextValue : gradient.start[axis],
       },
       end: {
         ...gradient.end,
-        [axis]: point === "end" ? clamp(nextValue, 0, 1) : gradient.end[axis],
+        [axis]: point === "end" ? nextValue : gradient.end[axis],
       },
     });
   };
@@ -1051,32 +1046,12 @@ export function PropertiesPanel() {
       return;
     }
 
-    const midpoint = {
-      x: (gradient.start.x + gradient.end.x) / 2,
-      y: (gradient.start.y + gradient.end.y) / 2,
-    };
-    const currentLength = Math.hypot(
-      gradient.end.x - gradient.start.x,
-      gradient.end.y - gradient.start.y,
-    );
-    const length = currentLength > 0 ? currentLength : 1;
-    const radians = (nextAngle * Math.PI) / 180;
-    const halfDelta = {
-      x: (Math.cos(radians) * length) / 2,
-      y: (Math.sin(radians) * length) / 2,
-    };
+    const coordinates = linearGradientCoordinatesForAngle(gradient, nextAngle);
 
     updateGradientPaint(target, {
       type: "linear",
       stops: normalizeGradientStops(gradient.stops),
-      start: {
-        x: midpoint.x - halfDelta.x,
-        y: midpoint.y - halfDelta.y,
-      },
-      end: {
-        x: midpoint.x + halfDelta.x,
-        y: midpoint.y + halfDelta.y,
-      },
+      ...coordinates,
     });
   };
 
@@ -1347,14 +1322,12 @@ export function PropertiesPanel() {
                 <input
                   aria-label={scopedLabel("Linear gradient start x")}
                   className="properties-panel__number"
-                  max={1}
-                  min={0}
                   onChange={(event) =>
                     setLinearPoint(target, gradient, "start", "x", event.currentTarget.valueAsNumber)
                   }
                   step={0.05}
                   type="number"
-                  value={formatUnitNumber(gradient.start.x)}
+                  value={formatGradientCoordinate(gradient.start.x)}
                 />
               </label>
               <label className="properties-panel__field">
@@ -1362,14 +1335,12 @@ export function PropertiesPanel() {
                 <input
                   aria-label={scopedLabel("Linear gradient start y")}
                   className="properties-panel__number"
-                  max={1}
-                  min={0}
                   onChange={(event) =>
                     setLinearPoint(target, gradient, "start", "y", event.currentTarget.valueAsNumber)
                   }
                   step={0.05}
                   type="number"
-                  value={formatUnitNumber(gradient.start.y)}
+                  value={formatGradientCoordinate(gradient.start.y)}
                 />
               </label>
               <label className="properties-panel__field">
@@ -1377,14 +1348,12 @@ export function PropertiesPanel() {
                 <input
                   aria-label={scopedLabel("Linear gradient end x")}
                   className="properties-panel__number"
-                  max={1}
-                  min={0}
                   onChange={(event) =>
                     setLinearPoint(target, gradient, "end", "x", event.currentTarget.valueAsNumber)
                   }
                   step={0.05}
                   type="number"
-                  value={formatUnitNumber(gradient.end.x)}
+                  value={formatGradientCoordinate(gradient.end.x)}
                 />
               </label>
               <label className="properties-panel__field">
@@ -1392,14 +1361,12 @@ export function PropertiesPanel() {
                 <input
                   aria-label={scopedLabel("Linear gradient end y")}
                   className="properties-panel__number"
-                  max={1}
-                  min={0}
                   onChange={(event) =>
                     setLinearPoint(target, gradient, "end", "y", event.currentTarget.valueAsNumber)
                   }
                   step={0.05}
                   type="number"
-                  value={formatUnitNumber(gradient.end.y)}
+                  value={formatGradientCoordinate(gradient.end.y)}
                 />
               </label>
             </div>
