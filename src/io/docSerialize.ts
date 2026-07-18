@@ -364,6 +364,39 @@ const assertAcyclicDefinitionGraph = (nodes: readonly DefinitionNode[], path: st
   nodes.forEach((node) => visit(node.id));
 };
 
+const assertAcyclicSymbolGraph = (
+  symbols: Readonly<Record<string, SymbolDefinition>>,
+  path: string,
+): void => {
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const stack: string[] = [];
+
+  const visit = (id: string): void => {
+    if (visited.has(id)) return;
+    if (visiting.has(id)) {
+      const cycleStart = stack.indexOf(id);
+      const cycle = [...stack.slice(cycleStart), id];
+      throw new Error(`${path} contains a symbol definition cycle: ${cycle.map((item) => `"${item}"`).join(" -> ")}.`);
+    }
+
+    if (!Object.hasOwn(symbols, id)) return;
+    const symbol = symbols[id]!;
+    visiting.add(id);
+    stack.push(id);
+    for (const node of symbol.nodes) {
+      if (node.type === "symbol-instance") {
+        visit(node.symbolId);
+      }
+    }
+    stack.pop();
+    visiting.delete(id);
+    visited.add(id);
+  };
+
+  Object.keys(symbols).forEach(visit);
+};
+
 const validateSymbols = (value: unknown, path: string): Record<string, SymbolDefinition> => {
   const symbols = requireObject(value, path);
   const result: Record<string, SymbolDefinition> = {};
@@ -389,7 +422,12 @@ const validateSymbols = (value: unknown, path: string): Record<string, SymbolDef
       }
     }
     assertAcyclicDefinitionGraph(definitionNodes, `${path}.${id}.nodes`);
-    result[id] = { id, name, nodes: definitionNodes };
+    Object.defineProperty(result, id, {
+      value: { id, name, nodes: definitionNodes },
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
   }
   return result;
 };
@@ -428,7 +466,9 @@ const validateDocument = (value: unknown): Document => {
   const validateSymbolReference = (node: JsonObject, path: string): void => {
     if (node.type === "symbol-instance") {
       const symbolId = node.symbolId as string;
-      if (!(symbolId in symbols)) throw new Error(`${path}.symbolId references missing symbol "${symbolId}".`);
+      if (!Object.hasOwn(symbols, symbolId)) {
+        throw new Error(`${path}.symbolId references missing symbol "${symbolId}".`);
+      }
     }
   };
   for (const [id, node] of Object.entries(nodes)) {
@@ -438,6 +478,7 @@ const validateDocument = (value: unknown): Document => {
     definition.nodes.forEach((node, index) =>
       validateSymbolReference(node as unknown as JsonObject, `doc.symbols.${symbolId}.nodes[${index}]`));
   }
+  assertAcyclicSymbolGraph(symbols, "doc.symbols");
 
   for (const layerId of layerOrder) {
     const layer = nodes[layerId];
@@ -664,6 +705,7 @@ const orderDocument = (doc: Document): Document => {
   for (const [id, symbol] of Object.entries(doc.symbols ?? {})) {
     assertAcyclicDefinitionGraph(symbol.nodes, `doc.symbols.${id}.nodes`);
   }
+  assertAcyclicSymbolGraph(doc.symbols ?? {}, "doc.symbols");
   const result: Document = {
     id: doc.id,
     name: doc.name,

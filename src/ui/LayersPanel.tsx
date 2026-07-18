@@ -1,13 +1,20 @@
 import type { CSSProperties, DragEvent, KeyboardEvent, MouseEvent } from "react";
 import { useRef, useState } from "react";
-import { isContainer, type NodeId, type SceneNode } from "../core/model/types";
+import {
+  asSymbolInstance,
+  isContainer,
+  type DefinitionNode,
+  type NodeId,
+  type NodeType,
+  type SceneNode,
+} from "../core/model/types";
 import type { LayerDropPosition } from "../state/layerReorder";
 import { useEditorStore } from "../state/store";
 import "./LayersPanel.css";
 
 interface LayerRow {
   id: NodeId;
-  node: SceneNode;
+  node: DefinitionNode;
   depth: number;
 }
 
@@ -22,13 +29,14 @@ interface DropIndicator {
 
 const dragDataType = "application/x-drawing-pic-node-id";
 
-const typeGlyphs: Record<SceneNode["type"], string> = {
+const typeGlyphs: Record<NodeType, string> = {
   ellipse: "E",
   group: "G",
   image: "I",
   layer: "L",
   path: "P",
   rect: "R",
+  "symbol-instance": "S",
   text: "T",
 };
 
@@ -41,10 +49,11 @@ const buildRows = (nodes: Record<NodeId, SceneNode>, ids: readonly NodeId[], dep
       continue;
     }
 
-    const node = nodes[id];
-    if (!node) {
+    const storedNode = nodes[id];
+    if (!storedNode) {
       continue;
     }
+    const node: DefinitionNode = asSymbolInstance(storedNode) ?? storedNode;
 
     rows.push({ id, node, depth });
 
@@ -60,7 +69,7 @@ const depthStyle = (depth: number): LayerDepthStyle => ({
   "--layer-depth": depth,
 });
 
-const dropPositionFromEvent = (event: DragEvent<HTMLDivElement>, node: SceneNode): LayerDropPosition => {
+const dropPositionFromEvent = (event: DragEvent<HTMLDivElement>, node: DefinitionNode): LayerDropPosition => {
   const rect = event.currentTarget.getBoundingClientRect();
   const y = event.clientY - rect.top;
 
@@ -114,17 +123,17 @@ export function LayersPanel() {
     setSelection([id]);
   };
 
-  const handleToggleVisible = (event: MouseEvent<HTMLButtonElement>, node: SceneNode): void => {
+  const handleToggleVisible = (event: MouseEvent<HTMLButtonElement>, node: DefinitionNode): void => {
     event.stopPropagation();
     updateNode(node.id, { visible: !node.visible });
   };
 
-  const handleToggleLocked = (event: MouseEvent<HTMLButtonElement>, node: SceneNode): void => {
+  const handleToggleLocked = (event: MouseEvent<HTMLButtonElement>, node: DefinitionNode): void => {
     event.stopPropagation();
     updateNode(node.id, { locked: !node.locked });
   };
 
-  const beginRename = (event: MouseEvent<HTMLSpanElement>, node: SceneNode): void => {
+  const beginRename = (event: MouseEvent<HTMLSpanElement>, node: DefinitionNode): void => {
     event.stopPropagation();
     activeRenameRef.current = node.id;
     setEditingId(node.id);
@@ -172,7 +181,7 @@ export function LayersPanel() {
     event.dataTransfer.setData("text/plain", id);
   };
 
-  const handleDragOver = (event: DragEvent<HTMLDivElement>, node: SceneNode): void => {
+  const handleDragOver = (event: DragEvent<HTMLDivElement>, node: DefinitionNode): void => {
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     setDropIndicator({ id: node.id, position: dropPositionFromEvent(event, node) });
@@ -187,7 +196,7 @@ export function LayersPanel() {
     setDropIndicator((indicator) => (indicator?.id === id ? null : indicator));
   };
 
-  const handleDrop = (event: DragEvent<HTMLDivElement>, node: SceneNode): void => {
+  const handleDrop = (event: DragEvent<HTMLDivElement>, node: DefinitionNode): void => {
     event.preventDefault();
     event.stopPropagation();
 
@@ -220,6 +229,8 @@ export function LayersPanel() {
       <div className="layers-panel__tree" role="tree" aria-label="Document layers">
         {rows.map(({ id, node, depth }) => {
           const selected = selection.includes(id);
+          const symbolName = node.type === "symbol-instance" ? doc.symbols?.[node.symbolId]?.name : undefined;
+          const label = symbolName && symbolName !== node.name ? `${node.name} (${symbolName})` : node.name;
 
           return (
             <div
@@ -288,8 +299,8 @@ export function LayersPanel() {
                   value={draftName}
                 />
               ) : (
-                <span className="layers-panel__name" onDoubleClick={(event) => beginRename(event, node)} title={node.name}>
-                  {node.name}
+                <span className="layers-panel__name" onDoubleClick={(event) => beginRename(event, node)} title={label}>
+                  {label}
                 </span>
               )}
             </div>
