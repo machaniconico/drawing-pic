@@ -3,6 +3,7 @@ import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { offsetSubPaths } from "../core/geometry/offsetPath";
 import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
+import type { BBox } from "../core/geometry/bbox";
 import { apply, invert } from "../core/geometry/matrix";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { PathfinderOp } from "../core/geometry/pathfinder";
@@ -94,6 +95,7 @@ export interface EditorViewport {
 }
 
 export type SnapTarget = "objects" | "guides" | "grid";
+export type AlignReference = "selection" | "artboard";
 
 export interface SnapSettings {
   enabled: boolean;
@@ -127,8 +129,8 @@ export interface EditorActions {
   moveSelection: (dx: number, dy: number) => void;
   setSelectionPosition: (x: number, y: number) => void;
   setSelectionSize: (width: number, height: number) => void;
-  alignNodes: (edge: AlignEdge) => void;
-  distributeNodes: (axis: DistributeAxis) => void;
+  alignNodes: (edge: AlignEdge, reference?: AlignReference) => void;
+  distributeNodes: (axis: DistributeAxis, reference?: AlignReference) => void;
   distributeSelectionByGap: (axis: DistributeAxis, gap: number) => void;
   flipSelection: (axis: FlipAxis) => void;
   rotateSelection90: (direction: Rotate90Direction) => void;
@@ -432,6 +434,20 @@ const fallbackArtboard = (doc: Document): Artboard => ({
   width: Math.max(MIN_DOCUMENT_SIZE, doc.width),
   height: Math.max(MIN_DOCUMENT_SIZE, doc.height),
 });
+
+const activeArtboardBounds = (doc: Document): BBox | undefined => {
+  const artboard = doc.artboards?.find((candidate) => candidate.id === doc.activeArtboardId);
+  if (!artboard) {
+    return undefined;
+  }
+
+  return {
+    minX: artboard.x,
+    minY: artboard.y,
+    maxX: artboard.x + artboard.width,
+    maxY: artboard.y + artboard.height,
+  };
+};
 
 const rebaseDocumentToArtboard = (doc: Document, id: NodeId | undefined): Vec2 => {
   const artboards = doc.artboards;
@@ -855,16 +871,36 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
     });
   },
 
-  alignNodes: (edge) => {
-    withDocHistory(set, (state) =>
-      applyTransformPatches(state.doc, computeAlignNodes(state.doc, state.selection, edge, state.keyObjectId)),
-    );
+  alignNodes: (edge, reference = "selection") => {
+    withDocHistory(set, (state) => {
+      const referenceBounds = reference === "artboard" ? activeArtboardBounds(state.doc) : undefined;
+      if (reference === "artboard" && !referenceBounds) {
+        return false;
+      }
+      return applyTransformPatches(
+        state.doc,
+        computeAlignNodes(
+          state.doc,
+          state.selection,
+          edge,
+          reference === "selection" ? state.keyObjectId : null,
+          referenceBounds,
+        ),
+      );
+    });
   },
 
-  distributeNodes: (axis) => {
-    withDocHistory(set, (state) =>
-      applyTransformPatches(state.doc, computeDistributeNodes(state.doc, state.selection, axis)),
-    );
+  distributeNodes: (axis, reference = "selection") => {
+    withDocHistory(set, (state) => {
+      const referenceBounds = reference === "artboard" ? activeArtboardBounds(state.doc) : undefined;
+      if (reference === "artboard" && !referenceBounds) {
+        return false;
+      }
+      return applyTransformPatches(
+        state.doc,
+        computeDistributeNodes(state.doc, state.selection, axis, referenceBounds),
+      );
+    });
   },
 
   distributeSelectionByGap: (axis, gap) => {
