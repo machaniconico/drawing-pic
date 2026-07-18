@@ -1,0 +1,212 @@
+.color-picker {
+  position: relative;
+  display: inline-flex;
+}
+
+.color-picker__checker {
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #b8b8b8 25%, transparent 25%),
+    linear-gradient(-45deg, #b8b8b8 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #b8b8b8 75%),
+    linear-gradient(-45deg, transparent 75%, #b8b8b8 75%);
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+  background-size: 8px 8px;
+}
+
+.color-picker__trigger {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.color-picker__trigger:hover:not(:disabled) {
+  border-color: #777;
+}
+
+.color-picker__trigger:focus-visible,
+.color-picker__sv:focus-visible,
+.color-picker__range:focus-visible,
+.color-picker__hex input:focus-visible {
+  border-color: #2d8cf0;
+  outline: 2px solid rgba(45, 140, 240, 0.65);
+  outline-offset: 1px;
+}
+
+.color-picker__trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.color-picker__swatch {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.color-picker__popover {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 218px;
+  padding: 10px;
+  color: #e8e8e8;
+  background: #202022;
+  border: 1px solid #4b4b4e;
+  border-radius: 7px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.color-picker__sv {
+  position: relative;
+  width: 100%;
+  height: 138px;
+  overflow: hidden;
+  background-image:
+    linear-gradient(to bottom, transparent, #000),
+    linear-gradient(to right, #fff, transparent);
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.color-picker__sv-thumb {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.8), 0 1px 3px rgba(0, 0, 0, 0.65);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.color-picker__control {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  color: #bdbdbd;
+}
+
+.color-picker__range {
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #fff;
+}
+
+.color-picker__range--hue {
+  height: 12px;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  border-radius: 6px;
+  appearance: none;
+}
+
+.color-picker__alpha {
+  position: relative;
+  display: block;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.color-picker__alpha-color {
+  position: absolute;
+  inset: 0;
+}
+
+.color-picker__range--alpha {
+  position: absolute;
+  inset: -2px 0 auto;
+  z-index: 1;
+  height: 16px;
+  appearance: none;
+  background: transparent;
+}
+
+.color-picker__range::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  background: #f4f4f4;
+  border: 1px solid #222;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  appearance: none;
+}
+
+.color-picker__range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: #f4f4f4;
+  border: 1px solid #222;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.color-picker__footer {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+
+.color-picker__current {
+  width: 28px;
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid #555;
+  border-radius: 4px;
+}
+
+.color-picker__hex {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  color: #bdbdbd;
+}
+
+.color-picker__hex input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 3px 6px;
+  color: #f0f0f0;
+  background: #171719;
+  border: 1px solid #48484b;
+  border-radius: 4px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.color-picker__hex input[aria-invalid="true"] {
+  border-color: #dc6b6b;
+}
+
+.color-picker__visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .color-picker__trigger,
+  .color-picker__range {
+    scroll-behavior: auto;
+  }
+}
