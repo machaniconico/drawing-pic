@@ -102,6 +102,15 @@ const hexToRgba = (hex: string, alpha = 1): RGBA => {
 const formatUnitNumber = (value: number): string =>
   Number.isFinite(value) ? String(Math.round(clamp(value, 0, 1) * 1000) / 1000) : "0";
 
+const linearGradientAngle = (gradient: LinearGradient): number => {
+  const degrees =
+    (Math.atan2(gradient.end.y - gradient.start.y, gradient.end.x - gradient.start.x) * 180) /
+    Math.PI;
+  const normalizedDegrees = ((degrees % 360) + 360) % 360;
+
+  return Math.round(normalizedDegrees * 10) / 10;
+};
+
 const canOffsetPathNode = (node: { readonly type: string }): boolean =>
   node.type === "path" || node.type === "rect" || node.type === "ellipse";
 
@@ -1032,6 +1041,45 @@ export function PropertiesPanel() {
     });
   };
 
+  const setLinearAngle = (
+    target: PaintTarget,
+    gradient: LinearGradient,
+    value: number,
+  ): void => {
+    const nextAngle = readNumber(value);
+    if (nextAngle === null) {
+      return;
+    }
+
+    const midpoint = {
+      x: (gradient.start.x + gradient.end.x) / 2,
+      y: (gradient.start.y + gradient.end.y) / 2,
+    };
+    const currentLength = Math.hypot(
+      gradient.end.x - gradient.start.x,
+      gradient.end.y - gradient.start.y,
+    );
+    const length = currentLength > 0 ? currentLength : 1;
+    const radians = (nextAngle * Math.PI) / 180;
+    const halfDelta = {
+      x: (Math.cos(radians) * length) / 2,
+      y: (Math.sin(radians) * length) / 2,
+    };
+
+    updateGradientPaint(target, {
+      type: "linear",
+      stops: normalizeGradientStops(gradient.stops),
+      start: {
+        x: midpoint.x - halfDelta.x,
+        y: midpoint.y - halfDelta.y,
+      },
+      end: {
+        x: midpoint.x + halfDelta.x,
+        y: midpoint.y + halfDelta.y,
+      },
+    });
+  };
+
   const setRadialValue = (
     target: PaintTarget,
     gradient: RadialGradient,
@@ -1280,6 +1328,19 @@ export function PropertiesPanel() {
             aria-label={scopedLabel("Linear gradient direction")}
           >
             <div className="properties-panel__subhead">Direction</div>
+            <label className="properties-panel__field">
+              <span className="properties-panel__label">Angle</span>
+              <input
+                aria-label={scopedLabel("Linear gradient angle")}
+                className="properties-panel__number"
+                onChange={(event) =>
+                  setLinearAngle(target, gradient, event.currentTarget.valueAsNumber)
+                }
+                step={1}
+                type="number"
+                value={linearGradientAngle(gradient)}
+              />
+            </label>
             <div className="properties-panel__grid">
               <label className="properties-panel__field">
                 <span className="properties-panel__label">SX</span>

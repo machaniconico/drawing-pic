@@ -23,17 +23,21 @@ import {
 import { apply, applyVector, compose, IDENTITY, invert, rotation, scaling, translate, type Matrix } from "../core/geometry/matrix";
 import type { Vec2 } from "../core/geometry/vector";
 import { corner, createEllipse, createPath, createRect, createText } from "../core/model/factory";
+import { gradientGeometryFromDrag } from "../core/model/gradientGeom";
 import { hitTest } from "../core/model/hittest";
 import { formatAngle, formatDistance, measureBetween } from "../core/model/measure";
 import { deleteAnchor, insertAnchor, moveAnchor, moveHandle, setAnchorType, type HandleSide } from "../core/model/pathEdit";
 import { selectionBounds, worldBounds } from "../core/model/bounds";
-import { computeSmartGuides, type SmartGuide } from "../core/model/smartGuides";
 import {
+  computeEqualSpacingIndicators,
+  computeNearestDistanceBadges,
   computeSnap,
   computeTransformSnap,
   snapRotation,
   snapToGrid,
+  type EqualSpacingIndicator,
   type SnapAlignmentLine,
+  type SnapMeasurementBadge,
   type TransformSnapEdgeResult,
   type TransformSnapGuide,
   type TransformSnapResult,
@@ -68,6 +72,7 @@ interface BaseDragState {
     | "node-anchor"
     | "node-handle"
     | "guide"
+    | "gradient"
     | "measure";
   pointerId: number;
   startScreen: Vec2;
@@ -158,6 +163,15 @@ interface MeasureDragState extends BaseDragState {
   additive: false;
 }
 
+interface GradientDragState extends BaseDragState {
+  mode: "gradient";
+  additive: false;
+  changed: boolean;
+  targetId: NodeId;
+  originalDoc: Document;
+  originalHistory: EditorStore["history"];
+}
+
 type DragState =
   | SimpleDragState
   | MoveDragState
@@ -167,6 +181,7 @@ type DragState =
   | NodeAnchorDragState
   | NodeHandleDragState
   | GuideDragState
+  | GradientDragState
   | MeasureDragState;
 
 interface PenDraft {
@@ -185,6 +200,8 @@ interface SnapGuides {
   guidesY: number[];
   alignmentGuidesX: SnapAlignmentLine[];
   alignmentGuidesY: SnapAlignmentLine[];
+  measurementBadges: SnapMeasurementBadge[];
+  equalSpacingIndicators: EqualSpacingIndicator[];
 }
 
 interface MoveGesture {
@@ -233,6 +250,7 @@ const PEN_CLOSE_THRESHOLD = 6;
 const PEN_ANCHOR_SIZE = 6;
 const DRAG_MOVE_THRESHOLD = 2;
 const SNAP_THRESHOLD_SCREEN_PX = 6;
+const EQUAL_SPACING_TOLERANCE_SCREEN_PX = 1;
 const MATRIX_EPSILON = 1e-9;
 const SCALE_EPSILON = 1e-6;
 const SNAP_ROTATION_RADIANS = Math.PI / 12;
@@ -262,6 +280,8 @@ const emptySnapGuides = (): SnapGuides => ({
   guidesY: [],
   alignmentGuidesX: [],
   alignmentGuidesY: [],
+  measurementBadges: [],
+  equalSpacingIndicators: [],
 });
 
 const OPPOSITE_RESIZE_HANDLES: Record<ResizeHandleId, ResizeHandleId> = {
@@ -583,11 +603,6 @@ const computeMoveGesture = (
 
   const movedBounds = translateBBox(drag.initialBounds, rawDx, rawDy);
   const objectCandidates = objectSnapCandidates(drag.candidateBounds, snapSettings);
-  const smartGuides = computeSmartGuides(
-    movedBounds,
-    objectCandidates,
-    SNAP_THRESHOLD_SCREEN_PX / viewport.zoom,
-  );
   const snap = computeSnap(
     movedBounds,
     objectCandidates,
@@ -596,16 +611,9 @@ const computeMoveGesture = (
   );
   const gridDx = gridSnapDelta(movedBounds.minX, snapSettings);
   const gridDy = gridSnapDelta(movedBounds.minY, snapSettings);
-  const smartGuidesX = smartGuides.guides.filter((guide) => guide.axis === "x");
-  const smartGuidesY = smartGuides.guides.filter((guide) => guide.axis === "y");
-  const usesSmartGuideX = snap.alignmentGuidesX.length > 0 && smartGuidesX.length > 0;
-  const usesSmartGuideY = snap.alignmentGuidesY.length > 0 && smartGuidesY.length > 0;
-  const snapDx = usesSmartGuideX
-    ? smartGuides.delta.x
-    : snap.guidesX.length > 0 ? snap.dx : gridDx;
-  const snapDy = usesSmartGuideY
-    ? smartGuides.delta.y
-    : snap.guidesY.length > 0 ? snap.dy : gridDy;
+  const snapDx = snap.guidesX.length > 0 ? snap.dx : gridDx;
+  const snapDy = snap.guidesY.length > 0 ? snap.dy : gridDy;
+  const snappedBounds = translateBBox(movedBounds, snapDx, snapDy);
 
   return {
     dx: rawDx + snapDx,
@@ -613,16 +621,17 @@ const computeMoveGesture = (
     guides: {
       guidesX: snap.guidesX,
       guidesY: snap.guidesY,
-      alignmentGuidesX: usesSmartGuideX ? smartGuidesToAlignmentLines(smartGuidesX) : [],
-      alignmentGuidesY: usesSmartGuideY ? smartGuidesToAlignmentLines(smartGuidesY) : [],
+      alignmentGuidesX: snap.alignmentGuidesX,
+      alignmentGuidesY: snap.alignmentGuidesY,
+      measurementBadges: computeNearestDistanceBadges(snappedBounds, objectCandidates),
+      equalSpacingIndicators: computeEqualSpacingIndicators(
+        snappedBounds,
+        objectCandidates,
+        EQUAL_SPACING_TOLERANCE_SCREEN_PX / viewport.zoom,
+      ),
     },
   };
 };
-
-const smartGuidesToAlignmentLines = (guides: readonly SmartGuide[]): SnapAlignmentLine[] =>
-  guides.map((guide) => guide.axis === "x"
-    ? { position: guide.start.x, spanMin: guide.start.y, spanMax: guide.end.y }
-    : { position: guide.start.y, spanMin: guide.start.x, spanMax: guide.end.x });
 
 type XTransformEdge = "minX" | "maxX";
 type YTransformEdge = "minY" | "maxY";
@@ -679,6 +688,8 @@ const transformSnapGuidesForActiveEdges = (
     guidesY: yEdge === null || snap[yEdge].guide === null ? [] : [snap[yEdge].guide],
     alignmentGuidesX: mergeSnapAlignmentLines(alignmentGuidesX),
     alignmentGuidesY: mergeSnapAlignmentLines(alignmentGuidesY),
+    measurementBadges: [],
+    equalSpacingIndicators: [],
   };
 };
 
@@ -1222,6 +1233,98 @@ const nodeWorldTransform = (doc: Document, id: NodeId): Matrix => {
   return path.reduce((acc, node) => compose(acc, node.transform), IDENTITY);
 };
 
+const applyGradientGesture = (drag: GradientDragState, endWorld: Vec2): boolean => {
+  const originalNode = drag.originalDoc.nodes[drag.targetId];
+  if (
+    !originalNode ||
+    !hasStyle(originalNode) ||
+    (originalNode.fill.type !== "linear" && originalNode.fill.type !== "radial")
+  ) {
+    return false;
+  }
+
+  const inverseWorld = invert(nodeWorldTransform(drag.originalDoc, drag.targetId));
+  if (inverseWorld === null) {
+    return false;
+  }
+
+  const startLocal = apply(inverseWorld, drag.startWorld);
+  const endLocal = apply(inverseWorld, endWorld);
+  let changed = false;
+
+  editorStore.setState(
+    produce((state: EditorStore) => {
+      const node = state.doc.nodes[drag.targetId];
+      if (!node || !hasStyle(node) || node.locked || !node.visible) {
+        return;
+      }
+
+      if (originalNode.fill.type === "linear") {
+        const geometry = gradientGeometryFromDrag("linear", startLocal, endLocal);
+        if (
+          node.fill.type === "linear" &&
+          node.fill.start.x === geometry.start.x &&
+          node.fill.start.y === geometry.start.y &&
+          node.fill.end.x === geometry.end.x &&
+          node.fill.end.y === geometry.end.y
+        ) {
+          return;
+        }
+        node.fill = { ...originalNode.fill, ...geometry };
+        changed = true;
+        return;
+      }
+
+      const geometry = gradientGeometryFromDrag("radial", startLocal, endLocal);
+      if (
+        node.fill.type === "radial" &&
+        node.fill.center.x === geometry.center.x &&
+        node.fill.center.y === geometry.center.y &&
+        node.fill.radius === geometry.radius
+      ) {
+        return;
+      }
+      node.fill = { ...originalNode.fill, ...geometry };
+      changed = true;
+    }),
+  );
+
+  return changed;
+};
+
+const commitGradientGesture = (drag: GradientDragState): void => {
+  editorStore.setState({
+    history: pushHistory(drag.originalHistory, drag.originalDoc),
+  });
+};
+
+const gradientChangedFromOriginal = (drag: GradientDragState): boolean => {
+  const originalNode = drag.originalDoc.nodes[drag.targetId];
+  const currentNode = editorStore.getState().doc.nodes[drag.targetId];
+  if (!originalNode || !currentNode || !hasStyle(originalNode) || !hasStyle(currentNode)) {
+    return false;
+  }
+
+  if (originalNode.fill.type === "linear" && currentNode.fill.type === "linear") {
+    return (
+      originalNode.fill.start.x !== currentNode.fill.start.x ||
+      originalNode.fill.start.y !== currentNode.fill.start.y ||
+      originalNode.fill.end.x !== currentNode.fill.end.x ||
+      originalNode.fill.end.y !== currentNode.fill.end.y
+    );
+  }
+
+  if (originalNode.fill.type === "radial" && currentNode.fill.type === "radial") {
+    return (
+      originalNode.fill.center.x !== currentNode.fill.center.x ||
+      originalNode.fill.center.y !== currentNode.fill.center.y ||
+      originalNode.fill.radius !== currentNode.fill.radius
+    );
+  }
+
+  return false;
+};
+
 const getEditablePathNode = (
   doc: Document,
   selection: readonly NodeId[],
@@ -1434,6 +1537,8 @@ const computeNodeAnchorGesture = (
       guidesY: snap.guidesY,
       alignmentGuidesX: snap.alignmentGuidesX,
       alignmentGuidesY: snap.alignmentGuidesY,
+      measurementBadges: [],
+      equalSpacingIndicators: [],
     },
   };
 };
@@ -2096,9 +2201,15 @@ const drawSnapGuides = (
   ctx: CanvasRenderingContext2D,
   guides: SnapGuides,
   viewport: EditorViewport,
+  size: Size,
   dpr: number,
 ): void => {
-  if (guides.alignmentGuidesX.length === 0 && guides.alignmentGuidesY.length === 0) {
+  if (
+    guides.alignmentGuidesX.length === 0 &&
+    guides.alignmentGuidesY.length === 0 &&
+    guides.measurementBadges.length === 0 &&
+    guides.equalSpacingIndicators.length === 0
+  ) {
     return;
   }
 
@@ -2124,6 +2235,74 @@ const drawSnapGuides = (
     ctx.moveTo(start.x, start.y + 0.5);
     ctx.lineTo(end.x, end.y + 0.5);
     ctx.stroke();
+  }
+
+  ctx.strokeStyle = "#ff2d8f";
+  ctx.lineWidth = 1.25;
+  ctx.setLineDash([3, 3]);
+  for (const indicator of guides.equalSpacingIndicators) {
+    const start = worldToScreen(indicator.start, viewport);
+    const end = worldToScreen(indicator.end, viewport);
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    if (indicator.axis === "x") {
+      ctx.moveTo(start.x, start.y - 4);
+      ctx.lineTo(start.x, start.y + 4);
+      ctx.moveTo(end.x, end.y - 4);
+      ctx.lineTo(end.x, end.y + 4);
+    } else {
+      ctx.moveTo(start.x - 4, start.y);
+      ctx.lineTo(start.x + 4, start.y);
+      ctx.moveTo(end.x - 4, end.y);
+      ctx.lineTo(end.x + 4, end.y);
+    }
+    ctx.stroke();
+  }
+
+  ctx.setLineDash([]);
+  ctx.font = "11px system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+  ctx.textBaseline = "middle";
+  for (const badge of guides.measurementBadges) {
+    const start = worldToScreen(badge.start, viewport);
+    const end = worldToScreen(badge.end, viewport);
+    const midpointScreen = {
+      x: (start.x + end.x) / 2,
+      y: (start.y + end.y) / 2,
+    };
+
+    ctx.strokeStyle = "rgba(255, 45, 143, 0.8)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    if (badge.axis === "x") {
+      ctx.moveTo(start.x, start.y - 3);
+      ctx.lineTo(start.x, start.y + 3);
+      ctx.moveTo(end.x, end.y - 3);
+      ctx.lineTo(end.x, end.y + 3);
+    } else {
+      ctx.moveTo(start.x - 3, start.y);
+      ctx.lineTo(start.x + 3, start.y);
+      ctx.moveTo(end.x - 3, end.y);
+      ctx.lineTo(end.x + 3, end.y);
+    }
+    ctx.stroke();
+
+    const label = `${formatDistance(badge.distance)} px`;
+    const paddingX = 5;
+    const height = 18;
+    const width = Math.ceil(ctx.measureText(label).width + paddingX * 2);
+    const desiredX = midpointScreen.x - width / 2 + (badge.axis === "y" ? 8 : 0);
+    const desiredY = midpointScreen.y - height / 2 + (badge.axis === "x" ? -9 : 0);
+    const x = clamp(desiredX, 4, Math.max(4, size.width - width - 4));
+    const y = clamp(desiredY, 4, Math.max(4, size.height - height - 4));
+    ctx.fillStyle = "rgba(255, 255, 255, 0.96)";
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = "rgba(255, 45, 143, 0.65)";
+    ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
+    ctx.fillStyle = "#c2185b";
+    ctx.fillText(label, x + paddingX, y + height / 2);
   }
 
   ctx.restore();
@@ -2366,7 +2545,7 @@ export default function CanvasView() {
         if (activeTool === "node") {
           drawNodeEditOverlay(ctx, doc, selection, viewport, dpr, selectedPathAnchorRef.current);
         }
-        drawSnapGuides(ctx, snapGuidesRef.current, viewport, dpr);
+        drawSnapGuides(ctx, snapGuidesRef.current, viewport, size, dpr);
         drawRotationReadout(ctx, rotationReadoutRef.current, size, dpr);
         drawMeasureOverlay(ctx, measureOverlayRef.current, viewport, size, dpr);
         drawShapePreview(ctx, dragRef.current, viewport, dpr);
@@ -2396,6 +2575,23 @@ export default function CanvasView() {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.code === "Space" && !event.repeat) {
         spaceHeldRef.current = true;
+      }
+
+      const target = event.target;
+      const isTyping =
+        target instanceof HTMLElement &&
+        (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+      if (
+        event.key.toLowerCase() === "g" &&
+        !event.repeat &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        !isTyping
+      ) {
+        event.preventDefault();
+        editorStore.getState().setActiveTool("gradient");
       }
     };
     const onKeyUp = (event: KeyboardEvent): void => {
@@ -2572,6 +2768,42 @@ export default function CanvasView() {
         additive: false,
         moved: false,
       };
+      return;
+    }
+
+    if (state.activeTool === "gradient") {
+      event.preventDefault();
+      const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+      if (hit === null || !state.selection.includes(hit)) {
+        return;
+      }
+
+      const node = state.doc.nodes[hit];
+      if (
+        !node ||
+        !hasStyle(node) ||
+        node.locked ||
+        !node.visible ||
+        (node.fill.type !== "linear" && node.fill.type !== "radial")
+      ) {
+        return;
+      }
+
+      canvas.setPointerCapture(event.pointerId);
+      dragRef.current = {
+        mode: "gradient",
+        pointerId: event.pointerId,
+        startScreen: point,
+        lastScreen: point,
+        startWorld: worldPoint,
+        additive: false,
+        moved: false,
+        changed: false,
+        targetId: hit,
+        originalDoc: structuredClone(state.doc) as Document,
+        originalHistory: state.history,
+      };
+      scheduleInteractiveDraw();
       return;
     }
 
@@ -2942,6 +3174,34 @@ export default function CanvasView() {
     event.preventDefault();
     const moved = drag.moved || hasDragMoved(drag.startScreen, point);
 
+    if (drag.mode === "gradient") {
+      if (state.activeTool !== "gradient") {
+        editorStore.setState({
+          doc: drag.originalDoc,
+          history: drag.originalHistory,
+        });
+        if (canvas.hasPointerCapture(event.pointerId)) {
+          canvas.releasePointerCapture(event.pointerId);
+        }
+        dragRef.current = null;
+        scheduleInteractiveDraw();
+        return;
+      }
+
+      const currentWorld = screenToWorld(point, state.viewport);
+      const changed = moved && applyGradientGesture(drag, currentWorld);
+      dragRef.current = {
+        ...drag,
+        lastScreen: point,
+        moved,
+        changed: drag.changed || changed,
+      };
+      if (!changed) {
+        scheduleInteractiveDraw();
+      }
+      return;
+    }
+
     if (drag.mode === "measure") {
       if (state.activeTool !== "measure") {
         cancelMeasureDrag();
@@ -3144,7 +3404,19 @@ export default function CanvasView() {
       return;
     }
 
-    if (drag.mode === "guide") {
+    if (drag.mode === "gradient") {
+      if (state.activeTool !== "gradient") {
+        editorStore.setState({
+          doc: drag.originalDoc,
+          history: drag.originalHistory,
+        });
+      } else if (moved) {
+        applyGradientGesture(drag, currentWorld);
+        if (gradientChangedFromOriginal(drag)) {
+          commitGradientGesture(drag);
+        }
+      }
+    } else if (drag.mode === "guide") {
       if (isGuideDroppedOnRuler(drag.axis, point)) {
         removeGuideForGesture(drag);
       } else {
@@ -3267,6 +3539,26 @@ export default function CanvasView() {
     }
     snapGuidesRef.current = emptySnapGuides();
     rotationReadoutRef.current = null;
+    dragRef.current = null;
+    scheduleInteractiveDraw();
+  };
+
+  const cancelPointerDrag = (event: ReactPointerEvent<HTMLCanvasElement>): void => {
+    const canvas = canvasRef.current;
+    const drag = dragRef.current;
+    if (canvas === null || drag?.mode !== "gradient" || drag.pointerId !== event.pointerId) {
+      finishDrag(event);
+      return;
+    }
+
+    event.preventDefault();
+    editorStore.setState({
+      doc: drag.originalDoc,
+      history: drag.originalHistory,
+    });
+    if (canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId);
+    }
     dragRef.current = null;
     scheduleInteractiveDraw();
   };
@@ -3461,7 +3753,7 @@ export default function CanvasView() {
       <canvas
         aria-label="Document canvas"
         className={`canvas-view__canvas ${cursorClass}`}
-        onPointerCancel={finishDrag}
+        onPointerCancel={cancelPointerDrag}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={finishDrag}

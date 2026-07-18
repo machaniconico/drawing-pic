@@ -54,6 +54,13 @@ import {
 import { moveNode, type LayerDropPosition } from "./layerReorder";
 import { loadEditorPrefs, saveEditorPrefs } from "./persist";
 import {
+  addSwatch as appendSwatch,
+  loadSwatches,
+  removeSwatch as deleteSwatch,
+  saveSwatches,
+  type Swatch,
+} from "./swatches";
+import {
   addGuide as computeAddGuide,
   clearGuides as computeClearGuides,
   moveGuide as computeMoveGuide,
@@ -72,6 +79,7 @@ export type ToolId =
   | "ellipse"
   | "pen"
   | "text"
+  | "gradient"
   | "hand"
   | "eyedropper"
   | "measure";
@@ -99,6 +107,7 @@ export interface EditorState {
   viewport: EditorViewport;
   snapSettings: SnapSettings;
   showGrid: boolean;
+  swatches: Swatch[];
   history: History<Document>;
   clipboard: SceneNode[];
 }
@@ -108,6 +117,9 @@ export interface EditorActions {
   removeNodes: (ids: NodeId[]) => void;
   updateNode: (id: NodeId, patch: Partial<SceneNode>) => void;
   applyStyleToSelection: (patch: { opacity?: number; fill?: Paint; stroke?: Stroke | null }) => void;
+  addSwatch: (color: RGBA) => void;
+  removeSwatch: (id: string) => void;
+  applySwatchToSelection: (id: string) => void;
   moveSelection: (dx: number, dy: number) => void;
   setSelectionPosition: (x: number, y: number) => void;
   setSelectionSize: (width: number, height: number) => void;
@@ -201,6 +213,7 @@ const initialState = (): EditorState => {
       ...(persistedPrefs?.snapSettings ?? {}),
     },
     showGrid: persistedPrefs?.showGrid ?? false,
+    swatches: loadSwatches(),
     history: createHistory<Document>(),
     clipboard: [],
   };
@@ -220,6 +233,15 @@ const persistEditorPrefs = (state: EditorStore): void => {
 };
 
 const dedupeIds = (ids: NodeId[]): NodeId[] => [...new Set(ids)];
+
+const createSwatchId = (): string => {
+  const randomUuid = globalThis.crypto?.randomUUID;
+  if (randomUuid) {
+    return randomUuid.call(globalThis.crypto);
+  }
+
+  return `swatch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+};
 
 const clearMissingKeyObject = (state: EditorStore): void => {
   if (state.keyObjectId !== null && !state.selection.includes(state.keyObjectId)) {
@@ -579,7 +601,7 @@ const withDocHistory = (
   );
 };
 
-export const editorStore = createStore<EditorStore>()((set) => ({
+export const editorStore = createStore<EditorStore>()((set, get) => ({
   ...initialState(),
 
   addNode: (node, parentId) => {
@@ -676,6 +698,47 @@ export const editorStore = createStore<EditorStore>()((set) => ({
         }
       }
 
+      return changed;
+    });
+  },
+
+  addSwatch: (color) => {
+    const swatches = appendSwatch(get().swatches, { id: createSwatchId(), color });
+    set({ swatches });
+    saveSwatches(swatches);
+  },
+
+  removeSwatch: (id) => {
+    const current = get().swatches;
+    const swatches = deleteSwatch(current, id);
+    if (swatches.length === current.length) {
+      return;
+    }
+
+    set({ swatches });
+    saveSwatches(swatches);
+  },
+
+  applySwatchToSelection: (id) => {
+    const swatch = get().swatches.find((candidate) => candidate.id === id);
+    if (!swatch) {
+      return;
+    }
+
+    withDocHistory(set, (state) => {
+      let changed = false;
+      for (const nodeId of state.selection) {
+        const node = state.doc.nodes[nodeId];
+        if (!node || !hasStyle(node)) {
+          continue;
+        }
+
+        const fill: Paint = { type: "solid", color: swatch.color };
+        if (!paintEqual(node.fill, fill)) {
+          node.fill = structuredClone(fill);
+          changed = true;
+        }
+      }
       return changed;
     });
   },
