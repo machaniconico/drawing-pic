@@ -2582,6 +2582,19 @@ export default function CanvasView() {
         target instanceof HTMLElement &&
         (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
       if (
+        event.key.toLowerCase() === "m" &&
+        !event.repeat &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        event.shiftKey &&
+        !isTyping
+      ) {
+        event.preventDefault();
+        editorStore.getState().setActiveTool("shape-builder");
+        return;
+      }
+      if (
         event.key.toLowerCase() === "g" &&
         !event.repeat &&
         !event.metaKey &&
@@ -2768,6 +2781,12 @@ export default function CanvasView() {
         additive: false,
         moved: false,
       };
+      return;
+    }
+
+    if (state.activeTool === "shape-builder") {
+      event.preventDefault();
+      state.applyShapeBuilder(worldPoint, event.altKey ? "delete" : "union");
       return;
     }
 

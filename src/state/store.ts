@@ -3,11 +3,13 @@ import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { offsetSubPaths } from "../core/geometry/offsetPath";
 import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
+import { apply, compose, IDENTITY, invert, type Matrix } from "../core/geometry/matrix";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { PathfinderOp } from "../core/geometry/pathfinder";
+import { shapeBuilderFromRegions, type ShapeBuilderMode } from "../core/geometry/shapeBuilder";
 import type { Vec2 } from "../core/geometry/vector";
-import { createDocument } from "../core/model/factory";
-import type { Document, NodeId, Paint, PathNode, RGBA, SceneNode, Stroke } from "../core/model/types";
+import { createDocument, newId } from "../core/model/factory";
+import type { Artboard, Document, NodeId, Paint, PathNode, RGBA, SceneNode, Stroke } from "../core/model/types";
 import { hasStyle, isContainer } from "../core/model/types";
 import {
   alignNodes as computeAlignNodes,
@@ -80,6 +82,7 @@ export type ToolId =
   | "pen"
   | "text"
   | "gradient"
+  | "shape-builder"
   | "hand"
   | "eyedropper"
   | "measure";
@@ -138,6 +141,7 @@ export interface EditorActions {
   toggleClipMask: () => void;
   booleanOp: (op: BooleanOp) => void;
   applyPathfinder: (op: PathfinderOp) => void;
+  applyShapeBuilder: (point: Vec2, mode?: ShapeBuilderMode | boolean) => void;
   convertSelectionToPaths: () => void;
   outlineSelectedStrokes: () => void;
   offsetSelectedPaths: (distance: number) => void;
@@ -175,6 +179,10 @@ export interface EditorActions {
   setDocumentSize: (width: number, height: number) => void;
   setDocumentName: (name: string) => void;
   setDocumentBackground: (color: RGBA | null) => void;
+  addArtboard: () => NodeId;
+  removeArtboard: (id: NodeId) => void;
+  setActiveArtboard: (id: NodeId) => void;
+  renameArtboard: (id: NodeId, name: string) => void;
   loadDocument: (doc: Document) => void;
   undo: () => void;
   redo: () => void;
@@ -200,7 +208,7 @@ const initialState = (): EditorState => {
   const persistedPrefs = loadEditorPrefs();
 
   return {
-    doc: createDocument(),
+    doc: normalizeDocument(createDocument()),
     selection: [],
     keyObjectId: null,
     activeTool: "select",
@@ -415,10 +423,73 @@ const clipboardDocument = (clipboard: readonly SceneNode[]): Document => ({
 
 const objectNodes = (doc: Document): SceneNode[] => Object.values(doc.nodes).filter((node) => node.type !== "layer");
 
-const normalizeDocument = (doc: Document): Document => ({
-  ...doc,
-  guides: Array.isArray(doc.guides) ? doc.guides : [],
+const fallbackArtboard = (doc: Document): Artboard => ({
+  id: `${doc.id}_artboard_1`,
+  name: "Artboard 1",
+  x: 0,
+  y: 0,
+  width: Math.max(MIN_DOCUMENT_SIZE, doc.width),
+  height: Math.max(MIN_DOCUMENT_SIZE, doc.height),
 });
+
+const rebaseDocumentToArtboard = (doc: Document, id: NodeId | undefined): Vec2 => {
+  const artboards = doc.artboards;
+  if (!artboards || artboards.length === 0) {
+    return { x: 0, y: 0 };
+  }
+  const activeArtboard = artboards.find((artboard) => artboard.id === id) ?? artboards[0]!;
+  const origin = { x: activeArtboard.x, y: activeArtboard.y };
+
+  if (origin.x !== 0 || origin.y !== 0) {
+    for (const artboard of artboards) {
+      artboard.x -= origin.x;
+      artboard.y -= origin.y;
+    }
+    for (const layerId of doc.layerOrder) {
+      const layer = doc.nodes[layerId];
+      if (layer?.type === "layer") {
+        layer.transform = {
+          ...layer.transform,
+          e: layer.transform.e - origin.x,
+          f: layer.transform.f - origin.y,
+        };
+      }
+    }
+    for (const guide of doc.guides) {
+      guide.position -= guide.axis === "x" ? origin.x : origin.y;
+    }
+  }
+
+  doc.activeArtboardId = activeArtboard.id;
+  doc.width = activeArtboard.width;
+  doc.height = activeArtboard.height;
+  return origin;
+};
+
+const normalizeDocument = (doc: Document): Document => {
+  const normalized = structuredClone(doc);
+  const artboards = Array.isArray(normalized.artboards) && normalized.artboards.length > 0
+    ? normalized.artboards
+    : [fallbackArtboard(normalized)];
+  const activeArtboardId = artboards.some((artboard) => artboard.id === doc.activeArtboardId)
+    ? doc.activeArtboardId
+    : artboards[0]!.id;
+  normalized.artboards = artboards;
+  normalized.guides = Array.isArray(normalized.guides) ? normalized.guides : [];
+  rebaseDocumentToArtboard(normalized, activeArtboardId);
+  return normalized;
+};
+
+const preserveActiveArtboard = (doc: Document, preferredId: NodeId | undefined): void => {
+  const artboards = doc.artboards;
+  if (!artboards || artboards.length === 0) {
+    return;
+  }
+  const activeArtboard = artboards.find((artboard) => artboard.id === preferredId)
+    ?? artboards.find((artboard) => artboard.id === doc.activeArtboardId)
+    ?? artboards[0]!;
+  rebaseDocumentToArtboard(doc, activeArtboard.id);
+};
 
 const colorsEqual = (left: RGBA | null | undefined, right: RGBA | null): boolean => {
   if (left == null || right === null) {
@@ -579,6 +650,21 @@ const insertPathfinderResults = (
   if (parent && isContainer(parent)) {
     parent.children = replaceOrder(parent.children);
   }
+};
+
+const parentWorldTransform = (doc: Document, parentId: NodeId | null): Matrix => {
+  if (parentId === null) {
+    return IDENTITY;
+  }
+  const transforms: Matrix[] = [];
+  let currentId: NodeId | null = parentId;
+  while (currentId !== null) {
+    const node = doc.nodes[currentId];
+    if (!node) break;
+    transforms.unshift(node.transform);
+    currentId = findNodeParent(doc, currentId)?.parentId ?? null;
+  }
+  return transforms.reduce((result, transform) => compose(result, transform), IDENTITY);
 };
 
 const withDocHistory = (
@@ -946,6 +1032,43 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
         result.removeIds,
       );
       for (const id of result.removeIds) {
+        removeFromParent(state.doc, id);
+        delete state.doc.nodes[id];
+      }
+      state.selection = result.nodes.map((node) => node.id);
+      clearMissingKeyObject(state);
+      return true;
+    });
+  },
+
+  applyShapeBuilder: (point, requestedMode = "union") => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const divided = computePathfinderSelection(sourceDoc, state.selection, "divide");
+      if (!divided) {
+        return false;
+      }
+
+      const parentInverse = invert(parentWorldTransform(sourceDoc, divided.parentId));
+      if (!parentInverse) {
+        return false;
+      }
+      const mode: ShapeBuilderMode = requestedMode === true || requestedMode === "delete" ? "delete" : "union";
+      const result = shapeBuilderFromRegions(divided.nodes, apply(parentInverse, point), mode);
+      if (!result) {
+        return false;
+      }
+
+      for (const node of result.nodes) {
+        state.doc.nodes[node.id] = node;
+      }
+      insertPathfinderResults(
+        state.doc,
+        divided.parentId,
+        result.nodes.map((node) => node.id),
+        divided.removeIds,
+      );
+      for (const id of divided.removeIds) {
         removeFromParent(state.doc, id);
         delete state.doc.nodes[id];
       }
@@ -1613,6 +1736,13 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
 
       state.doc.width = nextWidth;
       state.doc.height = nextHeight;
+      const activeArtboard = state.doc.artboards?.find(
+        (artboard) => artboard.id === state.doc.activeArtboardId,
+      );
+      if (activeArtboard) {
+        activeArtboard.width = nextWidth;
+        activeArtboard.height = nextHeight;
+      }
       return true;
     });
   },
@@ -1640,6 +1770,78 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
     });
   },
 
+  addArtboard: () => {
+    const id = newId();
+    withDocHistory(set, (state) => {
+      const artboards = state.doc.artboards ?? (state.doc.artboards = [fallbackArtboard(state.doc)]);
+      const rightEdge = artboards.reduce(
+        (maximum, artboard) => Math.max(maximum, artboard.x + artboard.width),
+        0,
+      );
+      const artboard: Artboard = {
+        id,
+        name: `Artboard ${artboards.length + 1}`,
+        x: rightEdge + 64,
+        y: 0,
+        width: state.doc.width,
+        height: state.doc.height,
+      };
+      artboards.push(artboard);
+      return true;
+    });
+    return id;
+  },
+
+  removeArtboard: (id) => {
+    withDocHistory(set, (state) => {
+      const artboards = state.doc.artboards;
+      if (!artboards || artboards.length <= 1) {
+        return false;
+      }
+      const index = artboards.findIndex((artboard) => artboard.id === id);
+      if (index < 0) {
+        return false;
+      }
+      artboards.splice(index, 1);
+      if (state.doc.activeArtboardId === id) {
+        const nextActive = artboards[Math.min(index, artboards.length - 1)]!;
+        const origin = rebaseDocumentToArtboard(state.doc, nextActive.id);
+        state.viewport.pan = {
+          x: state.viewport.pan.x + origin.x * state.viewport.zoom,
+          y: state.viewport.pan.y + origin.y * state.viewport.zoom,
+        };
+      }
+      return true;
+    });
+  },
+
+  setActiveArtboard: (id) => {
+    set(
+      produce((state: EditorStore) => {
+        if (!state.doc.artboards?.some((candidate) => candidate.id === id) || state.doc.activeArtboardId === id) {
+          return;
+        }
+        const origin = rebaseDocumentToArtboard(state.doc, id);
+        state.viewport.pan = {
+          x: state.viewport.pan.x + origin.x * state.viewport.zoom,
+          y: state.viewport.pan.y + origin.y * state.viewport.zoom,
+        };
+      }),
+    );
+  },
+
+  renameArtboard: (id, name) => {
+    withDocHistory(set, (state) => {
+      const artboard = state.doc.artboards?.find((candidate) => candidate.id === id);
+      const nextName = name.trim();
+      if (!artboard || nextName === "" || artboard.name === nextName) {
+        return false;
+      }
+      artboard.name = nextName;
+      return true;
+    });
+  },
+
   loadDocument: (doc) => {
     set(
       produce((state: EditorStore) => {
@@ -1663,8 +1865,10 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
           return;
         }
 
+        const activeArtboardId = state.doc.activeArtboardId;
         state.history = step.history;
         state.doc = step.snapshot;
+        preserveActiveArtboard(state.doc, activeArtboardId);
         state.selection = state.selection.filter((id) => id in state.doc.nodes);
         clearMissingKeyObject(state);
       }),
@@ -1683,8 +1887,10 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
           return;
         }
 
+        const activeArtboardId = state.doc.activeArtboardId;
         state.history = step.history;
         state.doc = step.snapshot;
+        preserveActiveArtboard(state.doc, activeArtboardId);
         state.selection = state.selection.filter((id) => id in state.doc.nodes);
         clearMissingKeyObject(state);
       }),

@@ -217,15 +217,25 @@ export const renderDocumentToCanvas = (
   const ctx = requireContext(canvas);
 
   if (crop.isSelection) {
-    renderDocument(ctx, isolatedSelectionDocument(doc, crop.roots), {
-      pan: { x: -bounds.minX * scale, y: -bounds.minY * scale },
-      zoom: scale,
-    });
+    renderDocument(
+      ctx,
+      isolatedSelectionDocument(doc, crop.roots),
+      {
+        pan: { x: -bounds.minX * scale, y: -bounds.minY * scale },
+        zoom: scale,
+      },
+      { skipEditorChrome: true },
+    );
   } else {
-    renderDocument(ctx, doc, {
-      pan: { x: -bounds.minX * scale, y: -bounds.minY * scale },
-      zoom: scale,
-    });
+    renderDocument(
+      ctx,
+      doc,
+      {
+        pan: { x: -bounds.minX * scale, y: -bounds.minY * scale },
+        zoom: scale,
+      },
+      { skipEditorChrome: true },
+    );
   }
 
   if (opts?.opaqueBackground) {

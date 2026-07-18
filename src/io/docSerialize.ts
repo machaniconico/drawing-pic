@@ -1,5 +1,6 @@
 import type {
   Anchor,
+  Artboard,
   Document,
   Guide,
   GradientStop,
@@ -121,6 +122,44 @@ const validateGuides = (value: unknown, path: string): Guide[] => {
   }
 
   return value.map((guide, index) => validateGuide(guide, `${path}[${index}]`));
+};
+
+const validateArtboard = (value: unknown, path: string): Artboard => {
+  const artboard = requireObject(value, path);
+  const result: Artboard = {
+    id: requireString(artboard.id, `${path}.id`),
+    name: requireString(artboard.name, `${path}.name`),
+    x: requireNumber(artboard.x, `${path}.x`),
+    y: requireNumber(artboard.y, `${path}.y`),
+    width: requireNumber(artboard.width, `${path}.width`),
+    height: requireNumber(artboard.height, `${path}.height`),
+  };
+  if (result.width <= 0 || result.height <= 0) {
+    throw new Error(`${path} dimensions must be greater than 0.`);
+  }
+  return result;
+};
+
+const legacyArtboard = (doc: JsonObject, width: number, height: number): Artboard => ({
+  id: `${requireString(doc.id, "doc.id")}_artboard_1`,
+  name: "Artboard 1",
+  x: 0,
+  y: 0,
+  width,
+  height,
+});
+
+const validateArtboards = (value: unknown, path: string): Artboard[] => {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${path} must be a non-empty array.`);
+  }
+  const artboards = value.map((artboard, index) =>
+    validateArtboard(artboard, `${path}[${index}]`),
+  );
+  if (new Set(artboards.map((artboard) => artboard.id)).size !== artboards.length) {
+    throw new Error(`${path} ids must be unique.`);
+  }
+  return artboards;
 };
 
 const validatePaint = (value: unknown, path: string): void => {
@@ -294,8 +333,17 @@ const validateDocument = (value: unknown): Document => {
   const doc = requireObject(value, "doc");
   requireString(doc.id, "doc.id");
   requireString(doc.name, "doc.name");
-  requireNumber(doc.width, "doc.width");
-  requireNumber(doc.height, "doc.height");
+  const width = requireNumber(doc.width, "doc.width");
+  const height = requireNumber(doc.height, "doc.height");
+  const artboards = "artboards" in doc
+    ? validateArtboards(doc.artboards, "doc.artboards")
+    : [legacyArtboard(doc, width, height)];
+  const requestedActiveId = "activeArtboardId" in doc
+    ? requireString(doc.activeArtboardId, "doc.activeArtboardId")
+    : artboards[0]!.id;
+  const activeArtboardId = artboards.some((artboard) => artboard.id === requestedActiveId)
+    ? requestedActiveId
+    : artboards[0]!.id;
   if ("background" in doc && doc.background !== null) {
     validateColor(doc.background, "doc.background");
   }
@@ -334,7 +382,15 @@ const validateDocument = (value: unknown): Document => {
     }
   }
 
-  return { ...doc, guides } as unknown as Document;
+  const activeArtboard = artboards.find((artboard) => artboard.id === activeArtboardId)!;
+  return {
+    ...doc,
+    width: activeArtboard.width,
+    height: activeArtboard.height,
+    artboards,
+    activeArtboardId,
+    guides,
+  } as unknown as Document;
 };
 
 const orderPaint = (paint: Paint): Paint => {
@@ -500,11 +556,27 @@ const orderSceneNode = (node: SceneNode): SceneNode => {
 };
 
 const orderDocument = (doc: Document): Document => {
+  const artboards = doc.artboards && doc.artboards.length > 0
+    ? doc.artboards
+    : [{
+        id: `${doc.id}_artboard_1`,
+        name: "Artboard 1",
+        x: 0,
+        y: 0,
+        width: doc.width,
+        height: doc.height,
+      }];
+  const activeArtboardId = artboards.some((artboard) => artboard.id === doc.activeArtboardId)
+    ? doc.activeArtboardId
+    : artboards[0]!.id;
+  const activeArtboard = artboards.find((artboard) => artboard.id === activeArtboardId)!;
   const result: Document = {
     id: doc.id,
     name: doc.name,
-    width: doc.width,
-    height: doc.height,
+    width: activeArtboard.width,
+    height: activeArtboard.height,
+    artboards: artboards.map((artboard) => ({ ...artboard })),
+    activeArtboardId,
     ...(doc.background !== undefined ? { background: doc.background } : {}),
     layerOrder: [...doc.layerOrder],
     guides: doc.guides.map(orderGuide),

@@ -9,7 +9,9 @@ import {
   defaultStroke,
 } from "../core/model/factory";
 import type { Document, NodeId, SceneNode } from "../core/model/types";
+import { editorStore } from "../state/store";
 import { deserializeDocument, serializeDocument } from "./docSerialize";
+import { documentToSvg } from "./svgExport";
 
 const firstLayerId = (doc: Document): NodeId => doc.layerOrder[0]!;
 
@@ -24,6 +26,10 @@ const addNode = (doc: Document, node: SceneNode, parentId = firstLayerId(doc)): 
 const createRichDocument = (): Document => {
   const doc = createDocument(640, 480, "Persistence Test");
   doc.id = "doc_serialize_test";
+  doc.artboards = [
+    { id: "artboard_1", name: "Artboard 1", x: 0, y: 0, width: 640, height: 480 },
+  ];
+  doc.activeArtboardId = "artboard_1";
   const layerId = firstLayerId(doc);
   const layer = doc.nodes[layerId];
   if (layer?.type === "layer") {
@@ -152,6 +158,64 @@ describe("docSerialize", () => {
     expect(deserializeDocument(serializeDocument(doc)).guides).toEqual(doc.guides);
   });
 
+  it("round-trips multiple artboards and the active artboard", () => {
+    const doc = createRichDocument();
+    doc.artboards = [
+      { id: "artboard_1", name: "Cover", x: 0, y: 0, width: 640, height: 480 },
+      { id: "artboard_2", name: "Back", x: 704, y: 20, width: 320, height: 240 },
+    ];
+    doc.activeArtboardId = "artboard_2";
+    doc.width = 320;
+    doc.height = 240;
+
+    expect(deserializeDocument(serializeDocument(doc))).toEqual(doc);
+  });
+
+  it("rebases a non-origin active artboard for active-size SVG export", () => {
+    const doc = createRichDocument();
+    doc.artboards = [
+      { id: "artboard_1", name: "Cover", x: 0, y: 0, width: 640, height: 480 },
+      { id: "artboard_2", name: "Back", x: 704, y: 20, width: 320, height: 240 },
+    ];
+    const backRect = createRect(720, 30, 80, 40);
+    backRect.id = "back_rect";
+    addNode(doc, backRect, "layer_1");
+
+    editorStore.getState().loadDocument(doc);
+    editorStore.getState().setActiveArtboard("artboard_2");
+    const activeDoc = editorStore.getState().doc;
+
+    expect(activeDoc.artboards?.find((artboard) => artboard.id === "artboard_2")).toMatchObject({
+      x: 0,
+      y: 0,
+      width: 320,
+      height: 240,
+    });
+    expect(activeDoc.nodes.layer_1?.transform).toMatchObject({ e: -704, f: -20 });
+    expect(documentToSvg(activeDoc)).toContain('viewBox="0 0 320 240"');
+  });
+
+  it("migrates legacy single-size documents to one artboard", () => {
+    const doc = createRichDocument();
+    const legacyDoc = { ...doc };
+    delete legacyDoc.artboards;
+    delete legacyDoc.activeArtboardId;
+
+    const result = deserializeDocument(JSON.stringify({ version: 1, doc: legacyDoc }));
+
+    expect(result.artboards).toEqual([
+      {
+        id: "doc_serialize_test_artboard_1",
+        name: "Artboard 1",
+        x: 0,
+        y: 0,
+        width: 640,
+        height: 480,
+      },
+    ]);
+    expect(result.activeArtboardId).toBe("doc_serialize_test_artboard_1");
+  });
+
   it("round-trips guide preferences", () => {
     const doc = createRichDocument();
     doc.guides = [
@@ -209,12 +273,19 @@ describe("docSerialize", () => {
     expect(deserializeDocument(JSON.stringify({ version: 1, doc }))).toEqual(doc);
   });
 
-  it("serializes docs without pattern paints byte-for-byte as before", () => {
+  it("keeps the legacy document payload byte-for-byte after removing additive artboard fields", () => {
     // fixture は PatternPaint 導入時点の serializeDocument 出力をピン留めしたもの。
     // serializeDocument は JSON.stringify(…, null, 2) なので再 stringify でバイト列が再現できる。
     const fixture = JSON.stringify(richDocNoPatternFixture, null, 2);
 
-    expect(serializeDocument(createRichDocument())).toBe(fixture);
+    const serialized = JSON.parse(serializeDocument(createRichDocument())) as {
+      version: number;
+      doc: Record<string, unknown>;
+    };
+    delete serialized.doc.artboards;
+    delete serialized.doc.activeArtboardId;
+
+    expect(JSON.stringify(serialized, null, 2)).toBe(fixture);
   });
 
   it("loads legacy guides without preference fields unchanged", () => {
@@ -232,6 +303,35 @@ describe("docSerialize", () => {
     expect(() => deserializeDocument(JSON.stringify({ version: 1, doc: { ...doc, width: "wide" } }))).toThrow(
       /doc.width must be a finite number/,
     );
+  });
+
+  it("rejects malformed and duplicate artboards", () => {
+    const doc = createRichDocument();
+
+    expect(() =>
+      deserializeDocument(JSON.stringify({ version: 1, doc: { ...doc, artboards: [] } })),
+    ).toThrow(/non-empty array/);
+    expect(() =>
+      deserializeDocument(JSON.stringify({
+        version: 1,
+        doc: {
+          ...doc,
+          artboards: [{ id: "bad", name: "Bad", x: 0, y: 0, width: 0, height: 100 }],
+        },
+      })),
+    ).toThrow(/dimensions must be greater than 0/);
+    expect(() =>
+      deserializeDocument(JSON.stringify({
+        version: 1,
+        doc: {
+          ...doc,
+          artboards: [
+            { id: "same", name: "One", x: 0, y: 0, width: 100, height: 100 },
+            { id: "same", name: "Two", x: 164, y: 0, width: 100, height: 100 },
+          ],
+        },
+      })),
+    ).toThrow(/ids must be unique/);
   });
 
   it("rejects malformed pattern paints with path-prefixed errors", () => {

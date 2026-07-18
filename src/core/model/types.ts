@@ -179,6 +179,15 @@ export type SceneNode = ShapeNode | ContainerNode;
 
 export type NodeType = SceneNode["type"];
 
+export interface Artboard {
+  id: NodeId;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 // ─────────────────────────────────────────────
 // ドキュメント
 // ─────────────────────────────────────────────
@@ -193,6 +202,10 @@ export interface Document {
   /** アートボードサイズ（px） */
   width: number;
   height: number;
+  /** 複数アートボード。未指定は旧形式として width/height から移行する。 */
+  artboards?: Artboard[];
+  /** 現在のアートボード。未指定時は先頭を使用する。 */
+  activeArtboardId?: NodeId;
   /** 明示的なアートボード背景色。undefined/null は背景指定なし。 */
   background?: RGBA | null;
   /** ルート直下のレイヤー（描画は配列順 = 下→上） */
