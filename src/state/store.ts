@@ -3,8 +3,10 @@ import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { offsetSubPaths } from "../core/geometry/offsetPath";
 import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
+import { apply, compose, IDENTITY, invert, type Matrix } from "../core/geometry/matrix";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { PathfinderOp } from "../core/geometry/pathfinder";
+import { shapeBuilderFromRegions, type ShapeBuilderMode } from "../core/geometry/shapeBuilder";
 import type { Vec2 } from "../core/geometry/vector";
 import { createDocument, newId } from "../core/model/factory";
 import type { Artboard, Document, NodeId, Paint, PathNode, RGBA, SceneNode, Stroke } from "../core/model/types";
@@ -80,6 +82,7 @@ export type ToolId =
   | "pen"
   | "text"
   | "gradient"
+  | "shape-builder"
   | "hand"
   | "eyedropper"
   | "measure";
@@ -138,6 +141,7 @@ export interface EditorActions {
   toggleClipMask: () => void;
   booleanOp: (op: BooleanOp) => void;
   applyPathfinder: (op: PathfinderOp) => void;
+  applyShapeBuilder: (point: Vec2, mode?: ShapeBuilderMode | boolean) => void;
   convertSelectionToPaths: () => void;
   outlineSelectedStrokes: () => void;
   offsetSelectedPaths: (distance: number) => void;
@@ -648,6 +652,21 @@ const insertPathfinderResults = (
   }
 };
 
+const parentWorldTransform = (doc: Document, parentId: NodeId | null): Matrix => {
+  if (parentId === null) {
+    return IDENTITY;
+  }
+  const transforms: Matrix[] = [];
+  let currentId: NodeId | null = parentId;
+  while (currentId !== null) {
+    const node = doc.nodes[currentId];
+    if (!node) break;
+    transforms.unshift(node.transform);
+    currentId = findNodeParent(doc, currentId)?.parentId ?? null;
+  }
+  return transforms.reduce((result, transform) => compose(result, transform), IDENTITY);
+};
+
 const withDocHistory = (
   set: (
     partial:
@@ -1013,6 +1032,43 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
         result.removeIds,
       );
       for (const id of result.removeIds) {
+        removeFromParent(state.doc, id);
+        delete state.doc.nodes[id];
+      }
+      state.selection = result.nodes.map((node) => node.id);
+      clearMissingKeyObject(state);
+      return true;
+    });
+  },
+
+  applyShapeBuilder: (point, requestedMode = "union") => {
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const divided = computePathfinderSelection(sourceDoc, state.selection, "divide");
+      if (!divided) {
+        return false;
+      }
+
+      const parentInverse = invert(parentWorldTransform(sourceDoc, divided.parentId));
+      if (!parentInverse) {
+        return false;
+      }
+      const mode: ShapeBuilderMode = requestedMode === true || requestedMode === "delete" ? "delete" : "union";
+      const result = shapeBuilderFromRegions(divided.nodes, apply(parentInverse, point), mode);
+      if (!result) {
+        return false;
+      }
+
+      for (const node of result.nodes) {
+        state.doc.nodes[node.id] = node;
+      }
+      insertPathfinderResults(
+        state.doc,
+        divided.parentId,
+        result.nodes.map((node) => node.id),
+        divided.removeIds,
+      );
+      for (const id of divided.removeIds) {
         removeFromParent(state.doc, id);
         delete state.doc.nodes[id];
       }

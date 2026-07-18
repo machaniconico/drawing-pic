@@ -15,6 +15,7 @@ export const TOOL_DEFS: ToolDef[] = [
   { id: "pen", label: "Pen", shortcut: "P", icon: "P" },
   { id: "text", label: "Type", shortcut: "T", icon: "T" },
   { id: "gradient", label: "Gradient", shortcut: "G", icon: "G" },
+  { id: "shape-builder", label: "Shape Builder", shortcut: "Shift+M", icon: "+" },
   { id: "eyedropper", label: "Eyedropper", shortcut: "I", icon: "I" },
   { id: "measure", label: "Measure", shortcut: "K", icon: "K" },
   { id: "hand", label: "Hand", shortcut: "H", icon: "H" },
