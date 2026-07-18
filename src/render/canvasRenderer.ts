@@ -27,6 +27,10 @@ export interface Viewport {
   onImageLoad?: () => void;
 }
 
+export interface RenderOptions {
+  skipEditorChrome?: boolean;
+}
+
 interface ImageCacheEntry {
   image: HTMLImageElement;
   loaded: boolean;
@@ -60,16 +64,21 @@ const drawArtboard = (
   height: number,
   background: RGBA | null | undefined,
   active: boolean,
+  includeEditorChrome: boolean,
 ): void => {
   ctx.save();
   ctx.translate(x, y);
-  ctx.shadowColor = "rgba(15, 23, 42, 0.18)";
-  ctx.shadowBlur = 18;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 6;
+  if (includeEditorChrome) {
+    ctx.shadowColor = "rgba(15, 23, 42, 0.18)";
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 6;
+  }
   ctx.fillStyle = artboardFill(background);
   ctx.fillRect(0, 0, width, height);
   ctx.restore();
+
+  if (!includeEditorChrome) return;
 
   ctx.save();
   ctx.translate(x, y);
@@ -520,6 +529,7 @@ export const renderDocument = (
   ctx: CanvasRenderingContext2D,
   doc: Document,
   viewport: Viewport,
+  options: RenderOptions = {},
 ): void => {
   const zoom = Number.isFinite(viewport.zoom) && viewport.zoom > 0 ? viewport.zoom : 1;
   const pan = viewportPan(viewport);
@@ -571,6 +581,7 @@ export const renderDocument = (
       artboard.height,
       doc.background,
       artboard.id === activeArtboardId,
+      options.skipEditorChrome !== true,
     );
   }
 
