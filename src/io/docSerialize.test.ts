@@ -9,7 +9,13 @@ import {
   createText,
   defaultStroke,
 } from "../core/model/factory";
-import type { DefinitionNode, Document, NodeId, SceneNode } from "../core/model/types";
+import type {
+  DefinitionNode,
+  Document,
+  NodeId,
+  SceneNode,
+  SymbolDefinition,
+} from "../core/model/types";
 import { editorStore } from "../state/store";
 import { deserializeDocument, serializeDocument } from "./docSerialize";
 import { documentToSvg } from "./svgExport";
@@ -23,6 +29,17 @@ const addNode = (doc: Document, node: DefinitionNode, parentId = firstLayerId(do
     parent.children.push(node.id);
   }
 };
+
+const createSymbolInstance = (id: NodeId, symbolId: NodeId): DefinitionNode => ({
+  id,
+  name: id,
+  type: "symbol-instance",
+  symbolId,
+  transform: { ...IDENTITY },
+  opacity: 1,
+  visible: true,
+  locked: false,
+});
 
 const createRichDocument = (): Document => {
   const doc = createDocument(640, 480, "Persistence Test");
@@ -180,6 +197,101 @@ describe("docSerialize", () => {
 
     expect(() => serializeDocument(doc)).toThrow(/container child cycle/);
     expect(() => deserializeDocument(JSON.stringify({ version: 1, doc }))).toThrow(/container child cycle/);
+  });
+
+  it("rejects cycles across symbol definitions", () => {
+    const doc = createRichDocument();
+    doc.symbols = {
+      symbol_a: {
+        id: "symbol_a",
+        name: "Symbol A",
+        nodes: [createSymbolInstance("instance_b", "symbol_b")],
+      },
+      symbol_b: {
+        id: "symbol_b",
+        name: "Symbol B",
+        nodes: [createSymbolInstance("instance_a", "symbol_a")],
+      },
+    };
+
+    expect(() => serializeDocument(doc)).toThrow(
+      /symbol definition cycle: "symbol_a" -> "symbol_b" -> "symbol_a"/,
+    );
+    expect(() => deserializeDocument(JSON.stringify({ version: 1, doc }))).toThrow(
+      /symbol definition cycle: "symbol_a" -> "symbol_b" -> "symbol_a"/,
+    );
+  });
+
+  it("rejects symbol definitions that instantiate themselves", () => {
+    const doc = createRichDocument();
+    doc.symbols = {
+      recursive: {
+        id: "recursive",
+        name: "Recursive",
+        nodes: [createSymbolInstance("self_instance", "recursive")],
+      },
+    };
+
+    expect(() => serializeDocument(doc)).toThrow(
+      /symbol definition cycle: "recursive" -> "recursive"/,
+    );
+    expect(() => deserializeDocument(JSON.stringify({ version: 1, doc }))).toThrow(
+      /symbol definition cycle: "recursive" -> "recursive"/,
+    );
+  });
+
+  it('rejects a "__proto__" symbol definition that instantiates itself', () => {
+    const doc = createRichDocument();
+    const protoSymbol = {
+      id: "__proto__",
+      name: "Prototype",
+      nodes: [createSymbolInstance("self_instance", "__proto__")],
+    } satisfies SymbolDefinition;
+    doc.symbols = Object.fromEntries([[protoSymbol.id, protoSymbol]]);
+    const json = JSON.stringify({ version: 1, doc });
+
+    expect(() => serializeDocument(doc)).toThrow(
+      /symbol definition cycle: "__proto__" -> "__proto__"/,
+    );
+    expect(() => deserializeDocument(json)).toThrow(
+      /symbol definition cycle: "__proto__" -> "__proto__"/,
+    );
+  });
+
+  it("round-trips an acyclic symbol definition graph with shared dependencies", () => {
+    const doc = createRichDocument();
+    const sharedRect = createRect(0, 0, 24, 24);
+    sharedRect.id = "shared_rect";
+    doc.symbols = {
+      symbol_root: {
+        id: "symbol_root",
+        name: "Root",
+        nodes: [
+          createSymbolInstance("instance_left", "symbol_left"),
+          createSymbolInstance("instance_right", "symbol_right"),
+        ],
+      },
+      symbol_left: {
+        id: "symbol_left",
+        name: "Left",
+        nodes: [createSymbolInstance("shared_from_left", "symbol_shared")],
+      },
+      symbol_right: {
+        id: "symbol_right",
+        name: "Right",
+        nodes: [createSymbolInstance("shared_from_right", "symbol_shared")],
+      },
+      symbol_shared: {
+        id: "symbol_shared",
+        name: "Shared",
+        nodes: [sharedRect],
+      },
+    };
+
+    const serialized = serializeDocument(doc);
+
+    expect(deserializeDocument(serialized).symbols).toEqual(doc.symbols);
+    expect(serializeDocument(deserializeDocument(serialized))).toBe(serialized);
   });
 
   it("round-trips pattern paints byte-for-byte with stable key order", () => {
