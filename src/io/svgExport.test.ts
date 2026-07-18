@@ -292,6 +292,44 @@ describe("documentToSvg", () => {
     expect(svg).toContain(">A&amp;B &lt;C&gt; &quot;D&quot;</text>");
   });
 
+  it("exports linked text with an SVG 2 textPath href and startOffset", () => {
+    const doc = createDocument(240, 120, "Text on path");
+    const path = createPath([
+      {
+        anchors: [
+          { point: { x: 0, y: 40 }, handleIn: null, handleOut: { x: 30, y: -30 } },
+          { point: { x: 160, y: 40 }, handleIn: { x: -30, y: -30 }, handleOut: null },
+        ],
+        closed: false,
+      },
+    ]);
+    path.id = "text_curve";
+    const text = createText("Along & around", { x: 0, y: 0 });
+    Object.assign(text, { pathId: path.id, startOffset: 18.5 });
+    addNode(doc, path);
+    addNode(doc, text);
+
+    const svg = documentToSvg(doc);
+
+    expect(svg).toContain('<path transform="matrix(1 0 0 1 0 0)" opacity="1" id="text_curve"');
+    expect(svg).toContain(
+      '<textPath href="#text_curve" startOffset="18.5">Along &amp; around</textPath>',
+    );
+    expect(svg).not.toContain("xlink:href");
+  });
+
+  it("keeps straight text output unchanged when no valid path is linked", () => {
+    const doc = createDocument(160, 90, "Straight text");
+    const text = createText("Still straight", { x: 12, y: 34 });
+    Object.assign(text, { pathId: "missing_path", startOffset: 25 });
+    addNode(doc, text);
+
+    const svg = documentToSvg(doc);
+
+    expect(svg).toContain(">Still straight</text>");
+    expect(svg).not.toContain("<textPath");
+  });
+
   it("maps solid and none fills", () => {
     const doc = createDocument(200, 200, "Fill");
     const solidRect = createRect(0, 0, 10, 10);

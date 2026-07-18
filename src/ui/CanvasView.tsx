@@ -3077,6 +3077,17 @@ export default function CanvasView() {
       event.preventDefault();
       const hit = hitTest(interactionDoc, worldPoint, { tolerance: 3 / state.viewport.zoom });
       if (hit !== null) {
+        const hitNode = state.doc.nodes[hit];
+        const selectedText = state.selection
+          .map((id) => state.doc.nodes[id])
+          .find((node): node is TextNode => node?.type === "text");
+        if (hitNode?.type === "path" && selectedText !== undefined) {
+          state.putTextOnPath(selectedText.id, hitNode.id);
+          state.setSelection([selectedText.id]);
+        } else if (event.altKey && hitNode?.type === "text" && hitNode.pathId !== undefined) {
+          state.removeTextFromPath(hitNode.id);
+          state.setSelection([hitNode.id]);
+        }
         return;
       }
 

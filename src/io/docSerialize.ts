@@ -5,6 +5,7 @@ import type {
   Document,
   Guide,
   GradientStop,
+  NodeId,
   Paint,
   Stroke,
   SubPath,
@@ -318,6 +319,12 @@ const validateSceneNode = (value: unknown, path: string): void => {
           throw new Error(`${path}.textAlign has unsupported value "${textAlign}".`);
         }
       }
+      if ("pathId" in node) {
+        requireString(node.pathId, `${path}.pathId`);
+      }
+      if ("startOffset" in node) {
+        requireNumber(node.startOffset, `${path}.startOffset`);
+      }
       return;
     case "image":
       validateNodeBase(node, path);
@@ -602,7 +609,8 @@ const orderSceneNode = (node: DefinitionNode): DefinitionNode => {
         rx: node.rx,
         ry: node.ry,
       };
-    case "text":
+    case "text": {
+      const textPath = node as typeof node & { pathId?: NodeId; startOffset?: number };
       return {
         ...orderNodeBase(node),
         fill: orderPaint(node.fill),
@@ -617,7 +625,10 @@ const orderSceneNode = (node: DefinitionNode): DefinitionNode => {
         letterSpacing: node.letterSpacing,
         lineHeight: node.lineHeight,
         textAlign: node.textAlign,
+        ...(textPath.pathId !== undefined ? { pathId: textPath.pathId } : {}),
+        ...(textPath.startOffset !== undefined ? { startOffset: textPath.startOffset } : {}),
       };
+    }
     case "image":
       return {
         ...orderNodeBase(node),

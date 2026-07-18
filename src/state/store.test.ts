@@ -2105,4 +2105,58 @@ describe("editorStore", () => {
     expect(editorStore.getState().doc).toBe(before);
     expect(editorStore.getState().history.past).toHaveLength(0);
   });
+
+  it("attaches and detaches text from a path with undo and redo support", () => {
+    const text = createText("Along the path", { x: 0, y: 0 });
+    const path = createPath([
+      {
+        closed: false,
+        anchors: [
+          { point: { x: 0, y: 0 }, handleIn: null, handleOut: null },
+          { point: { x: 200, y: 0 }, handleIn: null, handleOut: null },
+        ],
+      },
+    ]);
+    editorStore.getState().addNode(text);
+    editorStore.getState().addNode(path);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().putTextOnPath(text.id, path.id);
+    expect(editorStore.getState().doc.nodes[text.id]).toMatchObject({
+      type: "text",
+      pathId: path.id,
+      startOffset: 0,
+    });
+    expect(canUndo(editorStore.getState().history)).toBe(true);
+
+    editorStore.getState().undo();
+    expect(editorStore.getState().doc.nodes[text.id]).not.toHaveProperty("pathId");
+    editorStore.getState().redo();
+    expect(editorStore.getState().doc.nodes[text.id]).toMatchObject({ pathId: path.id });
+
+    editorStore.getState().removeTextFromPath(text.id);
+    expect(editorStore.getState().doc.nodes[text.id]).not.toHaveProperty("pathId");
+    expect(editorStore.getState().doc.nodes[text.id]).not.toHaveProperty("startOffset");
+    editorStore.getState().undo();
+    expect(editorStore.getState().doc.nodes[text.id]).toMatchObject({
+      pathId: path.id,
+      startOffset: 0,
+    });
+  });
+
+  it("ignores invalid text-on-path attachments without creating history", () => {
+    const text = createText("Text", { x: 0, y: 0 });
+    const rect = createRect(0, 0, 100, 20);
+    editorStore.getState().addNode(text);
+    editorStore.getState().addNode(rect);
+    editorStore.setState({ history: createHistory<Document>() });
+    const before = editorStore.getState().doc;
+
+    editorStore.getState().putTextOnPath(text.id, rect.id);
+    editorStore.getState().putTextOnPath("missing", rect.id);
+    editorStore.getState().removeTextFromPath(text.id);
+
+    expect(editorStore.getState().doc).toBe(before);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
 });

@@ -6,6 +6,7 @@ import {
   createGroup,
   createPath,
   createRect,
+  createText,
   defaultStroke,
 } from "../core/model/factory";
 import type { DefinitionNode, Document, NodeId, SceneNode } from "../core/model/types";
@@ -93,6 +94,38 @@ describe("docSerialize", () => {
     const doc = createRichDocument();
 
     expect(deserializeDocument(serializeDocument(doc))).toEqual(doc);
+  });
+
+  it("round-trips text-on-path references and offsets", () => {
+    const doc = createRichDocument();
+    const text = createText("Follow the curve", { x: 0, y: 0 });
+    text.id = "path_label";
+    Object.assign(text, { pathId: "bezier_path", startOffset: 32.5 });
+    addNode(doc, text, "group_nested");
+
+    const serialized = serializeDocument(doc);
+    const result = deserializeDocument(serialized);
+
+    expect(result).toEqual(doc);
+    expect(serializeDocument(result)).toBe(serialized);
+    expect(serialized).toContain(
+      ['        "pathId": "bezier_path",', '        "startOffset": 32.5'].join("\n"),
+    );
+  });
+
+  it("keeps legacy straight text free of text-path fields", () => {
+    const doc = createRichDocument();
+    const text = createText("Legacy label", { x: 20, y: 30 });
+    text.id = "legacy_label";
+    addNode(doc, text);
+
+    const serialized = serializeDocument(doc);
+    const result = deserializeDocument(serialized);
+    const restored = result.nodes.legacy_label;
+
+    expect(restored).not.toHaveProperty("pathId");
+    expect(restored).not.toHaveProperty("startOffset");
+    expect(serializeDocument(result)).toBe(serialized);
   });
 
   it("round-trips symbol definitions and instances", () => {
