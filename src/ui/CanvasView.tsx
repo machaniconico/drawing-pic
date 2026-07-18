@@ -2541,6 +2541,29 @@ export default function CanvasView() {
   };
 
   useEffect(() => {
+    const onRepeatDuplicate = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "d") {
+        return;
+      }
+
+      const target = event.target;
+      const isTyping =
+        inlineTextEditRef.current !== null ||
+        (target instanceof HTMLElement &&
+          (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)));
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!isTyping) {
+        editorStore.getState().repeatDuplicate();
+      }
+    };
+
+    window.addEventListener("keydown", onRepeatDuplicate, true);
+    return () => window.removeEventListener("keydown", onRepeatDuplicate, true);
+  }, []);
+
+  useEffect(() => {
     const container = containerRef.current;
     if (container === null) {
       return;
@@ -3616,6 +3639,7 @@ export default function CanvasView() {
         const changed = applyMoveGesture(drag, gesture.dx, gesture.dy);
         if (drag.changed || changed) {
           commitTransformGesture(drag);
+          state.recordDuplicateDelta(gesture.dx, gesture.dy);
         }
       }
     } else if (drag.mode === "create-rect") {
