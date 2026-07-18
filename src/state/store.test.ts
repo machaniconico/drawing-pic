@@ -3,7 +3,7 @@ import type { BBox } from "../core/geometry/bbox";
 import type { Matrix } from "../core/geometry/matrix";
 import { selectionBounds } from "../core/model/bounds";
 import { createEllipse, createGroup, createPath, createRect, createText } from "../core/model/factory";
-import type { Document, NodeId, Paint, Stroke, SubPath } from "../core/model/types";
+import type { Document, NodeId, Paint, SceneNode, Stroke, SubPath } from "../core/model/types";
 import { canRedo, canUndo, createHistory } from "./history";
 import { flipNodes, rotateNodes90, rotateNodesAround } from "./operations";
 import { createEditorStateForTest, editorStore, type SnapSettings, type SnapTarget } from "./store";
@@ -82,6 +82,157 @@ describe("editorStore", () => {
 
     expect(editorStore.getState().doc.nodes[rect.id]).toEqual(rect);
     expect(editorStore.getState().doc.nodes[firstLayerId(editorStore.getState().doc)]?.type).toBe("layer");
+  });
+
+  it("defines a symbol from selection in place and undoes the definition and replacement", () => {
+    const left = createRect(10, 20, 30, 40);
+    const right = createRect(60, 25, 20, 10);
+    editorStore.getState().addNode(left);
+    editorStore.getState().addNode(right);
+    editorStore.getState().setSelection([left.id, right.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    const beforeBounds = selectionBounds(editorStore.getState().doc, [left.id, right.id]);
+
+    const symbolId = editorStore.getState().defineSymbolFromSelection("Badge");
+
+    expect(symbolId).not.toBeNull();
+    const state = editorStore.getState();
+    const instanceId = state.selection[0]!;
+    expect(state.doc.symbols?.[symbolId!]).toMatchObject({ id: symbolId, name: "Badge" });
+    expect(state.doc.symbols?.[symbolId!]?.nodes).toHaveLength(2);
+    expect(state.doc.nodes[left.id]).toBeUndefined();
+    expect(state.doc.nodes[right.id]).toBeUndefined();
+    expect(state.doc.nodes[instanceId]).toMatchObject({ type: "symbol-instance", symbolId });
+    expectBoundsCloseTo(selectionBounds(state.doc, [instanceId]), beforeBounds);
+
+    state.undo();
+    expect(editorStore.getState().doc.symbols?.[symbolId!]).toBeUndefined();
+    expect(editorStore.getState().doc.nodes[left.id]).toEqual(left);
+    expect(editorStore.getState().doc.nodes[right.id]).toEqual(right);
+
+    editorStore.getState().redo();
+    expect(editorStore.getState().doc.nodes[instanceId]?.type).toBe("symbol-instance");
+  });
+
+  it("rejects defining a symbol from a root layer", () => {
+    const layerId = firstLayerId(editorStore.getState().doc);
+    editorStore.getState().setSelection([layerId]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    expect(editorStore.getState().defineSymbolFromSelection("Invalid")).toBeNull();
+    expect(editorStore.getState().doc.layerOrder).toEqual([layerId]);
+    expect(editorStore.getState().doc.symbols).toEqual({});
+    expect(canUndo(editorStore.getState().history)).toBe(false);
+  });
+
+  it("places, updates, and breaks symbol instances with undo support", () => {
+    const source = createRect(0, 0, 20, 10);
+    editorStore.getState().addNode(source);
+    editorStore.getState().setSelection([source.id]);
+    const symbolId = editorStore.getState().defineSymbolFromSelection("Tile")!;
+    const originalInstanceId = editorStore.getState().selection[0]!;
+    editorStore.setState({ history: createHistory<Document>() });
+
+    const placedId = editorStore.getState().placeSymbolInstance(symbolId, { x: 100, y: 80 });
+    expect(placedId).not.toBeNull();
+    expectBoundsCloseTo(selectionBounds(editorStore.getState().doc, [placedId!]), {
+      minX: 100,
+      minY: 80,
+      maxX: 120,
+      maxY: 90,
+    });
+    editorStore.getState().undo();
+    expect(editorStore.getState().doc.nodes[placedId!]).toBeUndefined();
+    editorStore.getState().redo();
+    expect(editorStore.getState().doc.nodes[placedId!]).toMatchObject({
+      type: "symbol-instance",
+      symbolId,
+    });
+
+    const updated = createRect(0, 0, 40, 30) as SceneNode;
+    editorStore.getState().updateSymbolDefinition(symbolId, [updated]);
+    expectBoundsCloseTo(selectionBounds(editorStore.getState().doc, [originalInstanceId]), {
+      minX: 0,
+      minY: 0,
+      maxX: 40,
+      maxY: 30,
+    });
+    expectBoundsCloseTo(selectionBounds(editorStore.getState().doc, [placedId!]), {
+      minX: 100,
+      minY: 80,
+      maxX: 140,
+      maxY: 110,
+    });
+    editorStore.getState().undo();
+    expectBoundsCloseTo(selectionBounds(editorStore.getState().doc, [originalInstanceId]), {
+      minX: 0,
+      minY: 0,
+      maxX: 20,
+      maxY: 10,
+    });
+    expectBoundsCloseTo(selectionBounds(editorStore.getState().doc, [placedId!]), {
+      minX: 100,
+      minY: 80,
+      maxX: 120,
+      maxY: 90,
+    });
+
+    editorStore.getState().breakSymbolLink(placedId!);
+    const brokenId = editorStore.getState().selection[0]!;
+    expect(editorStore.getState().doc.nodes[placedId!]).toBeUndefined();
+    expect(editorStore.getState().doc.nodes[brokenId]?.type).toBe("rect");
+    expectBoundsCloseTo(selectionBounds(editorStore.getState().doc, [brokenId]), {
+      minX: 100,
+      minY: 80,
+      maxX: 120,
+      maxY: 90,
+    });
+    editorStore.getState().undo();
+    expect(editorStore.getState().doc.nodes[placedId!]?.type).toBe("symbol-instance");
+  });
+
+  it("normalizes a selection under a transformed parent when updating a definition", () => {
+    const source = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(source);
+    editorStore.getState().setSelection([source.id]);
+    const symbolId = editorStore.getState().defineSymbolFromSelection("Nested")!;
+    const instanceId = editorStore.getState().selection[0]!;
+
+    const group = createGroup("Scaled Parent", []);
+    group.transform = { a: 2, b: 0, c: 0, d: 2, e: 50, f: 30 };
+    editorStore.getState().addNode(group);
+    const nested = createRect(10, 20, 15, 5);
+    editorStore.getState().addNode(nested, group.id);
+    editorStore.getState().setSelection([nested.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().updateSymbolDefinition(symbolId);
+
+    expect(editorStore.getState().doc.symbols?.[symbolId]?.nodes[0]?.transform).toEqual({
+      a: 2,
+      b: 0,
+      c: 0,
+      d: 2,
+      e: 0,
+      f: 0,
+    });
+    expectBoundsCloseTo(selectionBounds(editorStore.getState().doc, [instanceId]), {
+      minX: 0,
+      minY: 0,
+      maxX: 30,
+      maxY: 10,
+    });
+    expect(canUndo(editorStore.getState().history)).toBe(true);
+
+    const previousDefinition = structuredClone(editorStore.getState().doc.symbols?.[symbolId]);
+    const outside = createRect(200, 200, 10, 10);
+    editorStore.getState().addNode(outside);
+    editorStore.getState().setSelection([nested.id, outside.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+    editorStore.getState().updateSymbolDefinition(symbolId);
+
+    expect(editorStore.getState().doc.symbols?.[symbolId]).toEqual(previousDefinition);
+    expect(canUndo(editorStore.getState().history)).toBe(false);
   });
 
   it("does not push selection, tool, or viewport changes to history", () => {

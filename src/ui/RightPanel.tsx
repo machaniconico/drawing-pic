@@ -9,6 +9,7 @@ import { ImportButton } from "./ImportButton";
 import { DocSettings } from "./DocSettings";
 import { ArtboardsPanel } from "./ArtboardsPanel";
 import { SwatchesPanel } from "./SwatchesPanel";
+import { SymbolsPanel } from "./SymbolsPanel";
 import "./RightPanel.css";
 
 export function RightPanel() {
@@ -80,6 +81,20 @@ export function RightPanel() {
         </header>
         <div className="right-panel__content right-panel__content--swatches">
           <SwatchesPanel />
+        </div>
+      </section>
+
+      <div className="right-panel__divider" role="presentation" />
+
+      <section
+        aria-labelledby="right-panel-symbols-heading"
+        className="right-panel__section right-panel__section--symbols"
+      >
+        <header className="right-panel__header">
+          <h2 id="right-panel-symbols-heading">Symbols</h2>
+        </header>
+        <div className="right-panel__content right-panel__content--symbols">
+          <SymbolsPanel />
         </div>
       </section>
 

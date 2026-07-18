@@ -4,14 +4,27 @@ import { createStore } from "zustand/vanilla";
 import { offsetSubPaths } from "../core/geometry/offsetPath";
 import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
 import type { BBox } from "../core/geometry/bbox";
-import { apply, applyVector, compose, invert } from "../core/geometry/matrix";
+import { apply, applyVector, compose, IDENTITY, invert, translate } from "../core/geometry/matrix";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { PathfinderOp } from "../core/geometry/pathfinder";
 import { shapeBuilderFromRegions, type ShapeBuilderMode } from "../core/geometry/shapeBuilder";
 import type { Vec2 } from "../core/geometry/vector";
 import { createDocument, newId } from "../core/model/factory";
-import type { Artboard, Document, NodeId, Paint, PathNode, RGBA, SceneNode, Stroke } from "../core/model/types";
-import { hasStyle, isContainer } from "../core/model/types";
+import { selectionBounds } from "../core/model/bounds";
+import type {
+  Artboard,
+  DefinitionNode,
+  Document,
+  NodeId,
+  Paint,
+  PathNode,
+  RGBA,
+  SceneNode,
+  Stroke,
+  SymbolDefinition,
+  SymbolInstanceNode,
+} from "../core/model/types";
+import { asSymbolInstance, hasStyle, isContainer } from "../core/model/types";
 import {
   alignNodes as computeAlignNodes,
   bringForward as computeBringForward,
@@ -163,6 +176,10 @@ export interface EditorActions {
   convertSelectionToPaths: () => void;
   outlineSelectedStrokes: () => void;
   offsetSelectedPaths: (distance: number) => void;
+  defineSymbolFromSelection: (name?: string) => NodeId | null;
+  placeSymbolInstance: (symbolId: NodeId, at: Vec2) => NodeId | null;
+  breakSymbolLink: (instanceId?: NodeId) => void;
+  updateSymbolDefinition: (symbolId: NodeId, nodes?: DefinitionNode[]) => void;
   copySelection: () => void;
   paste: () => void;
   pasteInPlace: () => void;
@@ -521,8 +538,129 @@ const normalizeDocument = (doc: Document): Document => {
     : artboards[0]!.id;
   normalized.artboards = artboards;
   normalized.guides = Array.isArray(normalized.guides) ? normalized.guides : [];
+  normalized.symbols = normalized.symbols && typeof normalized.symbols === "object" ? normalized.symbols : {};
   rebaseDocumentToArtboard(normalized, activeArtboardId);
   return normalized;
+};
+
+const symbolRootNodes = (definition: SymbolDefinition): DefinitionNode[] => {
+  const childIds = new Set<NodeId>();
+  for (const node of definition.nodes) {
+    if (isContainer(node)) {
+      node.children.forEach((id) => childIds.add(id));
+    }
+  }
+  return definition.nodes.filter((node) => !childIds.has(node.id));
+};
+
+const replaceIdsInOrder = (
+  order: NodeId[],
+  removedIds: ReadonlySet<NodeId>,
+  replacementIds: readonly NodeId[],
+): NodeId[] => {
+  const result: NodeId[] = [];
+  let inserted = false;
+  for (const id of order) {
+    if (!removedIds.has(id)) {
+      result.push(id);
+    } else if (!inserted) {
+      result.push(...replacementIds);
+      inserted = true;
+    }
+  }
+  return result;
+};
+
+const nodeDefaultsForSymbolInstance = (id: NodeId, symbolId: NodeId, name: string): SymbolInstanceNode => ({
+  id,
+  name,
+  type: "symbol-instance",
+  symbolId,
+  transform: IDENTITY,
+  opacity: 1,
+  visible: true,
+  locked: false,
+});
+
+const cloneDefinitionNodes = (
+  definition: SymbolDefinition,
+  reservedIds: readonly NodeId[],
+): { nodes: DefinitionNode[]; roots: NodeId[] } => {
+  const sourceDefinition = original(definition) ?? definition;
+  const reserved = new Set(reservedIds);
+  const idMap = new Map<NodeId, NodeId>();
+  for (const node of sourceDefinition.nodes) {
+    let id = newId();
+    while (reserved.has(id)) id = newId();
+    reserved.add(id);
+    idMap.set(node.id, id);
+  }
+
+  const roots = symbolRootNodes(sourceDefinition).map((node) => idMap.get(node.id)!).filter(Boolean);
+  const nodes = sourceDefinition.nodes.map((source) => {
+    const node = structuredClone(source) as DefinitionNode;
+    node.id = idMap.get(source.id)!;
+    if (isContainer(node)) {
+      node.children = node.children.map((id) => idMap.get(id) ?? id);
+    }
+    if (hasStyle(node)) {
+      if (node.fill.type === "pattern") {
+        node.fill.sourceId = idMap.get(node.fill.sourceId) ?? node.fill.sourceId;
+      }
+      if (node.stroke?.paint.type === "pattern") {
+        node.stroke.paint.sourceId = idMap.get(node.stroke.paint.sourceId) ?? node.stroke.paint.sourceId;
+      }
+    }
+    return node;
+  });
+  return { nodes, roots };
+};
+
+interface CapturedSymbolSelection {
+  rootIds: NodeId[];
+  capturedIds: Set<NodeId>;
+  parentId: NodeId;
+  parentInverse: NonNullable<ReturnType<typeof invert>>;
+  bounds: BBox;
+  nodes: DefinitionNode[];
+}
+
+const captureSymbolSelection = (
+  doc: Document,
+  selection: readonly NodeId[],
+): CapturedSymbolSelection | null => {
+  const rootIds = topLevelNodeIds(doc, selection);
+  if (rootIds.length === 0) return null;
+
+  const parent = findNodeParent(doc, rootIds[0]!);
+  // A root layer cannot be replaced by a shape instance without corrupting layerOrder.
+  if (!parent || parent.parentId === null) return null;
+  if (rootIds.some((id) => findNodeParent(doc, id)?.parentId !== parent.parentId)) return null;
+
+  const bounds = selectionBounds(doc, rootIds);
+  if (!Number.isFinite(bounds.minX) || !Number.isFinite(bounds.minY)) return null;
+  const parentWorld = parentWorldTransform(doc, parent.parentId);
+  const parentInverse = invert(parentWorld);
+  if (!parentInverse) return null;
+
+  const capturedIds = new Set<NodeId>();
+  rootIds.forEach((id) => collectDescendants(doc, id, capturedIds));
+  const rootSet = new Set(rootIds);
+  const nodes = [...capturedIds]
+    .map((id) => doc.nodes[id])
+    .filter((node): node is SceneNode => Boolean(node))
+    .map((source) => {
+      const node = structuredClone(source) as unknown as DefinitionNode;
+      if (rootSet.has(node.id)) {
+        node.transform = compose(
+          translate(-bounds.minX, -bounds.minY),
+          compose(parentWorld, node.transform),
+        );
+      }
+      return node;
+    });
+
+  return { rootIds, capturedIds, parentId: parent.parentId, parentInverse, bounds, nodes };
 };
 
 const preserveActiveArtboard = (doc: Document, preferredId: NodeId | undefined): void => {
@@ -1308,6 +1446,116 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
 
       state.selection = offsetIds;
       clearMissingKeyObject(state);
+      return true;
+    });
+  },
+
+  defineSymbolFromSelection: (name) => {
+    const symbolId = newId();
+    const instanceId = newId();
+    let created = false;
+    withDocHistory(set, (state) => {
+      const sourceDoc = original(state.doc) ?? state.doc;
+      const captured = captureSymbolSelection(sourceDoc, state.selection);
+      if (!captured) return false;
+
+      const symbolName = name?.trim() || `Symbol ${Object.keys(state.doc.symbols ?? {}).length + 1}`;
+      const definition: SymbolDefinition = { id: symbolId, name: symbolName, nodes: captured.nodes };
+      (state.doc.symbols ??= {})[symbolId] = definition;
+
+      const instance = nodeDefaultsForSymbolInstance(instanceId, symbolId, symbolName);
+      instance.transform = compose(captured.parentInverse, translate(captured.bounds.minX, captured.bounds.minY));
+      state.doc.nodes[instanceId] = instance as unknown as SceneNode;
+      const parentNode = state.doc.nodes[captured.parentId];
+      if (!parentNode || !isContainer(parentNode)) return false;
+      parentNode.children = replaceIdsInOrder(parentNode.children, new Set(captured.rootIds), [instanceId]);
+      for (const id of captured.capturedIds) delete state.doc.nodes[id];
+      state.selection = [instanceId];
+      state.keyObjectId = null;
+      created = true;
+      return true;
+    });
+    return created ? symbolId : null;
+  },
+
+  placeSymbolInstance: (symbolId, at) => {
+    const instanceId = newId();
+    let placed = false;
+    withDocHistory(set, (state) => {
+      const definition = state.doc.symbols?.[symbolId];
+      const parentId = getActiveIsolationId(state.isolationPath) ?? getDefaultParentId(state.doc);
+      if (!definition || !parentId || !Number.isFinite(at.x) || !Number.isFinite(at.y)) return false;
+
+      const parent = state.doc.nodes[parentId];
+      if (!parent || !isContainer(parent)) return false;
+      const parentInverse = invert(parentWorldTransform(state.doc, parentId));
+      if (!parentInverse) return false;
+
+      const instance = nodeDefaultsForSymbolInstance(instanceId, symbolId, definition.name);
+      instance.transform = compose(parentInverse, translate(at.x, at.y));
+      state.doc.nodes[instanceId] = instance as unknown as SceneNode;
+      parent.children.push(instanceId);
+      state.selection = [instanceId];
+      state.keyObjectId = null;
+      placed = true;
+      return true;
+    });
+    return placed ? instanceId : null;
+  },
+
+  breakSymbolLink: (instanceId) => {
+    withDocHistory(set, (state) => {
+      const requestedIds = instanceId === undefined ? state.selection : [instanceId];
+      const nextSelection: NodeId[] = [];
+      let changed = false;
+
+      for (const id of requestedIds) {
+        const sceneNode = state.doc.nodes[id];
+        const instance = sceneNode ? asSymbolInstance(sceneNode) : null;
+        if (!instance) continue;
+        const definition = state.doc.symbols?.[instance.symbolId];
+        const parent = findNodeParent(state.doc, id);
+        if (!definition || !parent) continue;
+
+        const cloned = cloneDefinitionNodes(definition, Object.keys(state.doc.nodes));
+        const rootSet = new Set(cloned.roots);
+        for (const node of cloned.nodes) {
+          if (rootSet.has(node.id)) node.transform = compose(instance.transform, node.transform);
+          state.doc.nodes[node.id] = node as unknown as SceneNode;
+        }
+        if (parent.parentId === null) {
+          state.doc.layerOrder = replaceIdsInOrder(state.doc.layerOrder, new Set([id]), cloned.roots);
+        } else {
+          const parentNode = state.doc.nodes[parent.parentId];
+          if (!parentNode || !isContainer(parentNode)) continue;
+          parentNode.children = replaceIdsInOrder(parentNode.children, new Set([id]), cloned.roots);
+        }
+        delete state.doc.nodes[id];
+        nextSelection.push(...cloned.roots);
+        changed = true;
+      }
+
+      if (!changed) return false;
+      state.selection = nextSelection;
+      state.keyObjectId = null;
+      return true;
+    });
+  },
+
+  updateSymbolDefinition: (symbolId, nodes) => {
+    withDocHistory(set, (state) => {
+      const definition = state.doc.symbols?.[symbolId];
+      if (!definition) return false;
+
+      let nextNodes = nodes;
+      if (nextNodes === undefined) {
+        const sourceDoc = original(state.doc) ?? state.doc;
+        const captured = captureSymbolSelection(sourceDoc, state.selection);
+        if (!captured) return false;
+        nextNodes = captured.nodes;
+      }
+      if (nextNodes.length === 0) return false;
+      definition.nodes = nextNodes.map((node) => structuredClone(node) as DefinitionNode);
       return true;
     });
   },

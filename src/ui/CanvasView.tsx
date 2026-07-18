@@ -2707,6 +2707,18 @@ export default function CanvasView() {
       ) {
         event.preventDefault();
         editorStore.getState().setActiveTool("gradient");
+        return;
+      }
+      if (
+        event.key === "F8" &&
+        !event.repeat &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !isTyping
+      ) {
+        event.preventDefault();
+        editorStore.getState().defineSymbolFromSelection();
       }
     };
     const onKeyUp = (event: KeyboardEvent): void => {
