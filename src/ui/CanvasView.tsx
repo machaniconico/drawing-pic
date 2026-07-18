@@ -13,6 +13,7 @@ import {
 import { produce } from "immer";
 import {
   center as bboxCenter,
+  contains,
   fromRect,
   height as bboxHeight,
   isEmpty,
@@ -44,7 +45,12 @@ import {
 } from "../core/model/snapping";
 import { hasStyle, isContainer, type Anchor, type Document, type Guide, type NodeId, type PathNode, type SceneNode, type TextNode } from "../core/model/types";
 import { renderDocument } from "../render/canvasRenderer";
-import { nodesInRect } from "../state/selectors";
+import {
+  documentForIsolation,
+  getActiveIsolationId,
+  nodesInRect,
+  subtreeWorldBounds,
+} from "../state/selectors";
 import { pushHistory } from "../state/history";
 import { sampleStyleAt, type SampledStyle } from "../state/operations";
 import { editorStore, useEditorStore, type EditorStore, type EditorViewport, type SnapSettings } from "../state/store";
@@ -1070,6 +1076,68 @@ const drawMeasureOverlay = (
   ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
   ctx.fillStyle = "#ffffff";
   ctx.fillText(label, x + paddingX, y + height / 2);
+  ctx.restore();
+};
+
+const drawIsolationOverlay = (
+  ctx: CanvasRenderingContext2D,
+  doc: Document,
+  isolationPath: readonly NodeId[],
+  viewport: EditorViewport,
+  size: Size,
+  dpr: number,
+): void => {
+  const isolationId = getActiveIsolationId(isolationPath);
+  if (isolationId === null) {
+    return;
+  }
+
+  const bounds = subtreeWorldBounds(doc, isolationId);
+  if (isEmpty(bounds)) {
+    return;
+  }
+
+  const topLeft = worldToScreen({ x: bounds.minX, y: bounds.minY }, viewport);
+  const bottomRight = worldToScreen({ x: bounds.maxX, y: bounds.maxY }, viewport);
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = "rgba(15, 23, 42, 0.46)";
+  ctx.fillRect(0, 0, size.width, size.height);
+  ctx.restore();
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.beginPath();
+  ctx.rect(
+    topLeft.x * dpr,
+    topLeft.y * dpr,
+    Math.max(0, (bottomRight.x - topLeft.x) * dpr),
+    Math.max(0, (bottomRight.y - topLeft.y) * dpr),
+  );
+  ctx.clip();
+  renderDocument(
+    ctx,
+    documentForIsolation(doc, isolationPath),
+    {
+      zoom: viewport.zoom * dpr,
+      pan: { x: viewport.pan.x * dpr, y: viewport.pan.y * dpr },
+    },
+    { skipEditorChrome: true },
+  );
+  ctx.restore();
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.strokeStyle = "rgba(45, 140, 240, 0.95)";
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeRect(
+    topLeft.x + 0.5,
+    topLeft.y + 0.5,
+    Math.max(0, bottomRight.x - topLeft.x - 1),
+    Math.max(0, bottomRight.y - topLeft.y - 1),
+  );
   ctx.restore();
 };
 
@@ -2524,7 +2592,7 @@ export default function CanvasView() {
         }
 
         const dpr = getDpr();
-        const { doc, selection, viewport, snapSettings, showGrid } = editorStore.getState();
+        const { doc, selection, isolationPath, viewport, snapSettings, showGrid } = editorStore.getState();
         const renderViewport: EditorViewport = {
           zoom: viewport.zoom * dpr,
           pan: {
@@ -2534,6 +2602,7 @@ export default function CanvasView() {
         };
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         renderDocument(ctx, doc, renderViewport);
+        drawIsolationOverlay(ctx, doc, isolationPath, viewport, size, dpr);
         if (showGrid) {
           drawGridOverlay(ctx, viewport, size, dpr, snapSettings.gridSize);
         }
@@ -2581,6 +2650,16 @@ export default function CanvasView() {
       const isTyping =
         target instanceof HTMLElement &&
         (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+      if (
+        event.key === "Escape" &&
+        !isTyping &&
+        getActiveIsolationId(editorStore.getState().isolationPath) !== null
+      ) {
+        event.preventDefault();
+        editorStore.getState().exitIsolation();
+        setSelectedPathAnchor(null);
+        return;
+      }
       if (
         event.key.toLowerCase() === "m" &&
         !event.repeat &&
@@ -2767,6 +2846,17 @@ export default function CanvasView() {
     const state = editorStore.getState();
     const point = eventPoint(event, canvas);
     const worldPoint = screenToWorld(point, state.viewport);
+    const isolationId = getActiveIsolationId(state.isolationPath);
+    if (
+      isolationId !== null &&
+      !contains(subtreeWorldBounds(state.doc, isolationId), worldPoint)
+    ) {
+      event.preventDefault();
+      state.exitIsolation();
+      setSelectedPathAnchor(null);
+      return;
+    }
+    const interactionDoc = documentForIsolation(state.doc, state.isolationPath);
     const panMode = state.activeTool === "hand" || spaceHeldRef.current;
 
     if (panMode) {
@@ -2792,7 +2882,7 @@ export default function CanvasView() {
 
     if (state.activeTool === "gradient") {
       event.preventDefault();
-      const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+      const hit = hitTest(interactionDoc, worldPoint, { tolerance: 3 / state.viewport.zoom });
       if (hit === null || !state.selection.includes(hit)) {
         return;
       }
@@ -2832,7 +2922,7 @@ export default function CanvasView() {
         return;
       }
 
-      const sampledStyle = sampleStyleAt(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+      const sampledStyle = sampleStyleAt(interactionDoc, worldPoint, { tolerance: 3 / state.viewport.zoom });
       if (sampledStyle === null) {
         return;
       }
@@ -2922,7 +3012,7 @@ export default function CanvasView() {
         return;
       }
 
-      const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+      const hit = hitTest(interactionDoc, worldPoint, { tolerance: 3 / state.viewport.zoom });
       if (hit !== null) {
         return;
       }
@@ -2950,7 +3040,7 @@ export default function CanvasView() {
 
     if (state.activeTool === "text") {
       event.preventDefault();
-      const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+      const hit = hitTest(interactionDoc, worldPoint, { tolerance: 3 / state.viewport.zoom });
       if (hit !== null) {
         return;
       }
@@ -3035,7 +3125,7 @@ export default function CanvasView() {
         }
       }
 
-      const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+      const hit = hitTest(interactionDoc, worldPoint, { tolerance: 3 / state.viewport.zoom });
       if (hit === null) {
         state.clearSelection();
         setSelectedPathAnchor(null);
@@ -3120,7 +3210,7 @@ export default function CanvasView() {
       return;
     }
 
-    const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+    const hit = hitTest(interactionDoc, worldPoint, { tolerance: 3 / state.viewport.zoom });
     if (hit === null) {
       canvas.setPointerCapture(event.pointerId);
       dragRef.current = {
@@ -3628,8 +3718,26 @@ export default function CanvasView() {
     event.preventDefault();
     const point = eventPoint(event, canvas);
     const worldPoint = screenToWorld(point, state.viewport);
-    const hit = hitTest(state.doc, worldPoint, { tolerance: 3 / state.viewport.zoom });
+    const hit = hitTest(
+      documentForIsolation(state.doc, state.isolationPath),
+      worldPoint,
+      { tolerance: 3 / state.viewport.zoom },
+    );
     if (hit === null) {
+      return;
+    }
+
+    const nodePath = pathToNode(state.doc, hit) ?? [];
+    const isolationId = getActiveIsolationId(state.isolationPath);
+    const isolationIndex = isolationId === null
+      ? -1
+      : nodePath.findIndex((candidate) => candidate.id === isolationId);
+    const group = nodePath
+      .slice(isolationIndex + 1)
+      .find((candidate) => candidate.type === "group");
+    if (group?.type === "group") {
+      state.enterIsolation(group.id);
+      setSelectedPathAnchor(null);
       return;
     }
 
@@ -3663,6 +3771,14 @@ export default function CanvasView() {
   };
 
   const onCanvasKeyDown = (event: ReactKeyboardEvent<HTMLCanvasElement>): void => {
+    if (event.key === "Escape" && getActiveIsolationId(editorStore.getState().isolationPath) !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      editorStore.getState().exitIsolation();
+      setSelectedPathAnchor(null);
+      return;
+    }
+
     if (event.key !== "Delete" && event.key !== "Backspace") {
       return;
     }

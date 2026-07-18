@@ -14,6 +14,111 @@ import type { Document, NodeId, SceneNode } from "../core/model/types";
 import { isContainer, isShape } from "../core/model/types";
 import type { EditorState } from "./store";
 
+export const isNodeDescendantOf = (
+  doc: Document,
+  nodeId: NodeId,
+  ancestorId: NodeId,
+): boolean => {
+  if (nodeId === ancestorId || !doc.nodes[nodeId]) {
+    return false;
+  }
+
+  const ancestor = doc.nodes[ancestorId];
+  if (!ancestor || !isContainer(ancestor)) {
+    return false;
+  }
+
+  const visit = (id: NodeId): boolean => {
+    if (id === nodeId) {
+      return true;
+    }
+
+    const node = doc.nodes[id];
+    return Boolean(node && isContainer(node) && node.children.some(visit));
+  };
+
+  return ancestor.children.some(visit);
+};
+
+export const normalizeIsolationPath = (
+  doc: Document,
+  path: readonly NodeId[],
+): NodeId[] => {
+  const normalized: NodeId[] = [];
+
+  for (const id of path) {
+    const node = doc.nodes[id];
+    const parentId = normalized.at(-1);
+    if (
+      node?.type !== "group" ||
+      (parentId === undefined && !doc.layerOrder.some((layerId) => isNodeDescendantOf(doc, id, layerId))) ||
+      (parentId !== undefined && !isNodeDescendantOf(doc, id, parentId))
+    ) {
+      break;
+    }
+    normalized.push(id);
+  }
+
+  return normalized;
+};
+
+export const getActiveIsolationId = (path: readonly NodeId[]): NodeId | null =>
+  path.at(-1) ?? null;
+
+export const isNodeInIsolation = (
+  doc: Document,
+  nodeId: NodeId,
+  isolationPath: readonly NodeId[],
+): boolean => {
+  const isolationId = getActiveIsolationId(normalizeIsolationPath(doc, isolationPath));
+  return isolationId === null || isNodeDescendantOf(doc, nodeId, isolationId);
+};
+
+export const subtreeWorldBounds = (doc: Document, id: NodeId): BBox => {
+  const node = doc.nodes[id];
+  if (!node) {
+    return EMPTY_BBOX;
+  }
+
+  if (!isContainer(node)) {
+    return worldBounds(doc, id);
+  }
+
+  return unionAll(node.children.map((childId) => subtreeWorldBounds(doc, childId)));
+};
+
+export const documentForIsolation = (
+  doc: Document,
+  isolationPath: readonly NodeId[],
+): Document => {
+  const isolationId = getActiveIsolationId(normalizeIsolationPath(doc, isolationPath));
+  if (isolationId === null) {
+    return doc;
+  }
+
+  const nodes = { ...doc.nodes };
+  const keepBranch = (id: NodeId): boolean => {
+    if (id === isolationId) {
+      return true;
+    }
+
+    const node = doc.nodes[id];
+    if (!node || !isContainer(node) || !isNodeDescendantOf(doc, isolationId, id)) {
+      return false;
+    }
+
+    const children = node.children.filter(keepBranch);
+    nodes[id] = { ...node, children };
+    return children.length > 0;
+  };
+
+  return {
+    ...doc,
+    layerOrder: doc.layerOrder.filter(keepBranch),
+    nodes,
+  };
+};
+
 export const getNode = (state: Pick<EditorState, "doc">, id: NodeId): SceneNode | undefined =>
   state.doc.nodes[id];
 
@@ -86,7 +191,10 @@ export const getDocBounds = (state: Pick<EditorState, "doc">): BBox =>
     }),
   );
 
-export const nodesInRect = (state: Pick<EditorState, "doc">, rect: BBox): NodeId[] => {
+export const nodesInRect = (
+  state: Pick<EditorState, "doc"> & Partial<Pick<EditorState, "isolationPath">>,
+  rect: BBox,
+): NodeId[] => {
   const hits: NodeId[] = [];
 
   const visit = (id: NodeId): void => {
@@ -102,7 +210,11 @@ export const nodesInRect = (state: Pick<EditorState, "doc">, rect: BBox): NodeId
       return;
     }
 
-    if (isShape(node) && intersects(worldBounds(state.doc, id), rect)) {
+    if (
+      isShape(node) &&
+      isNodeInIsolation(state.doc, id, state.isolationPath ?? []) &&
+      intersects(worldBounds(state.doc, id), rect)
+    ) {
       hits.push(id);
     }
   };
