@@ -27,12 +27,19 @@ const clamp = (value: number, min: number, max: number): number =>
 const exportScale = (scale: number | undefined): number =>
   scale === undefined || !Number.isFinite(scale) ? 1 : clamp(scale, 0.01, 100);
 
-const documentBounds = (doc: Document): BBox => ({
-  minX: 0,
-  minY: 0,
-  maxX: doc.width,
-  maxY: doc.height,
-});
+const documentBounds = (doc: Document): BBox => {
+  const artboards = doc.artboards;
+  const activeArtboard = artboards?.find(
+    (artboard) => artboard.id === doc.activeArtboardId,
+  ) ?? artboards?.[0];
+
+  return {
+    minX: 0,
+    minY: 0,
+    maxX: activeArtboard?.width ?? doc.width,
+    maxY: activeArtboard?.height ?? doc.height,
+  };
+};
 
 interface SelectionRoot {
   node: SceneNode;

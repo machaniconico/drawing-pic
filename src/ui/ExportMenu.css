@@ -118,3 +118,7 @@
 .export-menu__button:active {
   background: #262629;
 }
+
+.export-menu__button--pdf {
+  grid-column: 1 / -1;
+}

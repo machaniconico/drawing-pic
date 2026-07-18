@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { deserializeDocument, serializeDocument } from "../io/docSerialize";
+import { documentToPdfBlob } from "../io/pdfExport";
 import { documentToPngBlob } from "../io/pngExport";
 import {
   documentToRasterBlob,
@@ -20,7 +21,7 @@ const downloadBlob = (blob: Blob, filename: string): void => {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 };
 
-type ExportExtension = "svg" | "png" | "jpeg" | "webp" | "json";
+type ExportExtension = "svg" | "png" | "jpeg" | "webp" | "pdf" | "json";
 type RasterFormat = "png" | RasterExportFormat;
 
 const exportFileName = (name: string, extension: ExportExtension): string => {
@@ -62,6 +63,16 @@ export function ExportMenu() {
       })
       .catch((error: unknown) => {
         console.error(`${rasterFormat.toUpperCase()} export failed.`, error);
+      });
+  };
+
+  const handlePdfExport = (): void => {
+    void documentToPdfBlob(doc, exportOptions)
+      .then((blob) => {
+        downloadBlob(blob, exportFileName(doc.name, "pdf"));
+      })
+      .catch((error: unknown) => {
+        console.error("PDF export failed.", error);
       });
   };
 
@@ -173,6 +184,13 @@ export function ExportMenu() {
       </button>
       <button className="export-menu__button" type="button" onClick={handleRasterExport}>
         Export {rasterFormat === "jpeg" ? "JPEG" : rasterFormat === "webp" ? "WebP" : "PNG"}
+      </button>
+      <button
+        className="export-menu__button export-menu__button--pdf"
+        type="button"
+        onClick={handlePdfExport}
+      >
+        Export PDF
       </button>
     </div>
   );

@@ -4,7 +4,7 @@ import { createStore } from "zustand/vanilla";
 import { offsetSubPaths } from "../core/geometry/offsetPath";
 import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
 import type { BBox } from "../core/geometry/bbox";
-import { apply, invert } from "../core/geometry/matrix";
+import { apply, compose, invert } from "../core/geometry/matrix";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { PathfinderOp } from "../core/geometry/pathfinder";
 import { shapeBuilderFromRegions, type ShapeBuilderMode } from "../core/geometry/shapeBuilder";
@@ -75,6 +75,12 @@ import {
   setGuideHidden as computeSetGuideHidden,
   setGuideLocked as computeSetGuideLocked,
 } from "./guides";
+import {
+  getActiveIsolationId,
+  isNodeDescendantOf,
+  isNodeInIsolation,
+  normalizeIsolationPath,
+} from "./selectors";
 
 export type ToolId =
   | "select"
@@ -108,6 +114,7 @@ export interface SnapSettings {
 export interface EditorState {
   doc: Document;
   selection: NodeId[];
+  isolationPath: NodeId[];
   keyObjectId: NodeId | null;
   activeTool: ToolId;
   viewport: EditorViewport;
@@ -119,6 +126,8 @@ export interface EditorState {
 }
 
 export interface EditorActions {
+  enterIsolation: (groupId: NodeId) => void;
+  exitIsolation: () => void;
   addNode: (node: SceneNode, parentId?: NodeId) => void;
   removeNodes: (ids: NodeId[]) => void;
   updateNode: (id: NodeId, patch: Partial<SceneNode>) => void;
@@ -213,6 +222,7 @@ const initialState = (): EditorState => {
   return {
     doc: normalizeDocument(createDocument()),
     selection: [],
+    isolationPath: [],
     keyObjectId: null,
     activeTool: "select",
     viewport: {
@@ -258,6 +268,12 @@ const clearMissingKeyObject = (state: EditorStore): void => {
   if (state.keyObjectId !== null && !state.selection.includes(state.keyObjectId)) {
     state.keyObjectId = null;
   }
+};
+
+const sanitizeIsolation = (state: EditorStore): void => {
+  state.isolationPath = normalizeIsolationPath(state.doc, state.isolationPath);
+  state.selection = state.selection.filter((id) => isNodeInIsolation(state.doc, id, state.isolationPath));
+  clearMissingKeyObject(state);
 };
 
 const getDefaultParentId = (doc: Document): NodeId | undefined => doc.layerOrder.at(-1);
@@ -694,9 +710,29 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
 
   addNode: (node, parentId) => {
     withDocHistory(set, (state) => {
-      const targetParentId = parentId ?? getDefaultParentId(state.doc);
+      const isolationId = getActiveIsolationId(state.isolationPath);
+      const targetParentId = parentId ?? isolationId ?? getDefaultParentId(state.doc);
       if (!targetParentId) {
         return false;
+      }
+      if (
+        isolationId !== null &&
+        targetParentId !== isolationId &&
+        !isNodeDescendantOf(state.doc, targetParentId, isolationId)
+      ) {
+        return false;
+      }
+
+      if (parentId === undefined && isolationId !== null) {
+        const parentInverse = invert(parentWorldTransform(state.doc, isolationId));
+        if (!parentInverse) {
+          return false;
+        }
+        return addNodeToParent(
+          state.doc,
+          { ...node, transform: compose(parentInverse, node.transform) } as SceneNode,
+          targetParentId,
+        );
       }
 
       return addNodeToParent(state.doc, node, targetParentId);
@@ -711,7 +747,8 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
 
     withDocHistory(set, (state) => {
       const removed = new Set<NodeId>();
-      for (const id of idsToRemove) {
+      for (const id of idsToRemove.filter((candidate) =>
+        isNodeInIsolation(state.doc, candidate, state.isolationPath))) {
         collectDescendants(state.doc, id, removed);
       }
       if (removed.size === 0) {
@@ -724,7 +761,7 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
       }
 
       state.selection = state.selection.filter((id) => !removed.has(id));
-      clearMissingKeyObject(state);
+      sanitizeIsolation(state);
       return true;
     });
   },
@@ -732,7 +769,7 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
   updateNode: (id, patch) => {
     withDocHistory(set, (state) => {
       const node = state.doc.nodes[id];
-      if (!node) {
+      if (!node || !isNodeInIsolation(state.doc, id, state.isolationPath)) {
         return false;
       }
 
@@ -977,7 +1014,7 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
       }
 
       state.selection = applyUngroupSelectionResults(state.doc, results);
-      clearMissingKeyObject(state);
+      sanitizeIsolation(state);
       return true;
     });
   },
@@ -1267,7 +1304,7 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
 
   paste: () => {
     withDocHistory(set, (state) => {
-      const targetParentId = getDefaultParentId(state.doc);
+      const targetParentId = getActiveIsolationId(state.isolationPath) ?? getDefaultParentId(state.doc);
       const clipboard = original(state.clipboard) ?? state.clipboard;
       if (!targetParentId || clipboard.length === 0) {
         return false;
@@ -1305,7 +1342,7 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
 
   pasteInPlace: () => {
     withDocHistory(set, (state) => {
-      const targetParentId = getDefaultParentId(state.doc);
+      const targetParentId = getActiveIsolationId(state.isolationPath) ?? getDefaultParentId(state.doc);
       const clipboard = original(state.clipboard) ?? state.clipboard;
       if (!targetParentId || clipboard.length === 0) {
         return false;
@@ -1376,6 +1413,18 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
 
   reorderNode: (dragId, targetId, position) => {
     withDocHistory(set, (state) => {
+      const isolationId = getActiveIsolationId(state.isolationPath);
+      if (
+        !isNodeInIsolation(state.doc, dragId, state.isolationPath) ||
+        (targetId === isolationId && position !== "inside") ||
+        (
+          targetId !== isolationId &&
+          !isNodeInIsolation(state.doc, targetId, state.isolationPath)
+        )
+      ) {
+        return false;
+      }
+
       const sourceDoc = original(state.doc) ?? state.doc;
       const nextDoc = moveNode(sourceDoc, dragId, targetId, position);
       if (nextDoc === sourceDoc) {
@@ -1502,7 +1551,8 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
 
   setAllObjectsLocked: (locked) => {
     withDocHistory(set, (state) => {
-      const objects = objectNodes(state.doc);
+      const objects = objectNodes(state.doc).filter((node) =>
+        isNodeInIsolation(state.doc, node.id, state.isolationPath));
       if (objects.length === 0) {
         return false;
       }
@@ -1523,7 +1573,8 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
 
   setAllObjectsHidden: (hidden) => {
     withDocHistory(set, (state) => {
-      const objects = objectNodes(state.doc);
+      const objects = objectNodes(state.doc).filter((node) =>
+        isNodeInIsolation(state.doc, node.id, state.isolationPath));
       if (objects.length === 0) {
         return false;
       }
@@ -1607,7 +1658,9 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
   setSelection: (ids) => {
     set(
       produce((state: EditorStore) => {
-        state.selection = dedupeIds(ids).filter((id) => id in state.doc.nodes);
+        state.selection = dedupeIds(ids).filter(
+          (id) => id in state.doc.nodes && isNodeInIsolation(state.doc, id, state.isolationPath),
+        );
         clearMissingKeyObject(state);
       }),
     );
@@ -1622,7 +1675,7 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
         }
 
         state.selection = dedupeIds(computeNodesWithMatchingFill(state.doc, refId)).filter(
-          (id) => id in state.doc.nodes,
+          (id) => id in state.doc.nodes && isNodeInIsolation(state.doc, id, state.isolationPath),
         );
         clearMissingKeyObject(state);
       }),
@@ -1638,7 +1691,7 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
         }
 
         state.selection = dedupeIds(computeNodesWithMatchingStroke(state.doc, refId)).filter(
-          (id) => id in state.doc.nodes,
+          (id) => id in state.doc.nodes && isNodeInIsolation(state.doc, id, state.isolationPath),
         );
         clearMissingKeyObject(state);
       }),
@@ -1648,7 +1701,11 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
   addToSelection: (id) => {
     set(
       produce((state: EditorStore) => {
-        if (id in state.doc.nodes && !state.selection.includes(id)) {
+        if (
+          id in state.doc.nodes &&
+          isNodeInIsolation(state.doc, id, state.isolationPath) &&
+          !state.selection.includes(id)
+        ) {
           state.selection.push(id);
         }
       }),
@@ -1658,6 +1715,41 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
   clearSelection: () => {
     set(
       produce((state: EditorStore) => {
+        state.selection = [];
+        state.keyObjectId = null;
+      }),
+    );
+  },
+
+  enterIsolation: (groupId) => {
+    set(
+      produce((state: EditorStore) => {
+        sanitizeIsolation(state);
+        const group = state.doc.nodes[groupId];
+        const activeId = getActiveIsolationId(state.isolationPath);
+        if (
+          group?.type !== "group" ||
+          groupId === activeId ||
+          (activeId !== null && !isNodeDescendantOf(state.doc, groupId, activeId))
+        ) {
+          return;
+        }
+
+        state.isolationPath.push(groupId);
+        state.selection = [];
+        state.keyObjectId = null;
+      }),
+    );
+  },
+
+  exitIsolation: () => {
+    set(
+      produce((state: EditorStore) => {
+        sanitizeIsolation(state);
+        if (state.isolationPath.length === 0) {
+          return;
+        }
+        state.isolationPath.pop();
         state.selection = [];
         state.keyObjectId = null;
       }),
@@ -1869,6 +1961,7 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
       produce((state: EditorStore) => {
         state.doc = normalizeDocument(doc);
         state.selection = [];
+        state.isolationPath = [];
         state.keyObjectId = null;
         state.history = createHistory<Document>();
       }),
@@ -1892,7 +1985,7 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
         state.doc = step.snapshot;
         preserveActiveArtboard(state.doc, activeArtboardId);
         state.selection = state.selection.filter((id) => id in state.doc.nodes);
-        clearMissingKeyObject(state);
+        sanitizeIsolation(state);
       }),
     );
   },
@@ -1914,7 +2007,7 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
         state.doc = step.snapshot;
         preserveActiveArtboard(state.doc, activeArtboardId);
         state.selection = state.selection.filter((id) => id in state.doc.nodes);
-        clearMissingKeyObject(state);
+        sanitizeIsolation(state);
       }),
     );
   },
