@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useEditorStore } from "../state/store";
+import { useEditorStore, type AlignReference } from "../state/store";
 import type { AlignEdge, DistributeAxis } from "../state/operations";
 import "./AlignPanel.css";
 
@@ -40,8 +40,11 @@ const distributeActions: DistributeAction[] = [
 
 export function AlignPanel() {
   const [gap, setGap] = useState(0);
+  const [reference, setReference] = useState<AlignReference>("selection");
   const selection = useEditorStore((state) => state.selection);
   const nodes = useEditorStore((state) => state.doc.nodes);
+  const artboards = useEditorStore((state) => state.doc.artboards);
+  const activeArtboardId = useEditorStore((state) => state.doc.activeArtboardId);
   const keyObjectId = useEditorStore((state) => state.keyObjectId);
   const alignNodes = useEditorStore((state) => state.alignNodes);
   const distributeNodes = useEditorStore((state) => state.distributeNodes);
@@ -55,9 +58,15 @@ export function AlignPanel() {
 
   const selectionCount = selection.length;
   const selectedNode = selectionCount === 1 ? nodes[selection[0]!] : undefined;
-  const canAlign = selectionCount >= 2;
-  const canDistribute = selectionCount >= 3;
-  const canDistributeByGap = canAlign;
+  const activeArtboard = artboards?.find((artboard) => artboard.id === activeArtboardId);
+  const isArtboardReference = reference === "artboard";
+  const canAlign = isArtboardReference
+    ? selectionCount >= 1 && activeArtboard !== undefined
+    : selectionCount >= 2;
+  const canDistribute = isArtboardReference
+    ? selectionCount >= 2 && activeArtboard !== undefined
+    : selectionCount >= 3;
+  const canDistributeByGap = selectionCount >= 2;
   const canArrange = selectionCount >= 1;
   const canToggleClipMask = selectionCount >= 2 || selectedNode?.type === "group";
   const activeKeyObjectId = keyObjectId !== null && selection.includes(keyObjectId) ? keyObjectId : "";
@@ -74,9 +83,22 @@ export function AlignPanel() {
         <h3 id="align-panel-align-heading" className="align-panel__group-title">
           ALIGN
         </h3>
-        {canAlign ? (
+        <label className="align-panel__reference">
+          <span className="align-panel__reference-label">Reference</span>
+          <select
+            className="align-panel__reference-select"
+            value={reference}
+            onChange={(event) => setReference(event.target.value as AlignReference)}
+          >
+            <option value="selection">Selection</option>
+            <option value="artboard" disabled={!activeArtboard}>
+              {activeArtboard ? `Artboard (${activeArtboard.name})` : "Artboard (unavailable)"}
+            </option>
+          </select>
+        </label>
+        {!isArtboardReference && selectionCount >= 2 ? (
           <label className="align-panel__key-object">
-            <span className="align-panel__key-object-label">Align to</span>
+            <span className="align-panel__key-object-label">Key object</span>
             <select
               className="align-panel__key-object-select"
               value={activeKeyObjectId}
@@ -104,7 +126,7 @@ export function AlignPanel() {
               className="align-panel__button"
               title={item.title}
               disabled={!canAlign}
-              onClick={() => alignNodes(item.edge)}
+              onClick={() => alignNodes(item.edge, reference)}
             >
               <span className="align-panel__button-icon" aria-hidden="true">
                 {item.icon}
@@ -127,7 +149,7 @@ export function AlignPanel() {
               className="align-panel__button"
               title={item.title}
               disabled={!canDistribute}
-              onClick={() => distributeNodes(item.axis)}
+              onClick={() => distributeNodes(item.axis, reference)}
             >
               <span className="align-panel__button-icon" aria-hidden="true">
                 {item.icon}

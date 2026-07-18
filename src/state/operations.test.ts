@@ -497,6 +497,32 @@ describe("selection operations", () => {
     expect(patches[bottom.id]).toBeUndefined();
   });
 
+  it("aligns a single node to every edge and center of explicit reference bounds", () => {
+    const doc = createDocument();
+    const rect = createRect(20, 30, 10, 20);
+    addToFirstLayer(doc, [rect]);
+    const referenceBounds = { minX: 0, minY: 0, maxX: 100, maxY: 100 };
+
+    expect(alignNodes(doc, [rect.id], "left", null, referenceBounds)).toEqual({
+      [rect.id]: { e: 0, f: 30 },
+    });
+    expect(alignNodes(doc, [rect.id], "hcenter", null, referenceBounds)).toEqual({
+      [rect.id]: { e: 45, f: 30 },
+    });
+    expect(alignNodes(doc, [rect.id], "right", null, referenceBounds)).toEqual({
+      [rect.id]: { e: 90, f: 30 },
+    });
+    expect(alignNodes(doc, [rect.id], "top", null, referenceBounds)).toEqual({
+      [rect.id]: { e: 20, f: 0 },
+    });
+    expect(alignNodes(doc, [rect.id], "vcenter", null, referenceBounds)).toEqual({
+      [rect.id]: { e: 20, f: 40 },
+    });
+    expect(alignNodes(doc, [rect.id], "bottom", null, referenceBounds)).toEqual({
+      [rect.id]: { e: 20, f: 80 },
+    });
+  });
+
   it("aligns selected groups from descendant bounds and moves their children", () => {
     const doc = createDocument();
     const anchor = createRect(0, 0, 10, 10);
@@ -526,6 +552,31 @@ describe("selection operations", () => {
     expect(patches[first.id]).toBeUndefined();
     expect(patches[middle.id]).toEqual({ e: 50, f: 0 });
     expect(patches[last.id]).toBeUndefined();
+  });
+
+  it("distributes two nodes across explicit reference bounds while keeping them inside", () => {
+    const doc = createDocument();
+    const first = createRect(30, 10, 10, 10);
+    const last = createRect(60, 20, 20, 10);
+    addToFirstLayer(doc, [first, last]);
+
+    const horizontalPatches = distributeNodes(
+      doc,
+      [first.id, last.id],
+      "horizontal",
+      { minX: 0, minY: 0, maxX: 100, maxY: 80 },
+    );
+    const verticalPatches = distributeNodes(
+      doc,
+      [first.id, last.id],
+      "vertical",
+      { minX: 0, minY: 0, maxX: 100, maxY: 80 },
+    );
+
+    expect(horizontalPatches[first.id]).toEqual({ e: 0, f: 10 });
+    expect(horizontalPatches[last.id]).toEqual({ e: 80, f: 20 });
+    expect(verticalPatches[first.id]).toEqual({ e: 30, f: 0 });
+    expect(verticalPatches[last.id]).toEqual({ e: 60, f: 70 });
   });
 
   it("distributes nodes horizontally by an exact positive gap and leaves the first node fixed", () => {
@@ -990,6 +1041,32 @@ describe("selection operations", () => {
 describe("editorStore selection operation actions", () => {
   beforeEach(() => {
     resetStore();
+  });
+
+  it("aligns one selected node to the active artboard and undoes the move", () => {
+    const rect = createRect(30, 40, 10, 20);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState((state) => ({
+      doc: {
+        ...state.doc,
+        artboards: [
+          { id: "inactive-artboard", name: "Inactive", x: 0, y: 0, width: 100, height: 100 },
+          { id: "active-artboard", name: "Active", x: 20, y: 10, width: 200, height: 120 },
+        ],
+        activeArtboardId: "active-artboard",
+      },
+    }));
+    const historyDepth = editorStore.getState().history.past.length;
+
+    editorStore.getState().alignNodes("right", "artboard");
+
+    expect(editorStore.getState().doc.nodes[rect.id]?.transform.e).toBe(210);
+    expect(editorStore.getState().history.past).toHaveLength(historyDepth + 1);
+
+    editorStore.getState().undo();
+
+    expect(editorStore.getState().doc.nodes[rect.id]?.transform.e).toBe(30);
   });
 
   it("copies selection into clipboard without pushing document history", () => {

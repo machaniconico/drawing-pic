@@ -386,19 +386,24 @@ export const alignNodes = (
   ids: readonly NodeId[],
   edge: AlignEdge,
   keyId?: NodeId | null,
+  referenceBounds?: BBox,
 ): TransformPatchMap => {
   const targets = usableBounds(doc, topLevelNodeIds(doc, ids));
   if (targets.length === 0) {
     return {};
   }
 
-  const keyTarget = keyId ? targets.find(({ id }) => id === keyId) : undefined;
-  const referenceBounds = keyTarget?.bounds ?? unionAll(targets.map(({ bounds }) => bounds));
-  if (isEmpty(referenceBounds)) {
+  const keyTarget = referenceBounds === undefined && keyId
+    ? targets.find(({ id }) => id === keyId)
+    : undefined;
+  const resolvedReferenceBounds = referenceBounds
+    ?? keyTarget?.bounds
+    ?? unionAll(targets.map(({ bounds }) => bounds));
+  if (isEmpty(resolvedReferenceBounds)) {
     return {};
   }
 
-  const referenceCenter = center(referenceBounds);
+  const referenceCenter = center(resolvedReferenceBounds);
   const patches: TransformPatchMap = {};
 
   for (const { id, bounds } of targets) {
@@ -409,22 +414,22 @@ export const alignNodes = (
     const boundsCenter = center(bounds);
     switch (edge) {
       case "left":
-        patchWithDelta(doc, id, referenceBounds.minX - bounds.minX, 0, patches);
+        patchWithDelta(doc, id, resolvedReferenceBounds.minX - bounds.minX, 0, patches);
         break;
       case "hcenter":
         patchWithDelta(doc, id, referenceCenter.x - boundsCenter.x, 0, patches);
         break;
       case "right":
-        patchWithDelta(doc, id, referenceBounds.maxX - bounds.maxX, 0, patches);
+        patchWithDelta(doc, id, resolvedReferenceBounds.maxX - bounds.maxX, 0, patches);
         break;
       case "top":
-        patchWithDelta(doc, id, 0, referenceBounds.minY - bounds.minY, patches);
+        patchWithDelta(doc, id, 0, resolvedReferenceBounds.minY - bounds.minY, patches);
         break;
       case "vcenter":
         patchWithDelta(doc, id, 0, referenceCenter.y - boundsCenter.y, patches);
         break;
       case "bottom":
-        patchWithDelta(doc, id, 0, referenceBounds.maxY - bounds.maxY, patches);
+        patchWithDelta(doc, id, 0, resolvedReferenceBounds.maxY - bounds.maxY, patches);
         break;
     }
   }
@@ -436,9 +441,11 @@ export const distributeNodes = (
   doc: Document,
   ids: readonly NodeId[],
   axis: DistributeAxis,
+  referenceBounds?: BBox,
 ): TransformPatchMap => {
   const targets = usableBounds(doc, topLevelNodeIds(doc, ids));
-  if (targets.length < 3) {
+  const minimumTargets = referenceBounds === undefined ? 3 : 2;
+  if (targets.length < minimumTargets || (referenceBounds && isEmpty(referenceBounds))) {
     return {};
   }
 
@@ -448,14 +455,26 @@ export const distributeNodes = (
     return axis === "horizontal" ? aCenter.x - bCenter.x : aCenter.y - bCenter.y;
   });
 
-  const firstCenter = center(sorted[0]!.bounds);
-  const lastCenter = center(sorted[sorted.length - 1]!.bounds);
-  const start = axis === "horizontal" ? firstCenter.x : firstCenter.y;
-  const end = axis === "horizontal" ? lastCenter.x : lastCenter.y;
+  const firstBounds = sorted[0]!.bounds;
+  const lastBounds = sorted[sorted.length - 1]!.bounds;
+  const firstCenter = center(firstBounds);
+  const lastCenter = center(lastBounds);
+  const start = referenceBounds === undefined
+    ? axis === "horizontal" ? firstCenter.x : firstCenter.y
+    : axis === "horizontal"
+      ? referenceBounds.minX + width(firstBounds) / 2
+      : referenceBounds.minY + height(firstBounds) / 2;
+  const end = referenceBounds === undefined
+    ? axis === "horizontal" ? lastCenter.x : lastCenter.y
+    : axis === "horizontal"
+      ? referenceBounds.maxX - width(lastBounds) / 2
+      : referenceBounds.maxY - height(lastBounds) / 2;
   const interval = (end - start) / (sorted.length - 1);
   const patches: TransformPatchMap = {};
 
-  for (let index = 1; index < sorted.length - 1; index += 1) {
+  const firstIndex = referenceBounds === undefined ? 1 : 0;
+  const lastIndex = referenceBounds === undefined ? sorted.length - 1 : sorted.length;
+  for (let index = firstIndex; index < lastIndex; index += 1) {
     const target = sorted[index]!;
     const currentCenter = center(target.bounds);
     const targetCenter = start + interval * index;
