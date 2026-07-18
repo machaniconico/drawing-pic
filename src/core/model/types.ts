@@ -161,6 +161,11 @@ export interface ImageNode extends NodeBase {
   height: number;
 }
 
+export interface SymbolInstanceNode extends NodeBase {
+  type: "symbol-instance";
+  symbolId: NodeId;
+}
+
 export interface GroupNode extends NodeBase {
   type: "group";
   children: NodeId[];
@@ -173,11 +178,17 @@ export interface LayerNode extends NodeBase {
   children: NodeId[];
 }
 
-export type ShapeNode = PathNode | RectNode | EllipseNode | TextNode | ImageNode;
+export type ShapeNode = PathNode | RectNode | EllipseNode | TextNode | ImageNode | SymbolInstanceNode;
 export type ContainerNode = LayerNode | GroupNode;
-export type SceneNode = ShapeNode | ContainerNode;
+/** Full node union used by detached definition graphs. */
+export type DefinitionNode = ShapeNode | ContainerNode;
+/**
+ * Nodes known to legacy scene consumers. Symbol instances are stored in this map at runtime,
+ * but are intentionally opaque here so existing exhaustive consumers remain source-compatible.
+ */
+export type SceneNode = Exclude<ShapeNode, SymbolInstanceNode> | ContainerNode;
 
-export type NodeType = SceneNode["type"];
+export type NodeType = DefinitionNode["type"];
 
 export interface Artboard {
   id: NodeId;
@@ -186,6 +197,13 @@ export interface Artboard {
   y: number;
   width: number;
   height: number;
+}
+
+export interface SymbolDefinition {
+  id: NodeId;
+  name: string;
+  /** Definition-local, self-contained node graph. Root nodes are those not referenced by a container. */
+  nodes: DefinitionNode[];
 }
 
 // ─────────────────────────────────────────────
@@ -212,18 +230,25 @@ export interface Document {
   layerOrder: NodeId[];
   guides: Guide[];
   nodes: Record<NodeId, SceneNode>;
+  /** Optional on legacy in-memory documents; loaders normalize it to an empty record. */
+  symbols?: Record<NodeId, SymbolDefinition>;
 }
 
 /** 型ガード群 */
-export const isContainer = (n: SceneNode): n is ContainerNode =>
+export const isContainer = (n: DefinitionNode): n is ContainerNode =>
   n.type === "layer" || n.type === "group";
 
-export const isShape = (n: SceneNode): n is ShapeNode =>
+export const isShape = (n: DefinitionNode): n is ShapeNode =>
   n.type === "path" ||
   n.type === "rect" ||
   n.type === "ellipse" ||
   n.type === "text" ||
-  n.type === "image";
+  n.type === "image" ||
+  n.type === "symbol-instance";
 
-export const hasStyle = (n: SceneNode): n is PathNode | RectNode | EllipseNode | TextNode =>
+export const hasStyle = (n: DefinitionNode): n is PathNode | RectNode | EllipseNode | TextNode =>
   n.type === "path" || n.type === "rect" || n.type === "ellipse" || n.type === "text";
+
+/** Recover the runtime-only symbol branch from a legacy scene-map value. */
+export const asSymbolInstance = (n: SceneNode | DefinitionNode): SymbolInstanceNode | null =>
+  (n as { type: string }).type === "symbol-instance" ? n as SymbolInstanceNode : null;

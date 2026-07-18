@@ -1,9 +1,10 @@
 import { isEmpty, transform as transformBBox, unionAll, type BBox } from "../core/geometry/bbox";
 import { invert, toCanvasArgs } from "../core/geometry/matrix";
 import type { Vec2 } from "../core/geometry/vector";
-import { localBounds } from "../core/model/bounds";
+import { localBounds, symbolDefinitionBounds } from "../core/model/bounds";
 import type {
   Document,
+  DefinitionNode,
   EllipseNode,
   ImageNode,
   Paint,
@@ -351,7 +352,10 @@ const drawImage = (
   ctx.drawImage(entry.image, 0, 0, node.width, node.height);
 };
 
-const maskFallbackBounds = (doc: Document, node: SceneNode): BBox => {
+const maskFallbackBounds = (doc: Document, node: DefinitionNode): BBox => {
+  if (node.type === "symbol-instance") {
+    return symbolDefinitionBounds(doc, node.symbolId);
+  }
   if (node.type !== "group" && node.type !== "layer") {
     return localBounds(node);
   }
@@ -368,7 +372,7 @@ const maskFallbackBounds = (doc: Document, node: SceneNode): BBox => {
 const buildClipMaskPath = (
   ctx: CanvasRenderingContext2D,
   doc: Document,
-  mask: SceneNode,
+  mask: DefinitionNode,
 ): boolean => {
   switch (mask.type) {
     case "rect":
@@ -382,6 +386,7 @@ const buildClipMaskPath = (
       return true;
     case "text":
     case "image":
+    case "symbol-instance":
     case "group":
     case "layer": {
       const bounds = maskFallbackBounds(doc, mask);
@@ -394,7 +399,7 @@ const buildClipMaskPath = (
   }
 };
 
-const applyNodeCompositing = (ctx: CanvasRenderingContext2D, node: SceneNode): void => {
+const applyNodeCompositing = (ctx: CanvasRenderingContext2D, node: DefinitionNode): void => {
   ctx.globalAlpha *= node.opacity;
   if ("blendMode" in node) {
     ctx.globalCompositeOperation = node.blendMode;
@@ -407,11 +412,13 @@ const drawChildNodes = (
   childIds: readonly string[],
   onImageLoad?: () => void,
   resolvePattern?: PatternPaintResolver,
+  resolvingSymbols: ReadonlySet<string> = new Set(),
+  renderingNodes: ReadonlySet<DefinitionNode> = new Set(),
 ): void => {
   for (const childId of childIds) {
     const child = doc.nodes[childId];
     if (child !== undefined) {
-      drawNode(ctx, doc, child, onImageLoad, resolvePattern);
+      drawNode(ctx, doc, child, onImageLoad, resolvePattern, false, resolvingSymbols, renderingNodes);
     }
   }
 };
@@ -419,16 +426,18 @@ const drawChildNodes = (
 const drawClippedGroup = (
   ctx: CanvasRenderingContext2D,
   doc: Document,
-  node: Extract<SceneNode, { type: "group" }>,
+  node: Extract<DefinitionNode, { type: "group" }>,
   onImageLoad?: () => void,
   resolvePattern?: PatternPaintResolver,
+  resolvingSymbols: ReadonlySet<string> = new Set(),
+  renderingNodes: ReadonlySet<DefinitionNode> = new Set(),
 ): void => {
   const maskId = node.children[node.children.length - 1];
   const mask = maskId === undefined ? undefined : doc.nodes[maskId];
   const clippedChildIds = node.children.slice(0, -1);
 
   if (mask === undefined) {
-    drawChildNodes(ctx, doc, clippedChildIds, onImageLoad, resolvePattern);
+    drawChildNodes(ctx, doc, clippedChildIds, onImageLoad, resolvePattern, resolvingSymbols, renderingNodes);
     return;
   }
 
@@ -437,7 +446,7 @@ const drawClippedGroup = (
 
   if (!buildClipMaskPath(ctx, doc, mask)) {
     ctx.restore();
-    drawChildNodes(ctx, doc, clippedChildIds, onImageLoad, resolvePattern);
+    drawChildNodes(ctx, doc, clippedChildIds, onImageLoad, resolvePattern, resolvingSymbols, renderingNodes);
     return;
   }
 
@@ -450,7 +459,7 @@ const drawClippedGroup = (
   }
 
   ctx.transform(...toCanvasArgs(inverseMaskTransform));
-  drawChildNodes(ctx, doc, clippedChildIds, onImageLoad, resolvePattern);
+  drawChildNodes(ctx, doc, clippedChildIds, onImageLoad, resolvePattern, resolvingSymbols, renderingNodes);
   ctx.restore();
 };
 
@@ -483,12 +492,17 @@ const pathToNode = (doc: Document, id: string): SceneNode[] | null => {
 const drawNode = (
   ctx: CanvasRenderingContext2D,
   doc: Document,
-  node: SceneNode,
+  node: DefinitionNode,
   onImageLoad?: () => void,
   resolvePattern?: PatternPaintResolver,
   ignoreNodeVisibility = false,
+  resolvingSymbols: ReadonlySet<string> = new Set(),
+  renderingNodes: ReadonlySet<DefinitionNode> = new Set(),
 ): void => {
+  if (renderingNodes.has(node)) return;
   if (!ignoreNodeVisibility && !node.visible) return;
+  const nextRenderingNodes = new Set(renderingNodes);
+  nextRenderingNodes.add(node);
 
   ctx.save();
   ctx.transform(...toCanvasArgs(node.transform));
@@ -496,13 +510,13 @@ const drawNode = (
 
   switch (node.type) {
     case "layer":
-      drawChildNodes(ctx, doc, node.children, onImageLoad, resolvePattern);
+      drawChildNodes(ctx, doc, node.children, onImageLoad, resolvePattern, resolvingSymbols, nextRenderingNodes);
       break;
     case "group":
       if (node.clip && node.children.length >= 2) {
-        drawClippedGroup(ctx, doc, node, onImageLoad, resolvePattern);
+        drawClippedGroup(ctx, doc, node, onImageLoad, resolvePattern, resolvingSymbols, nextRenderingNodes);
       } else {
-        drawChildNodes(ctx, doc, node.children, onImageLoad, resolvePattern);
+        drawChildNodes(ctx, doc, node.children, onImageLoad, resolvePattern, resolvingSymbols, nextRenderingNodes);
       }
       break;
     case "rect":
@@ -520,6 +534,38 @@ const drawNode = (
     case "image":
       drawImage(ctx, node, onImageLoad);
       break;
+    case "symbol-instance": {
+      const definition = doc.symbols?.[node.symbolId];
+      if (!definition || resolvingSymbols.has(node.symbolId)) break;
+      const childIds = new Set<string>();
+      for (const definitionNode of definition.nodes) {
+        if (definitionNode.type === "layer" || definitionNode.type === "group") {
+          definitionNode.children.forEach((id) => childIds.add(id));
+        }
+      }
+      const definitionDoc: Document = {
+        ...doc,
+        nodes: {
+          ...doc.nodes,
+          ...Object.fromEntries(definition.nodes.map((definitionNode) => [definitionNode.id, definitionNode])),
+        } as Document["nodes"],
+      };
+      const nextResolving = new Set(resolvingSymbols);
+      nextResolving.add(node.symbolId);
+      for (const root of definition.nodes.filter((definitionNode) => !childIds.has(definitionNode.id))) {
+        drawNode(
+          ctx,
+          definitionDoc,
+          root,
+          onImageLoad,
+          resolvePattern,
+          false,
+          nextResolving,
+          nextRenderingNodes,
+        );
+      }
+      break;
+    }
   }
 
   ctx.restore();

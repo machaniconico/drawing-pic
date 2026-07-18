@@ -8,15 +8,15 @@ import {
   createRect,
   defaultStroke,
 } from "../core/model/factory";
-import type { Document, NodeId, SceneNode } from "../core/model/types";
+import type { DefinitionNode, Document, NodeId, SceneNode } from "../core/model/types";
 import { editorStore } from "../state/store";
 import { deserializeDocument, serializeDocument } from "./docSerialize";
 import { documentToSvg } from "./svgExport";
 
 const firstLayerId = (doc: Document): NodeId => doc.layerOrder[0]!;
 
-const addNode = (doc: Document, node: SceneNode, parentId = firstLayerId(doc)): void => {
-  doc.nodes[node.id] = node;
+const addNode = (doc: Document, node: DefinitionNode, parentId = firstLayerId(doc)): void => {
+  doc.nodes[node.id] = node as SceneNode;
   const parent = doc.nodes[parentId];
   if (parent?.type === "layer" || parent?.type === "group") {
     parent.children.push(node.id);
@@ -25,6 +25,7 @@ const addNode = (doc: Document, node: SceneNode, parentId = firstLayerId(doc)): 
 
 const createRichDocument = (): Document => {
   const doc = createDocument(640, 480, "Persistence Test");
+  doc.symbols = {};
   doc.id = "doc_serialize_test";
   doc.artboards = [
     { id: "artboard_1", name: "Artboard 1", x: 0, y: 0, width: 640, height: 480 },
@@ -92,6 +93,60 @@ describe("docSerialize", () => {
     const doc = createRichDocument();
 
     expect(deserializeDocument(serializeDocument(doc))).toEqual(doc);
+  });
+
+  it("round-trips symbol definitions and instances", () => {
+    const doc = createRichDocument();
+    const symbolNode = createRect(0, 0, 32, 24);
+    symbolNode.id = "symbol_rect";
+    doc.symbols = {
+      symbol_badge: {
+        id: "symbol_badge",
+        name: "Badge",
+        nodes: [symbolNode],
+      },
+    };
+    addNode(doc, {
+      id: "badge_instance",
+      name: "Badge",
+      type: "symbol-instance",
+      symbolId: "symbol_badge",
+      transform: { ...IDENTITY, e: 120, f: 80 },
+      opacity: 1,
+      visible: true,
+      locked: false,
+    });
+
+    const serialized = serializeDocument(doc);
+    const result = deserializeDocument(serialized);
+
+    expect(result).toEqual(doc);
+    expect(serializeDocument(result)).toBe(serialized);
+  });
+
+  it("defaults legacy documents without symbols to an empty symbol map", () => {
+    const doc = createRichDocument();
+    delete doc.symbols;
+
+    expect(deserializeDocument(JSON.stringify({ version: 1, doc })).symbols).toEqual({});
+  });
+
+  it("rejects container child cycles inside symbol definitions", () => {
+    const doc = createRichDocument();
+    const first = createGroup("First", ["cycle_second"]);
+    first.id = "cycle_first";
+    const second = createGroup("Second", ["cycle_first"]);
+    second.id = "cycle_second";
+    doc.symbols = {
+      cyclic: {
+        id: "cyclic",
+        name: "Cyclic",
+        nodes: [first, second],
+      },
+    };
+
+    expect(() => serializeDocument(doc)).toThrow(/container child cycle/);
+    expect(() => deserializeDocument(JSON.stringify({ version: 1, doc }))).toThrow(/container child cycle/);
   });
 
   it("round-trips pattern paints byte-for-byte with stable key order", () => {

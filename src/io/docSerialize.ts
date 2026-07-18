@@ -1,13 +1,14 @@
 import type {
   Anchor,
   Artboard,
+  DefinitionNode,
   Document,
   Guide,
   GradientStop,
   Paint,
-  SceneNode,
   Stroke,
   SubPath,
+  SymbolDefinition,
 } from "../core/model/types";
 
 const DOC_FORMAT_VERSION = 1;
@@ -324,9 +325,66 @@ const validateSceneNode = (value: unknown, path: string): void => {
       requireNumber(node.width, `${path}.width`);
       requireNumber(node.height, `${path}.height`);
       return;
+    case "symbol-instance":
+      validateNodeBase(node, path);
+      requireString(node.symbolId, `${path}.symbolId`);
+      return;
     default:
       throw new Error(`${path}.type has unsupported node type "${type}".`);
   }
+};
+
+const assertAcyclicDefinitionGraph = (nodes: readonly DefinitionNode[], path: string): void => {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+
+  const visit = (id: string): void => {
+    if (visiting.has(id)) {
+      throw new Error(`${path} contains a container child cycle at "${id}".`);
+    }
+    if (visited.has(id)) return;
+    const node = byId.get(id);
+    if (!node) return;
+    visiting.add(id);
+    if (node.type === "layer" || node.type === "group") {
+      node.children.forEach(visit);
+    }
+    visiting.delete(id);
+    visited.add(id);
+  };
+
+  nodes.forEach((node) => visit(node.id));
+};
+
+const validateSymbols = (value: unknown, path: string): Record<string, SymbolDefinition> => {
+  const symbols = requireObject(value, path);
+  const result: Record<string, SymbolDefinition> = {};
+  for (const [id, value] of Object.entries(symbols)) {
+    const symbol = requireObject(value, `${path}.${id}`);
+    const symbolId = requireString(symbol.id, `${path}.${id}.id`);
+    if (symbolId !== id) throw new Error(`${path}.${id}.id must match its symbols map key.`);
+    const name = requireString(symbol.name, `${path}.${id}.name`);
+    if (!Array.isArray(symbol.nodes)) throw new Error(`${path}.${id}.nodes must be an array.`);
+    symbol.nodes.forEach((node, index) => validateSceneNode(node, `${path}.${id}.nodes[${index}]`));
+    const definitionNodes = symbol.nodes as DefinitionNode[];
+    const nodeIds = new Set(definitionNodes.map((node) => node.id));
+    if (nodeIds.size !== definitionNodes.length) {
+      throw new Error(`${path}.${id}.nodes ids must be unique.`);
+    }
+    for (const node of definitionNodes) {
+      if (node.type === "layer" || node.type === "group") {
+        for (const childId of node.children) {
+          if (!nodeIds.has(childId)) {
+            throw new Error(`${path}.${id}.nodes container references missing node "${childId}".`);
+          }
+        }
+      }
+    }
+    assertAcyclicDefinitionGraph(definitionNodes, `${path}.${id}.nodes`);
+    result[id] = { id, name, nodes: definitionNodes };
+  }
+  return result;
 };
 
 const validateDocument = (value: unknown): Document => {
@@ -349,6 +407,7 @@ const validateDocument = (value: unknown): Document => {
   }
   const layerOrder = requireStringArray(doc.layerOrder, "doc.layerOrder");
   const guides = validateGuides("guides" in doc ? doc.guides : [], "doc.guides");
+  const symbols = validateSymbols("symbols" in doc ? doc.symbols : {}, "doc.symbols");
 
   const nodes = requireObject(doc.nodes, "doc.nodes");
   for (const [id, node] of Object.entries(nodes)) {
@@ -357,6 +416,20 @@ const validateDocument = (value: unknown): Document => {
     if (nodeObject.id !== id) {
       throw new Error(`doc.nodes.${id}.id must match its nodes map key.`);
     }
+  }
+
+  const validateSymbolReference = (node: JsonObject, path: string): void => {
+    if (node.type === "symbol-instance") {
+      const symbolId = node.symbolId as string;
+      if (!(symbolId in symbols)) throw new Error(`${path}.symbolId references missing symbol "${symbolId}".`);
+    }
+  };
+  for (const [id, node] of Object.entries(nodes)) {
+    if (isObject(node)) validateSymbolReference(node, `doc.nodes.${id}`);
+  }
+  for (const [symbolId, definition] of Object.entries(symbols)) {
+    definition.nodes.forEach((node, index) =>
+      validateSymbolReference(node as unknown as JsonObject, `doc.symbols.${symbolId}.nodes[${index}]`));
   }
 
   for (const layerId of layerOrder) {
@@ -390,6 +463,7 @@ const validateDocument = (value: unknown): Document => {
     artboards,
     activeArtboardId,
     guides,
+    symbols,
   } as unknown as Document;
 };
 
@@ -473,7 +547,7 @@ const orderSubpath = (subpath: SubPath): SubPath => ({
   closed: subpath.closed,
 });
 
-const orderNodeBase = (node: SceneNode) => ({
+const orderNodeBase = (node: DefinitionNode) => ({
   id: node.id,
   name: node.name,
   transform: node.transform,
@@ -482,7 +556,7 @@ const orderNodeBase = (node: SceneNode) => ({
   locked: node.locked,
 });
 
-const orderSceneNode = (node: SceneNode): SceneNode => {
+const orderSceneNode = (node: DefinitionNode): DefinitionNode => {
   switch (node.type) {
     case "layer":
       return {
@@ -552,6 +626,12 @@ const orderSceneNode = (node: SceneNode): SceneNode => {
         width: node.width,
         height: node.height,
       };
+    case "symbol-instance":
+      return {
+        ...orderNodeBase(node),
+        type: "symbol-instance",
+        symbolId: node.symbolId,
+      };
   }
 };
 
@@ -570,6 +650,9 @@ const orderDocument = (doc: Document): Document => {
     ? doc.activeArtboardId
     : artboards[0]!.id;
   const activeArtboard = artboards.find((artboard) => artboard.id === activeArtboardId)!;
+  for (const [id, symbol] of Object.entries(doc.symbols ?? {})) {
+    assertAcyclicDefinitionGraph(symbol.nodes, `doc.symbols.${id}.nodes`);
+  }
   const result: Document = {
     id: doc.id,
     name: doc.name,
@@ -584,7 +667,23 @@ const orderDocument = (doc: Document): Document => {
       Object.keys(doc.nodes)
         .sort()
         .map((id) => [id, orderSceneNode(doc.nodes[id]!)]),
-    ),
+    ) as Document["nodes"],
+    ...(doc.symbols && Object.keys(doc.symbols).length > 0
+      ? {
+          symbols: Object.fromEntries(
+            Object.keys(doc.symbols)
+              .sort()
+              .map((id) => {
+                const symbol = doc.symbols![id]!;
+                return [id, {
+                  id: symbol.id,
+                  name: symbol.name,
+                  nodes: symbol.nodes.map(orderSceneNode),
+                }];
+              }),
+          ),
+        }
+      : {}),
   };
 
   return result;
