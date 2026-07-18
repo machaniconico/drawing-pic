@@ -4,7 +4,7 @@ import { createStore } from "zustand/vanilla";
 import { offsetSubPaths } from "../core/geometry/offsetPath";
 import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
 import type { BBox } from "../core/geometry/bbox";
-import { apply, compose, invert } from "../core/geometry/matrix";
+import { apply, applyVector, compose, invert } from "../core/geometry/matrix";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { PathfinderOp } from "../core/geometry/pathfinder";
 import { shapeBuilderFromRegions, type ShapeBuilderMode } from "../core/geometry/shapeBuilder";
@@ -111,6 +111,11 @@ export interface SnapSettings {
   gridSize: number;
 }
 
+export interface RecentDuplicate {
+  selection: NodeId[];
+  delta: Vec2;
+}
+
 export interface EditorState {
   doc: Document;
   selection: NodeId[];
@@ -123,6 +128,7 @@ export interface EditorState {
   swatches: Swatch[];
   history: History<Document>;
   clipboard: SceneNode[];
+  recentDuplicate: RecentDuplicate | null;
 }
 
 export interface EditorActions {
@@ -161,6 +167,8 @@ export interface EditorActions {
   paste: () => void;
   pasteInPlace: () => void;
   duplicateSelection: () => void;
+  recordDuplicateDelta: (dx: number, dy: number) => void;
+  repeatDuplicate: () => void;
   reorderNode: (dragId: NodeId, targetId: NodeId, position: LayerDropPosition) => void;
   addGuide: (axis: "x" | "y", position: number) => NodeId | null;
   moveGuide: (id: NodeId, position: number) => void;
@@ -237,6 +245,7 @@ const initialState = (): EditorState => {
     swatches: loadSwatches(),
     history: createHistory<Document>(),
     clipboard: [],
+    recentDuplicate: null,
   };
 };
 
@@ -388,6 +397,9 @@ const applyGroupSelectionResult = (doc: Document, result: GroupSelectionResult):
     parent.children = [...result.order];
   }
 };
+
+const selectionsEqual = (left: readonly NodeId[], right: readonly NodeId[]): boolean =>
+  left.length === right.length && left.every((id, index) => id === right[index]);
 
 const applyUngroupSelectionResults = (doc: Document, results: readonly UngroupSelectionResult[]): NodeId[] => {
   const liftedIds: NodeId[] = [];
@@ -877,12 +889,28 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
           continue;
         }
 
+        const parent = findNodeParent(state.doc, id);
+        const parentInverse = invert(parentWorldTransform(state.doc, parent?.parentId ?? null));
+        const localDelta = parentInverse === null
+          ? { x: dx, y: dy }
+          : applyVector(parentInverse, { x: dx, y: dy });
+
         node.transform = {
           ...node.transform,
-          e: node.transform.e + dx,
-          f: node.transform.f + dy,
+          e: node.transform.e + localDelta.x,
+          f: node.transform.f + localDelta.y,
         };
         moved = true;
+      }
+
+      if (moved && state.recentDuplicate !== null && selectionsEqual(
+        state.selection,
+        state.recentDuplicate.selection,
+      )) {
+        state.recentDuplicate.delta = {
+          x: state.recentDuplicate.delta.x + dx,
+          y: state.recentDuplicate.delta.y + dy,
+        };
       }
       return moved;
     });
@@ -1407,8 +1435,61 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
 
       state.selection = duplicatedRootIds;
       clearMissingKeyObject(state);
+      if (duplicatedRootIds.length > 0) {
+        state.recentDuplicate = {
+          selection: [...duplicatedRootIds],
+          delta: { x: 0, y: 0 },
+        };
+      }
       return duplicatedRootIds.length > 0;
     });
+  },
+
+  recordDuplicateDelta: (dx, dy) => {
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) {
+      return;
+    }
+
+    set(
+      produce((state: EditorStore) => {
+        if (
+          state.recentDuplicate === null ||
+          !selectionsEqual(state.selection, state.recentDuplicate.selection)
+        ) {
+          return;
+        }
+
+        state.recentDuplicate.delta = {
+          x: state.recentDuplicate.delta.x + dx,
+          y: state.recentDuplicate.delta.y + dy,
+        };
+      }),
+    );
+  },
+
+  repeatDuplicate: () => {
+    const before = get();
+    if (
+      before.recentDuplicate === null ||
+      !selectionsEqual(before.selection, before.recentDuplicate.selection)
+    ) {
+      before.duplicateSelection();
+      return;
+    }
+
+    const delta = { ...before.recentDuplicate.delta };
+    before.duplicateSelection();
+    const afterDuplicate = get();
+    if (selectionsEqual(afterDuplicate.selection, before.selection)) {
+      return;
+    }
+
+    if (delta.x === 0 && delta.y === 0) {
+      return;
+    }
+
+    afterDuplicate.moveSelection(delta.x, delta.y);
+    set({ history: afterDuplicate.history });
   },
 
   reorderNode: (dragId, targetId, position) => {
@@ -1964,6 +2045,7 @@ export const editorStore = createStore<EditorStore>()((set, get) => ({
         state.isolationPath = [];
         state.keyObjectId = null;
         state.history = createHistory<Document>();
+        state.recentDuplicate = null;
       }),
     );
   },

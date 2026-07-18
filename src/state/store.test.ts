@@ -249,6 +249,115 @@ describe("editorStore", () => {
     expect(editorStore.getState().keyObjectId).toBeNull();
   });
 
+  it("repeats a duplicate with its accumulated move delta in one undo step", () => {
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    editorStore.setState({ history: createHistory<Document>() });
+
+    editorStore.getState().duplicateSelection();
+    editorStore.getState().moveSelection(5, 3);
+    editorStore.getState().moveSelection(3, -1);
+
+    expect(editorStore.getState().recentDuplicate?.delta).toEqual({ x: 8, y: 2 });
+    const firstDuplicateId = editorStore.getState().selection[0]!;
+    expect(editorStore.getState().doc.nodes[firstDuplicateId]?.transform.e).toBe(20);
+    expect(editorStore.getState().doc.nodes[firstDuplicateId]?.transform.f).toBe(14);
+
+    const historyDepthBeforeRepeat = editorStore.getState().history.past.length;
+    editorStore.getState().repeatDuplicate();
+
+    const secondDuplicateId = editorStore.getState().selection[0]!;
+    expect(editorStore.getState().doc.nodes[secondDuplicateId]?.transform.e).toBe(40);
+    expect(editorStore.getState().doc.nodes[secondDuplicateId]?.transform.f).toBe(28);
+    expect(editorStore.getState().history.past).toHaveLength(historyDepthBeforeRepeat + 1);
+
+    editorStore.getState().repeatDuplicate();
+    const thirdDuplicateId = editorStore.getState().selection[0]!;
+    expect(editorStore.getState().doc.nodes[thirdDuplicateId]?.transform.e).toBe(60);
+    expect(editorStore.getState().doc.nodes[thirdDuplicateId]?.transform.f).toBe(42);
+
+    editorStore.getState().undo();
+    expect(editorStore.getState().doc.nodes[thirdDuplicateId]).toBeUndefined();
+    expect(editorStore.getState().doc.nodes[secondDuplicateId]).toBeDefined();
+  });
+
+  it("uses a normal duplicate when no repeat delta has been established", () => {
+    const rect = createRect(4, 6, 10, 10);
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+
+    editorStore.getState().repeatDuplicate();
+
+    const duplicateId = editorStore.getState().selection[0]!;
+    expect(duplicateId).not.toBe(rect.id);
+    expect(editorStore.getState().doc.nodes[duplicateId]?.transform.e).toBe(16);
+    expect(editorStore.getState().doc.nodes[duplicateId]?.transform.f).toBe(18);
+    expect(editorStore.getState().recentDuplicate?.delta).toEqual({ x: 0, y: 0 });
+  });
+
+  it("repeats a dragged world-space delta inside a transformed parent", () => {
+    const group = createGroup("Rotated scaled group");
+    group.transform = { a: 0, b: 2, c: -2, d: 0, e: 0, f: 0 };
+    const rect = createRect(0, 0, 10, 10);
+    editorStore.getState().addNode(group);
+    editorStore.getState().addNode(rect, group.id);
+    editorStore.getState().setSelection([rect.id]);
+
+    editorStore.getState().duplicateSelection();
+    editorStore.getState().moveSelection(10, 0);
+    const firstDuplicateId = editorStore.getState().selection[0]!;
+    expect(editorStore.getState().doc.nodes[firstDuplicateId]?.transform.e).toBeCloseTo(12);
+    expect(editorStore.getState().doc.nodes[firstDuplicateId]?.transform.f).toBeCloseTo(7);
+
+    editorStore.getState().repeatDuplicate();
+    const secondDuplicateId = editorStore.getState().selection[0]!;
+    expect(editorStore.getState().doc.nodes[secondDuplicateId]?.transform.e).toBeCloseTo(24);
+    expect(editorStore.getState().doc.nodes[secondDuplicateId]?.transform.f).toBeCloseTo(14);
+  });
+
+  it("moves a transformed top-level node along the requested world-space axis", () => {
+    const rect = createRect(40, 30, 10, 10);
+    rect.transform = { a: 0, b: 2, c: -2, d: 0, e: 40, f: 30 };
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+
+    editorStore.getState().moveSelection(10, 0);
+
+    expect(editorStore.getState().doc.nodes[rect.id]?.transform.e).toBeCloseTo(50);
+    expect(editorStore.getState().doc.nodes[rect.id]?.transform.f).toBeCloseTo(30);
+  });
+
+  it("repeats equal world-space spacing for a transformed top-level node", () => {
+    const rect = createRect(0, 0, 10, 10);
+    rect.transform = { a: 0, b: 2, c: -2, d: 0, e: 0, f: 0 };
+    editorStore.getState().addNode(rect);
+    editorStore.getState().setSelection([rect.id]);
+    const originalBounds = selectionBounds(editorStore.getState().doc, [rect.id]);
+
+    editorStore.getState().duplicateSelection();
+    editorStore.getState().moveSelection(10, 0);
+    const firstDuplicateId = editorStore.getState().selection[0]!;
+    const firstBounds = selectionBounds(editorStore.getState().doc, [firstDuplicateId]);
+
+    editorStore.getState().repeatDuplicate();
+    const secondDuplicateId = editorStore.getState().selection[0]!;
+    const secondBounds = selectionBounds(editorStore.getState().doc, [secondDuplicateId]);
+
+    const firstSpacing = {
+      x: firstBounds.minX - originalBounds.minX,
+      y: firstBounds.minY - originalBounds.minY,
+    };
+    const secondSpacing = {
+      x: secondBounds.minX - firstBounds.minX,
+      y: secondBounds.minY - firstBounds.minY,
+    };
+    expect(firstSpacing.x).toBeCloseTo(22);
+    expect(firstSpacing.y).toBeCloseTo(12);
+    expect(secondSpacing.x).toBeCloseTo(firstSpacing.x);
+    expect(secondSpacing.y).toBeCloseTo(firstSpacing.y);
+  });
+
   it("defaults snap and grid editor state to current behavior", () => {
     expect(editorStore.getState().snapSettings).toEqual({
       enabled: true,
