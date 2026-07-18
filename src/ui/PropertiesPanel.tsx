@@ -16,7 +16,7 @@ import { nodeRotationAngle } from "../state/operations";
 import { getSelectedNodes } from "../state/selectors";
 import { useEditorStore } from "../state/store";
 import { ColorPicker } from "./ColorPicker";
-import { hexToRgba, rgbaToHex } from "./colorConvert";
+import { rgbaToHex } from "./colorConvert";
 import { linearGradientAngle, linearGradientCoordinatesForAngle } from "./gradientAngle";
 import "./PropertiesPanel.css";
 
@@ -82,11 +82,6 @@ const cloneRgba = (color: RGBA): RGBA => ({
   g: clamp(color.g, 0, 255),
   b: clamp(color.b, 0, 255),
   a: clamp(color.a, 0, 1),
-});
-
-const hexToRgbaWithAlpha = (hex: string, alpha: number): RGBA => ({
-  ...(hexToRgba(hex) ?? DEFAULT_COLOR),
-  a: clamp(alpha, 0, 1),
 });
 
 const formatUnitNumber = (value: number): string =>
@@ -912,10 +907,10 @@ export function PropertiesPanel() {
     target: PaintTarget,
     gradient: GradientPaint,
     stopIndex: number,
-    hex: string,
+    color: RGBA,
   ): void => {
     const stops = normalizeGradientStops(gradient.stops).map((stop, index) =>
-      index === stopIndex ? { ...stop, color: hexToRgbaWithAlpha(hex, stop.color.a) } : stop,
+      index === stopIndex ? { ...stop, color: cloneRgba(color) } : stop,
     );
 
     updateGradientPaint(target, gradientWithStops(gradient, stops));
@@ -1217,14 +1212,10 @@ export function PropertiesPanel() {
               type="number"
               value={formatUnitNumber(stop.offset)}
             />
-            <input
-              aria-label={scopedLabel(`Stop ${index + 1} color`)}
-              className="properties-panel__color"
-              onChange={(event) =>
-                setGradientStopColor(target, gradient, index, event.currentTarget.value)
-              }
-              type="color"
-              value={rgbaToHex(stop.color, false)}
+            <ColorPicker
+              ariaLabel={scopedLabel(`Stop ${index + 1} color`)}
+              onChange={(color) => setGradientStopColor(target, gradient, index, color)}
+              value={stop.color}
             />
             <input
               aria-label={scopedLabel(`Stop ${index + 1} alpha`)}
