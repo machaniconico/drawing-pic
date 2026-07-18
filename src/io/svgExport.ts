@@ -1,5 +1,5 @@
 import type { Matrix } from "../core/geometry/matrix";
-import { compose, IDENTITY, translate } from "../core/geometry/matrix";
+import { apply, applyVector, compose, IDENTITY, invert, translate } from "../core/geometry/matrix";
 import type { Vec2 } from "../core/geometry/vector";
 import {
   EMPTY_BBOX,
@@ -50,6 +50,11 @@ interface ClipPathReference {
   content: string;
 }
 
+interface TextPathReference {
+  id: string;
+  d: string;
+}
+
 interface PatternReference {
   id: string;
   bounds: BBox;
@@ -62,10 +67,13 @@ interface SvgContext {
   doc: Document;
   gradients: GradientReference[];
   clipPaths: ClipPathReference[];
+  textPaths: TextPathReference[];
+  textPathIds: Map<string, string>;
   patterns: PatternReference[];
   patternIds: Map<string, string>;
   nextGradientId: number;
   nextClipPathId: number;
+  nextTextPathId: number;
   nextPatternId: number;
   patternDepth: number;
 }
@@ -215,6 +223,16 @@ const subpathToD = (subpath: SubPath): string => {
 const pathToD = (node: PathNode): string =>
   node.subpaths.map(subpathToD).filter((d) => d.length > 0).join(" ");
 
+const transformSubpaths = (subpaths: readonly SubPath[], matrix: Matrix): SubPath[] =>
+  subpaths.map((subpath) => ({
+    closed: subpath.closed,
+    anchors: subpath.anchors.map((anchor) => ({
+      point: apply(matrix, anchor.point),
+      handleIn: anchor.handleIn === null ? null : applyVector(matrix, anchor.handleIn),
+      handleOut: anchor.handleOut === null ? null : applyVector(matrix, anchor.handleOut),
+    })),
+  }));
+
 const rectGeometryAttrs = (node: RectNode): string => {
   const radiusAttrs =
     node.rx > 0 || node.ry > 0
@@ -251,15 +269,90 @@ const isTextPathTarget = (doc: Document, pathId: NodeId): boolean =>
     (node) => node.type === "text" && resolvedTextPathId(doc, node) === pathId,
   );
 
+const nodeWorldTransform = (doc: Document, targetId: NodeId): Matrix | null => {
+  const visit = (
+    nodeId: NodeId,
+    parentWorld: Matrix,
+    visiting: ReadonlySet<NodeId>,
+  ): Matrix | null => {
+    if (visiting.has(nodeId)) return null;
+
+    const node = doc.nodes[nodeId];
+    if (node === undefined) return null;
+
+    const world = compose(parentWorld, node.transform);
+    if (node.id === targetId) return world;
+    if (!isContainer(node)) return null;
+
+    const nextVisiting = new Set(visiting);
+    nextVisiting.add(nodeId);
+    for (const childId of node.children) {
+      const found = visit(childId, world, nextVisiting);
+      if (found !== null) return found;
+    }
+    return null;
+  };
+
+  for (const layerId of doc.layerOrder) {
+    const found = visit(layerId, IDENTITY, new Set());
+    if (found !== null) return found;
+  }
+  return null;
+};
+
+const isApproximatelyIdentityMatrix = (matrix: Matrix): boolean => {
+  const epsilon = 1e-9;
+  return (
+    Math.abs(matrix.a - 1) <= epsilon &&
+    Math.abs(matrix.b) <= epsilon &&
+    Math.abs(matrix.c) <= epsilon &&
+    Math.abs(matrix.d - 1) <= epsilon &&
+    Math.abs(matrix.e) <= epsilon &&
+    Math.abs(matrix.f) <= epsilon
+  );
+};
+
+const textPathReferenceId = (
+  doc: Document,
+  ctx: SvgContext,
+  text: Extract<DefinitionNode, { type: "text" }>,
+  path: PathNode,
+): string => {
+  const pathWorld = nodeWorldTransform(doc, path.id);
+  const textWorld = nodeWorldTransform(doc, text.id);
+  const inverseTextWorld = textWorld === null ? null : invert(textWorld);
+  if (pathWorld === null || inverseTextWorld === null) return path.id;
+
+  const pathInTextSpace = compose(inverseTextWorld, pathWorld);
+  if (isApproximatelyIdentityMatrix(pathInTextSpace)) return path.id;
+
+  const d = transformSubpaths(path.subpaths, pathInTextSpace)
+    .map(subpathToD)
+    .filter((value) => value.length > 0)
+    .join(" ");
+  const existingId = ctx.textPathIds.get(d);
+  if (existingId !== undefined) return existingId;
+
+  const id = `svg-export-text-path-${ctx.nextTextPathId}`;
+  ctx.nextTextPathId += 1;
+  ctx.textPathIds.set(d, id);
+  ctx.textPaths.push({ id, d });
+  return id;
+};
+
 const renderTextContent = (
   doc: Document,
+  ctx: SvgContext,
   node: Extract<DefinitionNode, { type: "text" }>,
 ): string => {
   const pathId = resolvedTextPathId(doc, node);
   if (pathId === null) return escapeXml(node.text);
 
+  const path = doc.nodes[pathId];
+  if (path?.type !== "path") return escapeXml(node.text);
+
   const startOffset = textPathNode(node).startOffset;
-  return `<textPath${attr("href", `#${pathId}`)}${
+  return `<textPath${attr("href", `#${textPathReferenceId(doc, ctx, node, path)}`)}${
     startOffset === undefined ? "" : numericAttr("startOffset", startOffset)
   }>${escapeXml(node.text)}</textPath>`;
 };
@@ -594,6 +687,9 @@ const gradientDefs = (gradients: readonly GradientReference[]): string => {
 const clipPathDefs = (clipPaths: readonly ClipPathReference[]): string =>
   clipPaths.map(({ id, content }) => `<clipPath${attr("id", id)}>${content}</clipPath>`).join("");
 
+const textPathDefs = (textPaths: readonly TextPathReference[]): string =>
+  textPaths.map(({ id, d }) => `<path${attr("id", id)}${attr("d", d)} />`).join("");
+
 const patternDefs = (patterns: readonly PatternReference[]): string =>
   patterns
     .map(({ id, bounds, paint, parentWorldTransform, content }) => {
@@ -623,15 +719,18 @@ const patternDefs = (patterns: readonly PatternReference[]): string =>
     .join("");
 
 const documentDefs = (ctx: SvgContext): string => {
-  if (ctx.patterns.length === 0 && ctx.clipPaths.length === 0) return gradientDefs(ctx.gradients);
+  if (ctx.patterns.length === 0 && ctx.clipPaths.length === 0 && ctx.textPaths.length === 0) {
+    return gradientDefs(ctx.gradients);
+  }
 
   const gradients = gradientDefs(ctx.gradients);
+  const textPaths = textPathDefs(ctx.textPaths);
   const patterns = patternDefs(ctx.patterns);
   const clips = clipPathDefs(ctx.clipPaths);
 
-  if (gradients.length === 0) return `<defs>${patterns}${clips}</defs>`;
+  if (gradients.length === 0) return `<defs>${textPaths}${patterns}${clips}</defs>`;
 
-  return gradients.replace("</defs>", `${patterns}${clips}</defs>`);
+  return gradients.replace("</defs>", `${textPaths}${patterns}${clips}</defs>`);
 };
 
 const renderBackground = (doc: Document): string => {
@@ -646,14 +745,14 @@ const renderBackground = (doc: Document): string => {
   )} />`;
 };
 
-const renderClipGeometryNode = (doc: Document, node: SceneNode): string => {
+const renderClipGeometryNode = (doc: Document, node: SceneNode, ctx: SvgContext): string => {
   if (!node.visible) return "";
 
   if (isContainer(node)) {
     const children = node.children
       .map((childId) => doc.nodes[childId])
       .filter((child): child is SceneNode => child !== undefined)
-      .map((child) => renderClipGeometryNode(doc, child))
+      .map((child) => renderClipGeometryNode(doc, child, ctx))
       .join("");
 
     return `<g${transformAttr(node.transform)}>${children}</g>`;
@@ -686,7 +785,7 @@ const renderClipGeometryNode = (doc: Document, node: SceneNode): string => {
       )}${numericAttr("font-weight", node.fontWeight)}${attr("font-style", node.fontStyle)}${numericAttr(
         "letter-spacing",
         node.letterSpacing,
-      )}${attr("text-anchor", textAnchor(node.textAlign))}>${renderTextContent(doc, node)}</text>`;
+      )}${attr("text-anchor", textAnchor(node.textAlign))}>${renderTextContent(doc, ctx, node)}</text>`;
     case "image":
       return `<rect${transformAttr(node.transform)}${numericAttr("x", 0)}${numericAttr(
         "y",
@@ -802,7 +901,7 @@ const renderNode = (
     const mask = childNodes[childNodes.length - 1];
     const clipPath =
       isClipGroup && mask !== undefined
-        ? attr("clip-path", `url(#${clipPathId(ctx, renderClipGeometryNode(doc, mask))})`)
+        ? attr("clip-path", `url(#${clipPathId(ctx, renderClipGeometryNode(doc, mask, ctx))})`)
         : "";
 
     return `<g${nodeCommonAttrs(node)}${clipPath}>${children}</g>`;
@@ -858,7 +957,7 @@ const renderNode = (
         "fill",
         "fill-opacity",
         ctx,
-      )}${strokeAttrs(node.stroke, ctx)}>${renderTextContent(doc, node)}</text>`;
+      )}${strokeAttrs(node.stroke, ctx)}>${renderTextContent(doc, ctx, node)}</text>`;
     case "image":
       return `<image${nodeCommonAttrs(node)}${attr("href", node.src)}${numericAttr(
         "width",
@@ -950,10 +1049,13 @@ export const documentToSvg = (doc: Document, opts?: SvgExportOptions): string =>
     doc,
     gradients: [],
     clipPaths: [],
+    textPaths: [],
+    textPathIds: new Map(),
     patterns: [],
     patternIds: new Map(),
     nextGradientId: 1,
     nextClipPathId: 1,
+    nextTextPathId: 1,
     nextPatternId: 1,
     patternDepth: 0,
   };
