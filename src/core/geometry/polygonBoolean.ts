@@ -42,7 +42,7 @@ const cross = (a: Vec2, b: Vec2): number => a.x * b.y - a.y * b.x;
 
 const len = (v: Vec2): number => Math.hypot(v.x, v.y);
 
-const ringArea = (ring: readonly Vec2[]): number => {
+export const ringArea = (ring: readonly Vec2[]): number => {
   let area = 0;
   for (let index = 0; index < ring.length; index += 1) {
     const a = ring[index]!;
@@ -170,7 +170,7 @@ const addSplitPoint = (edge: SourceEdge, point: Vec2): void => {
   }
 };
 
-const pointInRing = (point: Vec2, ring: readonly Vec2[]): boolean => {
+export const pointInRing = (point: Vec2, ring: readonly Vec2[]): boolean => {
   let inside = false;
   for (let index = 0, previousIndex = ring.length - 1; index < ring.length; previousIndex = index, index += 1) {
     const a = ring[index]!;
@@ -186,11 +186,15 @@ const pointInRing = (point: Vec2, ring: readonly Vec2[]): boolean => {
   return inside;
 };
 
-const pointInPolygonSet = (point: Vec2, rings: readonly Vec2[][]): boolean => {
+export const pointInPolygonSet = (
+  point: Vec2,
+  rings: readonly Vec2[][],
+  containsInRing: (candidate: Vec2, ring: readonly Vec2[]) => boolean = pointInRing,
+): boolean => {
   let winding = 0;
   for (const sourceRing of rings) {
     const ring = cleanRing(sourceRing);
-    if (ring.length < 3 || !pointInRing(point, ring)) {
+    if (ring.length < 3 || !containsInRing(point, ring)) {
       continue;
     }
     winding += ringArea(ring) >= 0 ? 1 : -1;

@@ -3,7 +3,7 @@ import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { offsetSubPaths } from "../core/geometry/offsetPath";
 import { strokeOutlineSubPaths } from "../core/geometry/outlineStroke";
-import { apply, compose, IDENTITY, invert, type Matrix } from "../core/geometry/matrix";
+import { apply, invert } from "../core/geometry/matrix";
 import type { BooleanOp } from "../core/geometry/polygonBoolean";
 import type { PathfinderOp } from "../core/geometry/pathfinder";
 import { shapeBuilderFromRegions, type ShapeBuilderMode } from "../core/geometry/shapeBuilder";
@@ -26,6 +26,7 @@ import {
   moveSelectionTo as computeMoveSelectionTo,
   nodesWithMatchingFill as computeNodesWithMatchingFill,
   nodesWithMatchingStroke as computeNodesWithMatchingStroke,
+  parentWorldTransform,
   pathfinderSelection as computePathfinderSelection,
   rotateNodesAround as computeRotateNodesAround,
   rotateNodes90 as computeRotateNodes90,
@@ -650,21 +651,6 @@ const insertPathfinderResults = (
   if (parent && isContainer(parent)) {
     parent.children = replaceOrder(parent.children);
   }
-};
-
-const parentWorldTransform = (doc: Document, parentId: NodeId | null): Matrix => {
-  if (parentId === null) {
-    return IDENTITY;
-  }
-  const transforms: Matrix[] = [];
-  let currentId: NodeId | null = parentId;
-  while (currentId !== null) {
-    const node = doc.nodes[currentId];
-    if (!node) break;
-    transforms.unshift(node.transform);
-    currentId = findNodeParent(doc, currentId)?.parentId ?? null;
-  }
-  return transforms.reduce((result, transform) => compose(result, transform), IDENTITY);
 };
 
 const withDocHistory = (
