@@ -1,6 +1,7 @@
-import type { ChangeEvent } from "react";
-import type { NodeId } from "../core/model/types";
+import type { NodeId, RGBA } from "../core/model/types";
 import { useEditorStore } from "../state/store";
+import { ColorPicker } from "./ColorPicker";
+import { hexToRgba, rgbaToHex } from "./colorConvert";
 import "./GuidePrefs.css";
 
 interface GuidePrefsProps {
@@ -8,6 +9,7 @@ interface GuidePrefsProps {
 }
 
 const DEFAULT_GUIDE_COLOR = "#20d9ff";
+const DEFAULT_GUIDE_RGBA: RGBA = { r: 32, g: 217, b: 255, a: 1 };
 
 export default function GuidePrefs({ activeGuideId }: GuidePrefsProps) {
   const guides = useEditorStore((state) => state.doc.guides);
@@ -27,12 +29,12 @@ export default function GuidePrefs({ activeGuideId }: GuidePrefsProps) {
     return null;
   }
 
-  const onColorChange = (event: ChangeEvent<HTMLInputElement>): void => {
+  const onColorChange = (color: RGBA): void => {
     if (guide === null) {
       return;
     }
 
-    setGuideColor(guide.id, event.currentTarget.value);
+    setGuideColor(guide.id, rgbaToHex(color));
   };
 
   return (
@@ -43,16 +45,11 @@ export default function GuidePrefs({ activeGuideId }: GuidePrefsProps) {
             <span className="guide-prefs__title">Guide</span>
             <span className="guide-prefs__position">{Math.round(guide.position * 100) / 100}px</span>
           </div>
-          <label className="guide-prefs__color" title="Guide color">
-            <span className="guide-prefs__swatch" style={{ backgroundColor: guide.color ?? DEFAULT_GUIDE_COLOR }} />
-            <input
-              aria-label="Guide color"
-              className="guide-prefs__color-input"
-              onChange={onColorChange}
-              type="color"
-              value={guide.color ?? DEFAULT_GUIDE_COLOR}
-            />
-          </label>
+          <ColorPicker
+            ariaLabel="Guide color"
+            onChange={onColorChange}
+            value={hexToRgba(guide.color ?? DEFAULT_GUIDE_COLOR) ?? DEFAULT_GUIDE_RGBA}
+          />
           <label className="guide-prefs__toggle">
             <input
               checked={guide.locked === true}
